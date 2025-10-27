@@ -56,11 +56,14 @@ export default function EnterPasswordScreen() {
         // Show success message
         setSuccess(result.message || 'OTP code sent to your email');
         
-        // Redirect to VerifyAccountCodeScreen after 1 second
+        // Redirect to verify-code screen after 1 second
         setTimeout(() => {
-          navigation.navigate('VerifyAccountCode', { 
-            method: 'email', 
-            contact: userEmail 
+          router.push({
+            pathname: '/verify-code',
+            params: { 
+              method: 'email', 
+              contact: userEmail 
+            }
           });
         }, 1000);
       } else {
