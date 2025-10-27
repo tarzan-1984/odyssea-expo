@@ -13,14 +13,11 @@ SplashScreen.preventAutoHideAsync();
  */
 export default function RootLayout() {
   const [loaded, error] = useFonts({
-    'Mulish-200': require('@/assets/fonts/Mulish-ExtraLight.ttf'),
-    'Mulish-300': require('@/assets/fonts/Mulish-Light.ttf'),
-    'Mulish-400': require('@/assets/fonts/Mulish-Regular.ttf'),
-    'Mulish-500': require('@/assets/fonts/Mulish-Medium.ttf'),
-    'Mulish-600': require('@/assets/fonts/Mulish-SemiBold.ttf'),
-    'Mulish-700': require('@/assets/fonts/Mulish-Bold.ttf'),
-    'Mulish-800': require('@/assets/fonts/Mulish-ExtraBold.ttf'),
-    'Mulish-900': require('@/assets/fonts/Mulish-Black.ttf'),
+    'Mulish-Regular': require('@/assets/fonts/Mulish-Regular.ttf'),
+    'Mulish-Bold': require('@/assets/fonts/Mulish-Bold.ttf'),
+    'Mulish-SemiBold': require('@/assets/fonts/Mulish-SemiBold.ttf'),
+    'Mulish-Medium': require('@/assets/fonts/Mulish-Medium.ttf'),
+    'Mulish-Light': require('@/assets/fonts/Mulish-Light.ttf'),
   });
 
   useEffect(() => {
