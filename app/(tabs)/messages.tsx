@@ -3,15 +3,15 @@ import { View, Text, StyleSheet, SafeAreaView } from 'react-native';
 import { colors, fonts, rem, fp } from '@/lib';
 
 /**
- * HomeScreen - Main home screen of the application
- * Placeholder for home functionality
+ * MessagesScreen - Messages screen of the application
+ * Placeholder for messages functionality
  */
-export default function HomeScreen() {
+export default function MessagesScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
-        <Text style={styles.title}>Home Screen</Text>
-        <Text style={styles.subtitle}>Welcome to the main application!</Text>
+        <Text style={styles.title}>Messages Screen</Text>
+        <Text style={styles.subtitle}>Your messages will appear here</Text>
       </View>
     </SafeAreaView>
   );

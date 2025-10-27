@@ -3,15 +3,15 @@ import { View, Text, StyleSheet, SafeAreaView } from 'react-native';
 import { colors, fonts, rem, fp } from '@/lib';
 
 /**
- * HomeScreen - Main home screen of the application
- * Placeholder for home functionality
+ * ProfileScreen - Profile screen of the application
+ * Placeholder for profile functionality
  */
-export default function HomeScreen() {
+export default function ProfileScreen() {
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
-        <Text style={styles.title}>Home Screen</Text>
-        <Text style={styles.subtitle}>Welcome to the main application!</Text>
+        <Text style={styles.title}>Profile Screen</Text>
+        <Text style={styles.subtitle}>Your profile information will appear here</Text>
       </View>
     </SafeAreaView>
   );
