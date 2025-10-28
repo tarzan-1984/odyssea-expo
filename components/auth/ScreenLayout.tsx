@@ -1,6 +1,7 @@
 import React from 'react';
-import { View, Image, StyleSheet, SafeAreaView, Text, TouchableOpacity } from 'react-native';
-import { colors, typography, fonts } from "@/lib";
+import { View, Image, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { colors, fonts } from "@/lib";
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 interface ScreenLayoutProps {
 	children: React.ReactNode;
@@ -17,13 +18,15 @@ const ScreenLayout: React.FC<ScreenLayoutProps> = ({
 }) => {
 	return (
 		<View style={styles.container}>
+		<View style={styles.bgImageWrapper} pointerEvents="none">
 			<Image
 				source={require('@/assets/images/bgBlue.png')}
 				style={styles.bgImage}
 				resizeMode="cover"
-				accessibilityRole="image"
-				accessibilityLabel="Background"
+				importantForAccessibility="no"
+				accessibilityElementsHidden={true}
 			/>
+		</View>
 			
 			{/* Header panel - starts from very top */}
 			{headerTitle && (
@@ -41,11 +44,11 @@ const ScreenLayout: React.FC<ScreenLayoutProps> = ({
 				</View>
 			)}
 			
-			<SafeAreaView style={[styles.safeArea, headerTitle && styles.safeAreaWithHeader]}>
-				<View style={styles.content} accessibilityLiveRegion="polite">
-					{children}
-				</View>
-			</SafeAreaView>
+		<SafeAreaView style={[styles.safeArea, headerTitle && styles.safeAreaWithHeader]} collapsable={false}>
+			<View style={styles.content} collapsable={false}>
+				{children}
+			</View>
+		</SafeAreaView>
 		</View>
 	)
 }
@@ -56,12 +59,15 @@ const styles = StyleSheet.create({
 		backgroundColor: colors.primary.blue,
 		position: "relative",
 	},
-	bgImage: {
+	bgImageWrapper: {
 		position: "absolute",
 		top: 0,
 		left: 0,
 		right: 0,
 		bottom: 0,
+		zIndex: 0,
+	},
+	bgImage: {
 		width: "100%",
 		height: "100%",
 	},
@@ -92,6 +98,7 @@ const styles = StyleSheet.create({
 	},
 	safeArea: {
 		flex: 1,
+		zIndex: 2,
 	},
 	safeAreaWithHeader: {
 		paddingTop: 76,
@@ -99,7 +106,6 @@ const styles = StyleSheet.create({
 	content: {
 		flex: 1,
 		position: "relative",
-		zIndex: 3,
 		paddingHorizontal: 20,
 		paddingTop: 20,
 	}

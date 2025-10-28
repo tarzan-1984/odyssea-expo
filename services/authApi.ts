@@ -30,7 +30,14 @@ export interface OtpVerificationResponse {
     data?: {
       accessToken: string;
       refreshToken: string;
-      user: any;
+      user: {
+        id: string;
+        email: string;
+        firstName?: string;
+        lastName?: string;
+        role?: string;
+        [key: string]: any;
+      };
     };
   };
   error?: string;
@@ -99,9 +106,6 @@ class AuthApiService {
       });
 
       const data = await response.json();
-      
-      console.log('📩 [AuthAPI] Login response status:', response.status);
-      console.log('📦 [AuthAPI] Login response data:', data);
 
       if (!response.ok) {
         return {
@@ -134,6 +138,9 @@ class AuthApiService {
    */
   async verifyOtp(email: string, otpCode: string): Promise<OtpVerificationResponse> {
     try {
+      console.log('🔐 [AuthAPI] Verifying OTP for email:', email);
+      console.log('🔢 [AuthAPI] OTP code:', otpCode);
+      
       const response = await fetch(`${this.baseUrl}/v1/auth/verify-otp`, {
         method: 'POST',
         headers: {
@@ -142,20 +149,30 @@ class AuthApiService {
         body: JSON.stringify({ email, otp: otpCode }),
       });
 
+      const data = await response.json();
+      console.log('📦 [AuthAPI] Raw response status:', response.status);
+      console.log('📦 [AuthAPI] Raw response data:', JSON.stringify(data, null, 2));
+
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+        return {
+          success: false,
+          error: data.message || `HTTP error! status: ${response.status}`,
+        };
       }
 
-      const data = await response.json();
-      return data;
+      return {
+        success: true,
+        message: data.message || 'OTP verified successfully',
+        data: data,
+      };
     } catch (error) {
-      console.error('OTP Verification API Error:', error);
-      throw new Error(
-        error instanceof Error 
+      console.error('❌ [AuthAPI] OTP Verification error:', error);
+      return {
+        success: false,
+        error: error instanceof Error 
           ? error.message 
-          : 'Network error occurred during OTP verification'
-      );
+          : 'Network error occurred during OTP verification',
+      };
     }
   }
 }

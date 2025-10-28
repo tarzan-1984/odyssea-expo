@@ -7,6 +7,7 @@ import { colors } from './colors';
 
 // Define borderRadius first
 const borderRadiusVar = {
+  sm6: 6,
   sm: 8,
   sm10: 10,
   md: 12,

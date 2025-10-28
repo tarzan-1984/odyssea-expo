@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { View, Text, TouchableOpacity, StyleSheet, Switch, Dimensions, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Switch, ScrollView } from 'react-native';
 import { colors } from '@/lib/colors';
-
-const { width, height } = Dimensions.get('window');
+import { borderRadius, fonts, fp, rem } from "@/lib";
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import BottomNavigation from '@/components/navigation/BottomNavigation';
 
 /**
  * FinalVerifyScreen - Final verification/profile screen
@@ -12,6 +13,7 @@ const { width, height } = Dimensions.get('window');
  */
 export default function FinalVerifyScreen() {
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [isLocationEnabled, setIsLocationEnabled] = useState(true);
   const [status, setStatus] = useState('Choose');
   const [zip, setZip] = useState('52285');
@@ -33,17 +35,23 @@ export default function FinalVerifyScreen() {
   };
 
   return (
-    <View style={styles.container}>
-      {/* Header with time and profile */}
-      <View style={styles.header}>
-        <Text style={styles.time}>19:02</Text>
-        <View style={styles.profileIcon}>
-          <Text style={styles.profileText}>J</Text>
+    <>
+      {/* Paint status bar area exactly to safe inset height */}
+      <View style={{ height: insets.top, backgroundColor: colors.primary.violet }} />
+      <View style={styles.container}>
+        {/* Header with time and profile */}
+        <View style={styles.header}>
+          <Text style={styles.welcome} numberOfLines={2}>
+            Welcome to application, John
+          </Text>
+          
+          <View style={styles.profileIcon}>
+            <Text style={styles.profileText}>JО</Text>
+          </View>
         </View>
-      </View>
-      
+        
+        <View style={styles.contentWrapper}>
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        <Text style={styles.welcome}>Welcome To Application, John</Text>
         
         {/* Map section */}
         <View style={styles.mapContainer}>
@@ -101,76 +109,78 @@ export default function FinalVerifyScreen() {
           <Text style={styles.updateButtonText}>Update status</Text>
         </TouchableOpacity>
       </ScrollView>
-      
-      {/* Bottom navigation */}
-      <View style={styles.bottomNav}>
-        <TouchableOpacity style={styles.navItem}>
-          <Text style={styles.navIcon}>🏠</Text>
-          <Text style={styles.navText}>Home</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Text style={styles.navIcon}>💬</Text>
-          <Text style={styles.navText}>Messages</Text>
-        </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem}>
-          <Text style={styles.navIcon}>👤</Text>
-          <Text style={styles.navText}>Profile</Text>
-        </TouchableOpacity>
       </View>
-    </View>
+      </View>
+      
+      {/* Bottom Navigation */}
+      <BottomNavigation />
+    </>
+    
   );
 }
 
-const styles = StyleSheet.create({
+ const styles = StyleSheet.create({
+  wrapper: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+  },
   container: {
     flex: 1,
     backgroundColor: '#ffffff',
+    position: 'relative',
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 20,
+    paddingTop: 0,
+    gap: rem(25),
+    paddingBottom: rem(34),
+    borderBottomLeftRadius: rem(20),
+    borderBottomRightRadius: rem(20),
+    backgroundColor: colors.primary.violet,
+    width: '100%',
   },
-  time: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#000000',
+  contentWrapper: {
+    backgroundColor: '#ffffff',
+    flex: 1,
   },
   profileIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.primary.lightBlue,
+    width: rem(56),
+    height: rem(56),
+    borderRadius: borderRadius.full,
+    backgroundColor: colors.primary.blue,
     justifyContent: 'center',
     alignItems: 'center',
-    boxShadow: '0px 2px 4px rgba(52, 199, 89, 0.3)',
-    elevation: 4,
+    flexShrink: 0,
   },
   profileText: {
     color: colors.neutral.white,
-    fontSize: 18,
-    fontWeight: 'bold',
+    fontSize: fp(22),
+    fontFamily: fonts["700"],
   },
   scrollView: {
     flex: 1,
     paddingHorizontal: 20,
   },
   welcome: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#000000',
-    marginBottom: 30,
-    textAlign: 'center',
+    fontSize: fp(22),
+    fontFamily: fonts["700"],
+    lineHeight: fp(28),
+    color: colors.neutral.white,
+    flex: 1,
+    flexShrink: 1,
+    flexGrow: 1,
+    flexWrap: 'wrap',
+    marginRight: rem(12),
   },
   mapContainer: {
     marginBottom: 20,
   },
   mapPlaceholder: {
     height: 200,
-    backgroundColor: '#F5F5F5', // Light grey map background as in design
+    backgroundColor: '#F5F5F5',
     borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
@@ -289,7 +299,7 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   updateButton: {
-    backgroundColor: colors.secondary.green,
+    backgroundColor: colors.primary.blue,
     borderRadius: 12,
     paddingVertical: 18,
     alignItems: 'center',
@@ -301,27 +311,5 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 18,
     fontWeight: '600',
-  },
-  bottomNav: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingVertical: 15,
-    paddingBottom: 25,
-    borderTopWidth: 1,
-    borderTopColor: '#E0E0E0',
-    backgroundColor: '#ffffff',
-  },
-  navItem: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  navIcon: {
-    fontSize: 20,
-    marginBottom: 5,
-  },
-  navText: {
-    fontSize: 12,
-    color: '#8E8E93',
-    fontWeight: '500',
   },
 });

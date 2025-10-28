@@ -1,6 +1,7 @@
 import React from 'react';
-import { View, Text, StyleSheet, SafeAreaView } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { colors, fonts, rem, fp } from '@/lib';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 /**
  * HomeScreen - Main home screen of the application
@@ -37,7 +38,6 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: fp(16),
     fontFamily: fonts["400"],
-    color: colors.neutral.gray,
     textAlign: 'center',
   },
 });

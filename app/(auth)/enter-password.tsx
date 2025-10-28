@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Dimensions, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Dimensions, ActivityIndicator, Platform } from 'react-native';
 import ScreenLayout from '@/components/auth/ScreenLayout';
 import { borderRadius, colors, fonts, typography, rem, fp, br } from "@/lib";
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from '@/context/AuthContext';
 import ArrowRight from "@/icons/ArrowRight";
 import QuestionIcon from "@/icons/QuestionIcon";
 import FaceIdIcon from "@/icons/FaceIdIcon";
@@ -25,7 +25,8 @@ export default function EnterPasswordScreen() {
   const { authState, login, clearError } = useAuth();
   
   // Use userEmail from authState if available, otherwise use email from route params
-  const userEmail = authState.userEmail || email;
+  // Ensure userEmail is always a string (route params can be string | string[])
+  const userEmail = authState.userEmail || (Array.isArray(email) ? email[0] : email) || '';
 
   // Simple password validation
   const validatePassword = (password: string): boolean => {
@@ -49,7 +50,6 @@ export default function EnterPasswordScreen() {
       clearError();
       
       // Send request to backend using new auth service
-      // Use userEmail from authState (set during email check) and password
       const result = await login(userEmail, password);
       
       if (result.success) {
@@ -89,8 +89,8 @@ export default function EnterPasswordScreen() {
             
             {/* Show message from backend if available */}
             {message && (
-              <View style={styles.infoContainer} accessibilityRole="text" accessibilityLabel="Password information">
-                <Text style={styles.infoText}>
+              <View style={styles.infoContainer}>
+                <Text style={styles.infoText} accessibilityRole="text">
                   {message}
                 </Text>
               </View>
@@ -118,6 +118,7 @@ export default function EnterPasswordScreen() {
                 accessibilityLabel="Password input"
                 accessibilityHint="Enter your password"
               />
+              
               <TouchableOpacity 
                 style={styles.showPasswordButton}
                 onPress={() => setShowPassword(!showPassword)}
@@ -163,15 +164,20 @@ export default function EnterPasswordScreen() {
               <Text style={styles.forgotText}>Forgot your password?</Text>
             </TouchableOpacity>
             
-            <Text style={styles.faceIDText}>Login using face ID</Text>
-            
-            <TouchableOpacity 
-              style={styles.faceIdButton} 
-              onPress={handleFaceID}
-              testID="face-id-button"
-            >
-              <FaceIdIcon />
-            </TouchableOpacity>
+            {/* Show Face ID only on iOS */}
+            {Platform.OS === 'ios' && (
+              <>
+                <Text style={styles.faceIDText}>Login using face ID</Text>
+                
+                <TouchableOpacity 
+                  style={styles.faceIdButton} 
+                  onPress={handleFaceID}
+                  testID="face-id-button"
+                >
+                  <FaceIdIcon />
+                </TouchableOpacity>
+              </>
+            )}
           </View>
       
         {/* Progress dots */}

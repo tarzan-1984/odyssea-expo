@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Dimensions, Image, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, Dimensions, Image, ActivityIndicator, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { colors, typography, spacing, borderRadius, shadows, fonts, rem, fp, br } from '@/lib';
 import ArrowRight from '@/icons/ArrowRight';
 import FaceIdIcon from '@/icons/FaceIdIcon';
 import ScreenLayout from '@/components/auth/ScreenLayout';
-import { useAuth } from '@/hooks/useAuth';
+import { useAuth } from '@/context/AuthContext';
 
 const { width } = Dimensions.get('window');
 
@@ -44,7 +44,6 @@ export default function WelcomeScreen() {
     try {
       const result = await checkEmailAndGeneratePassword(email.trim());
       
-      // Бекенд всегда возвращает успешный ответ, если email валидный
       // Navigate to password screen with email and message from backend
       router.push({
         pathname: '/enter-password',
@@ -121,11 +120,16 @@ export default function WelcomeScreen() {
         </Text>
       )}
       
-      <Text style={styles.faceIDText}>Login using face ID</Text>
-      
-      <TouchableOpacity style={styles.faceIdButton} onPress={handleFaceID}>
-        <FaceIdIcon />
-      </TouchableOpacity>
+      {/* Show Face ID only on iOS */}
+      {Platform.OS === 'ios' && (
+        <>
+          <Text style={styles.faceIDText}>Login using face ID</Text>
+          
+          <TouchableOpacity style={styles.faceIdButton} onPress={handleFaceID}>
+            <FaceIdIcon />
+          </TouchableOpacity>
+        </>
+      )}
       
       {/* Progress dots */}
       <View style={styles.dots}>
