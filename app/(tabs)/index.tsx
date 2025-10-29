@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { colors, fonts, rem, fp } from '@/lib';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import BottomNavigation from "../../components/navigation/BottomNavigation";
 
 /**
  * HomeScreen - Main home screen of the application
@@ -14,6 +15,7 @@ export default function HomeScreen() {
         <Text style={styles.title}>Home Screen</Text>
         <Text style={styles.subtitle}>Welcome to the main application!</Text>
       </View>
+      <BottomNavigation />
     </SafeAreaView>
   );
 }

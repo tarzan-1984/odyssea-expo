@@ -46,21 +46,21 @@ export default function BottomNavigation({ currentRoute }: BottomNavigationProps
     <View style={styles.bottomNav}>
       <NavItem 
         icon={<Home width={20} height={20} color={currentRoute === '/home' ? colors.primary.blue : '#8E8E93'} />}
-        label="Home"
-        route="/home"
-        isActive={currentRoute === '/home'}
+        label=""
+        route="/final-verify"
+        isActive={currentRoute === '/final-verify'}
       />
       
       <NavItem 
         icon={<ChatIcon width={20} height={20} color={currentRoute === '/messages' ? colors.primary.blue : '#8E8E93'} />}
-        label="Messages"
+        label=""
         route="/messages"
         isActive={currentRoute === '/messages'}
       />
       
       <NavItem 
         icon={<ProfileIcon width={20} height={20} color={currentRoute === '/profile' ? colors.primary.blue : '#8E8E93'} />}
-        label="Profile"
+        label=""
         route="/profile"
         isActive={currentRoute === '/profile'}
       />
@@ -78,16 +78,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingHorizontal: rem(58),
-    paddingTop: 19,
-    paddingBottom: 21,
-    borderTopWidth: 1,
-    borderTopColor: '#E0E0E0',
+    paddingTop: rem(19),
+    paddingBottom: rem(21),
     backgroundColor: 'rgba(41, 41, 102, 0.96)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 8,
+    borderTopLeftRadius: rem(20),
+    borderTopRightRadius: rem(20),
+    zIndex: 1000,
   },
   navItem: {
     alignItems: 'center',
