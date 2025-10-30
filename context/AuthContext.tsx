@@ -22,6 +22,12 @@ export interface AuthState {
   refreshToken: string | null;
   user: User | null;
   isAuthenticated: boolean;
+  userLocation: {
+    latitude: number;
+    longitude: number;
+  } | null;
+  userZipCode: string | null;
+  lastLocationUpdate: Date | null;
 }
 
 // Context value interface
@@ -34,6 +40,8 @@ export interface AuthContextValue {
   loadStoredAuth: () => Promise<void>;
   clearError: () => void;
   resetAuthState: () => void;
+  updateUserLocation: (latitude: number, longitude: number, zipCode: string) => Promise<void>;
+  clearUserLocation: () => Promise<void>;
 }
 
 // Create context
@@ -55,6 +63,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     refreshToken: null,
     user: null,
     isAuthenticated: false,
+    userLocation: null,
+    userZipCode: null,
+    lastLocationUpdate: null,
   });
 
   const checkEmailAndGeneratePassword = useCallback(async (email: string): Promise<CheckEmailResponse> => {
@@ -231,6 +242,29 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const accessToken = await secureStorage.getItemAsync('accessToken');
       const refreshToken = await secureStorage.getItemAsync('refreshToken');
       const userJson = await secureStorage.getItemAsync('user');
+      const locationJson = await secureStorage.getItemAsync('userLocation');
+      
+      let userLocation = null;
+      let userZipCode = null;
+      let lastLocationUpdate = null;
+      
+      // Load location data if available
+      if (locationJson) {
+        try {
+          const locationData = JSON.parse(locationJson);
+          userLocation = { latitude: locationData.latitude, longitude: locationData.longitude };
+          userZipCode = locationData.zipCode || null;
+          
+          // Parse last update time if available
+          if (locationData.lastUpdate) {
+            lastLocationUpdate = new Date(locationData.lastUpdate);
+          }
+          
+          console.log('📍 [AuthContext] Found stored location data');
+        } catch (locError) {
+          console.warn('⚠️ [AuthContext] Failed to parse location data:', locError);
+        }
+      }
       
       if (accessToken && refreshToken && userJson) {
         const user = JSON.parse(userJson);
@@ -248,6 +282,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           refreshToken,
           user,
           isAuthenticated: true,
+          userLocation,
+          userZipCode,
+          lastLocationUpdate,
         });
         
         console.log('✅ [AuthContext] Auth state restored');
@@ -259,6 +296,54 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   }, []);
 
+  const updateUserLocation = useCallback(async (latitude: number, longitude: number, zipCode: string) => {
+    console.log('📍 [AuthContext] Updating user location:', { latitude, longitude, zipCode });
+    
+    const now = new Date();
+    const locationData = { 
+      latitude, 
+      longitude, 
+      zipCode,
+      lastUpdate: now.toISOString() // Save as ISO string for JSON serialization
+    };
+    
+    // Save to secure storage
+    try {
+      await secureStorage.setItemAsync('userLocation', JSON.stringify(locationData));
+      console.log('💾 [AuthContext] Location saved to storage');
+    } catch (error) {
+      console.error('❌ [AuthContext] Failed to save location:', error);
+    }
+    
+    // Update state
+    setAuthState(prev => ({
+      ...prev,
+      userLocation: { latitude, longitude },
+      userZipCode: zipCode,
+      lastLocationUpdate: now,
+    }));
+  }, []);
+
+  const clearUserLocation = useCallback(async () => {
+    console.log('🗑️ [AuthContext] Clearing user location');
+    
+    // Clear from secure storage
+    try {
+      await secureStorage.deleteItemAsync('userLocation');
+      console.log('💾 [AuthContext] Location cleared from storage');
+    } catch (error) {
+      console.error('❌ [AuthContext] Failed to clear location:', error);
+    }
+    
+    // Update state
+    setAuthState(prev => ({
+      ...prev,
+      userLocation: null,
+      userZipCode: null,
+      lastLocationUpdate: null,
+    }));
+  }, []);
+
   const resetAuthState = useCallback(async () => {
     console.log('🔄 [AuthContext] Resetting auth state');
     
@@ -267,6 +352,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await secureStorage.deleteItemAsync('accessToken');
       await secureStorage.deleteItemAsync('refreshToken');
       await secureStorage.deleteItemAsync('user');
+      await secureStorage.deleteItemAsync('userLocation');
       console.log('💾 [AuthContext] Cleared storage');
     } catch (error) {
       console.error('❌ [AuthContext] Failed to clear storage:', error);
@@ -281,6 +367,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       refreshToken: null,
       user: null,
       isAuthenticated: false,
+      userLocation: null,
+      userZipCode: null,
+      lastLocationUpdate: null,
     });
   }, []);
 
@@ -293,6 +382,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     loadStoredAuth,
     clearError,
     resetAuthState,
+    updateUserLocation,
+    clearUserLocation,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -1,9 +1,15 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
+import { View, StyleSheet } from 'react-native';
+import { BlurView } from 'expo-blur';
 import { fonts } from '@/lib';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
+import { useLocationPermission } from '@/hooks/useLocationPermission';
+import LocationPermissionModal from '@/components/common/LocationPermissionModal';
+// Import background location task to register it
+import '@/tasks/locationTask';
 
 // Prevent the splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
@@ -17,16 +23,32 @@ function RootLayoutNav() {
   const segments = useSegments();
   const router = useRouter();
   const [isReady, setIsReady] = useState(false);
+  const { backgroundPermissionGranted, isLocationEnabled, checkBackgroundPermission, checkLocationEnabled, openAppSettings, openLocationSettings } = useLocationPermission();
+  const lastCheckedSegment = useRef<string>('');
 
-  // Load stored auth on mount
+  // Load stored auth and check permissions on mount (first load)
   useEffect(() => {
     const initAuth = async () => {
       await loadStoredAuth();
+      await checkLocationEnabled(); // Check if location services are enabled
+      await checkBackgroundPermission(); // Check permission on first load
       setIsReady(true);
     };
     
     initAuth();
-  }, [loadStoredAuth]);
+  }, [loadStoredAuth, checkLocationEnabled, checkBackgroundPermission]);
+
+  // Check permissions when navigating between screens (only when segment actually changes)
+  useEffect(() => {
+    if (!isReady) return;
+    
+    const currentSegment = segments.join('/');
+    // Only check if segment actually changed (not just a re-render)
+    if (currentSegment !== lastCheckedSegment.current) {
+      lastCheckedSegment.current = currentSegment;
+      checkBackgroundPermission();
+    }
+  }, [segments, isReady, checkBackgroundPermission]);
 
   // Redirect based on auth state
   useEffect(() => {
@@ -51,18 +73,45 @@ function RootLayoutNav() {
   }, [authState.isAuthenticated, segments, isReady, router]);
 
   if (!isReady) {
-    return null; // Keep splash screen visible
+    return null; // Keep splash screen visible until auth complete
   }
 
+  // Show modal if location disabled or permission not granted
+  // TEMPORARY: Set to true for testing modal without changing device settings
+  const FORCE_SHOW_MODAL = false; // Change to true to test modal
+  const showPermissionModal = FORCE_SHOW_MODAL || isLocationEnabled === false || backgroundPermissionGranted === false;
+  
+  // For testing specific scenarios:
+  // FORCE_SHOW_MODAL = true → Shows permission modal immediately
+  // OR disable location in device settings → Shows "Location Services Disabled"
+  // OR change permission to "While Using" → Shows "Location Permission Required"
+
   return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-      }}
-    >
-      <Stack.Screen name="(auth)" />
-      <Stack.Screen name="(tabs)" />
-    </Stack>
+    <>
+      <Stack
+        screenOptions={{
+          headerShown: false,
+        }}
+      >
+        <Stack.Screen name="(auth)" />
+        <Stack.Screen name="(tabs)" />
+      </Stack>
+      
+      {/* Location Permission Modal */}
+      <LocationPermissionModal 
+        visible={showPermissionModal} 
+        isLocationEnabled={isLocationEnabled}
+        onOpenAppSettings={openAppSettings}
+        onOpenLocationSettings={openLocationSettings}
+      />
+      
+      {/* Block interface if location disabled or permission not granted */}
+      {(isLocationEnabled === false || !backgroundPermissionGranted) && (
+        <View style={styles.blockingOverlay} pointerEvents="auto">
+          <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
+        </View>
+      )}
+    </>
   );
 }
 
@@ -102,3 +151,14 @@ export default function RootLayout() {
     </AuthProvider>
   );
 }
+
+const styles = StyleSheet.create({
+  blockingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 9999,
+  },
+});
