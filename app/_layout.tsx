@@ -23,15 +23,23 @@ function RootLayoutNav() {
   const segments = useSegments();
   const router = useRouter();
   const [isReady, setIsReady] = useState(false);
-  const { backgroundPermissionGranted, isLocationEnabled, checkBackgroundPermission, checkLocationEnabled, openAppSettings, openLocationSettings } = useLocationPermission();
+  const { 
+    backgroundPermissionGranted,
+    isLocationEnabled,
+    checkBackgroundPermission,
+    checkLocationEnabled,
+    openAppSettings,
+    openLocationSettings,
+  } = useLocationPermission();
   const lastCheckedSegment = useRef<string>('');
 
   // Load stored auth and check permissions on mount (first load)
   useEffect(() => {
     const initAuth = async () => {
       await loadStoredAuth();
-      await checkLocationEnabled(); // Check if location services are enabled
-      await checkBackgroundPermission(); // Check permission on first load
+      // Initial checks for location services and background permission
+      await checkLocationEnabled();
+      await checkBackgroundPermission();
       setIsReady(true);
     };
     
@@ -46,6 +54,7 @@ function RootLayoutNav() {
     // Only check if segment actually changed (not just a re-render)
     if (currentSegment !== lastCheckedSegment.current) {
       lastCheckedSegment.current = currentSegment;
+      // Re-check permission when the route segment actually changes
       checkBackgroundPermission();
     }
   }, [segments, isReady, checkBackgroundPermission]);
@@ -76,10 +85,9 @@ function RootLayoutNav() {
     return null; // Keep splash screen visible until auth complete
   }
 
-  // Show modal if location disabled or permission not granted
-  // TEMPORARY: Set to true for testing modal without changing device settings
-  const FORCE_SHOW_MODAL = false; // Change to true to test modal
-  const showPermissionModal = FORCE_SHOW_MODAL || isLocationEnabled === false || backgroundPermissionGranted === false;
+  // Show modal if location services are disabled or background access is not granted
+  const FORCE_SHOW_MODAL = false;
+  const showPermissionModal = FORCE_SHOW_MODAL || (isLocationEnabled === false || backgroundPermissionGranted === false);
   
   // For testing specific scenarios:
   // FORCE_SHOW_MODAL = true → Shows permission modal immediately
@@ -97,7 +105,11 @@ function RootLayoutNav() {
         <Stack.Screen name="(tabs)" />
       </Stack>
       
-      {/* Location Permission Modal */}
+      {/**
+       * TEMP DISABLED FOR SIMULATOR
+       * Location Permission Modal is disabled to allow development in iOS Simulator.
+       * IMPORTANT: Re-enable this block before shipping or testing on real devices.
+       */}
       <LocationPermissionModal 
         visible={showPermissionModal} 
         isLocationEnabled={isLocationEnabled}
@@ -105,7 +117,11 @@ function RootLayoutNav() {
         onOpenLocationSettings={openLocationSettings}
       />
       
-      {/* Block interface if location disabled or permission not granted */}
+      {/**
+       * TEMP DISABLED FOR SIMULATOR
+       * UI blocking overlay is disabled to allow development without background permission.
+       * IMPORTANT: Re-enable this block before shipping or testing on real devices.
+       */}
       {(isLocationEnabled === false || !backgroundPermissionGranted) && (
         <View style={styles.blockingOverlay} pointerEvents="auto">
           <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />

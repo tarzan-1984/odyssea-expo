@@ -42,6 +42,7 @@ export interface AuthContextValue {
   resetAuthState: () => void;
   updateUserLocation: (latitude: number, longitude: number, zipCode: string) => Promise<void>;
   clearUserLocation: () => Promise<void>;
+  updateUserAvatar: (avatarUrl: string) => Promise<void>;
 }
 
 // Create context
@@ -344,6 +345,23 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }));
   }, []);
 
+  const updateUserAvatar = useCallback(async (avatarUrl: string) => {
+    if (!authState.user) return;
+    const updatedUser = { ...authState.user, profilePhoto: avatarUrl, avatar: avatarUrl } as User;
+
+    try {
+      await secureStorage.setItemAsync('user', JSON.stringify(updatedUser));
+      console.log('💾 [AuthContext] Avatar saved to storage');
+    } catch (error) {
+      console.error('❌ [AuthContext] Failed to save avatar:', error);
+    }
+
+    setAuthState(prev => ({
+      ...prev,
+      user: updatedUser,
+    }));
+  }, [authState.user]);
+
   const resetAuthState = useCallback(async () => {
     console.log('🔄 [AuthContext] Resetting auth state');
     
@@ -384,6 +402,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     resetAuthState,
     updateUserLocation,
     clearUserLocation,
+    updateUserAvatar,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -35,6 +35,7 @@ export default function FinalVerifyScreen() {
   const [zip, setZip] = useState('');
   const formatDate = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
   const [date, setDate] = useState(formatDate(new Date()));
+  const [locationLabel, setLocationLabel] = useState<string | null>(null);
   
   const formatLastUpdate = (date: Date | null): string => {
     if (!date) return '';
@@ -59,6 +60,15 @@ export default function FinalVerifyScreen() {
   const [hasLocationPermission, setHasLocationPermission] = useState<boolean | null>(null);
   const [isLocationReady, setIsLocationReady] = useState(false);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+
+  const formatAddressLabel = useCallback((info: Partial<Location.LocationGeocodedAddress>): string => {
+    const city = info.city || info.subregion || info.district || '';
+    const regionCode = (info.region || '').split(' ')[0];
+    const postalCode = info.postalCode || '';
+    const country = info.country === 'United States' ? 'USA' : (info.country || info.isoCountryCode || '');
+    const parts = [city, regionCode, postalCode, country].filter(Boolean);
+    return parts.join(' ');
+  }, []);
 
   // Start background location tracking
   const startBackgroundLocationTracking = useCallback(async () => {
@@ -110,15 +120,15 @@ export default function FinalVerifyScreen() {
       await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
         accuracy: Location.Accuracy.Balanced,
         timeInterval: LOCATION_UPDATE_INTERVAL,
-        // distanceInterval: минимальное расстояние (в метрах) для нового обновления
-        // ПОВЕДЕНИЕ НА iOS И Android:
-        // - iOS: distanceInterval=0 позволяет получать обновления при любом движении
-        //   (но timeInterval может игнорироваться системой)
-        // - Android: distanceInterval=0 работает аналогично
-        //   (но Android 8.0+ ограничивает частоту обновлений системой)
-        // РЕШЕНИЕ: Используем 0 для получения всех обновлений от системы,
-        // но фильтруем их по времени вручную в locationTask.ts (одинаково на iOS и Android)
-        distanceInterval: 0, // Принимаем все обновления, фильтруем по времени сами
+        // distanceInterval: minimum distance (meters) for a new update
+        // BEHAVIOR ON iOS AND ANDROID:
+        // - iOS: distanceInterval=0 accepts all updates for any movement
+        //   (timeInterval may be ignored by the system)
+        // - Android: distanceInterval=0 behaves similarly
+        //   (Android 8.0+ can throttle update frequency at OS level)
+        // SOLUTION: Use 0 to accept all updates from the system,
+        // then filter by time in locationTask.ts (same logic on iOS and Android)
+        distanceInterval: 0, // Accept all updates; we filter by time ourselves
         foregroundService: {
           notificationTitle: 'Location Tracking',
           notificationBody: `Tracking your location every ${intervalInMinutes} minutes`,
@@ -181,6 +191,16 @@ export default function FinalVerifyScreen() {
         console.log('🔄 [BackgroundTracking] Restarting task on mount to apply current interval');
         startBackgroundLocationTracking();
       }
+
+      // Prepare address label for saved location
+      (async () => {
+        try {
+          const [geo] = await Location.reverseGeocodeAsync({ latitude, longitude });
+          if (geo) {
+            setLocationLabel(formatAddressLabel(geo));
+          }
+        } catch {}
+      })();
     }
   }, [authState.userLocation, authState.userZipCode, automaticLocationSharing, startBackgroundLocationTracking]); // Run when location data is available
 
@@ -218,6 +238,14 @@ export default function FinalVerifyScreen() {
             if (zipCode) {
               setZip(zipCode);
             }
+
+            // Update address label from reverse geocode
+            try {
+              const [geo] = await Location.reverseGeocodeAsync({ latitude, longitude });
+              if (geo) {
+                setLocationLabel(formatAddressLabel(geo));
+              }
+            } catch {}
 
             mapRef.current?.animateToRegion(updateRegion, 1000);
           }
@@ -285,6 +313,7 @@ export default function FinalVerifyScreen() {
           if (postalCode) {
             setZip(postalCode);
           }
+          setLocationLabel(formatAddressLabel(reverseGeocode[0]));
         }
       } catch (geoError) {
         console.warn('Failed to get ZIP code from geocoding:', geoError);
@@ -350,7 +379,12 @@ export default function FinalVerifyScreen() {
             Welcome to application, {firstName}
           </Text>
           
-          <View style={styles.profileIcon}>
+          <TouchableOpacity
+            style={styles.profileIcon}
+            onPress={() => router.push('/(tabs)/profile')}
+            accessibilityRole="button"
+            accessibilityLabel="Open profile"
+          >
             {profilePhoto ? (
               <Image 
                 source={{ uri: profilePhoto }} 
@@ -360,7 +394,7 @@ export default function FinalVerifyScreen() {
             ) : (
               <Text style={styles.profileText}>{initials}</Text>
             )}
-          </View>
+          </TouchableOpacity>
         </View>
         
         <View style={styles.contentWrapper}>
@@ -393,6 +427,15 @@ export default function FinalVerifyScreen() {
                     <PinMapIcon />
                   </View>
                 </>
+              )}
+
+              {/* Address label overlay */}
+              {userLocation && locationLabel && (
+                <View style={styles.addressBadge} pointerEvents="none">
+                  <Text style={styles.addressText} numberOfLines={1}>
+                    {locationLabel}
+                  </Text>
+                </View>
               )}
             </View>
             
@@ -583,6 +626,23 @@ export default function FinalVerifyScreen() {
     top: '50%',
     zIndex: 3,
     transform: [{ translateX: -46 }, { translateY: -46 }],
+  },
+  addressBadge: {
+    position: 'absolute',
+    bottom: rem(60),
+    left: '50%',
+    transform: [{ translateX: -150 }],
+    maxWidth: rem(300),
+    paddingHorizontal: rem(17),
+    paddingVertical: rem(5),
+    backgroundColor: 'rgba(41, 41, 102, 0.8)',
+    borderRadius: 5,
+    zIndex: 10,
+  },
+  addressText: {
+    color: colors.neutral.white,
+    fontSize: fp(14),
+    fontFamily: fonts["400"],
   },
   customMarker: {
     alignItems: 'center',

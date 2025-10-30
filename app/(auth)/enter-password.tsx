@@ -250,7 +250,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   containerWithMessage: {
-    paddingTop: rem(20), // Минимальный отступ когда есть сообщение
+    paddingTop: rem(20), // Minimal top padding when the message is visible
   },
   infoContainer: {
     backgroundColor: 'rgba(52, 199, 89, 0.1)',
