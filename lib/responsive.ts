@@ -28,23 +28,38 @@ export const hp = (size: number): number => {
  * Get responsive font size
  * @param size - font size in base units
  * @returns responsive font size
+ * On base device (390x844), returns exactly the same value as passed
  */
 export const fp = (size: number): number => {
-  const scale = Math.min(screenWidth / baseWidth, screenHeight / baseHeight);
+  // Use width-based scaling for font sizes (more consistent across devices)
+  // For base device (390x844), screenWidth / baseWidth = 390 / 390 = 1.0
+  const scale = screenWidth / baseWidth;
   const newSize = size * scale;
   
-  // Ensure minimum font size for readability
-  return Math.max(newSize, 12);
+  // Return scaled size rounded to nearest pixel
+  return PixelRatio.roundToNearestPixel(newSize);
 };
 
 /**
  * Get responsive padding/margin (like rem)
  * @param size - size in base units
  * @returns responsive size
+ * On base device (390x844), returns exactly the same value as passed
+ * Uses average of width and height scaling to account for both dimensions
  */
 export const rem = (size: number): number => {
-  const scale = Math.min(screenWidth / baseWidth, screenHeight / baseHeight);
-  return size * scale;
+  // Calculate scale factors for width and height
+  const widthScale = screenWidth / baseWidth;
+  const heightScale = screenHeight / baseHeight;
+  
+  // Use average of both scales to account for both dimensions
+  // For base device (390x844): (1.0 + 1.0) / 2 = 1.0
+  const scale = (widthScale + heightScale) / 2;
+  
+  const newSize = size * scale;
+  
+  // Return scaled size rounded to nearest pixel
+  return PixelRatio.roundToNearestPixel(newSize);
 };
 
 /**

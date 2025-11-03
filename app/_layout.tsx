@@ -6,6 +6,8 @@ import { View, StyleSheet } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { fonts } from '@/lib';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
+import { WebSocketProvider } from '@/context/WebSocketContext';
+import { OnlineStatusProvider } from '@/context/OnlineStatusContext';
 import { useLocationPermission } from '@/hooks/useLocationPermission';
 import LocationPermissionModal from '@/components/common/LocationPermissionModal';
 // Import background location task to register it
@@ -163,7 +165,11 @@ export default function RootLayout() {
 
   return (
     <AuthProvider>
-      <RootLayoutNav />
+      <WebSocketProvider>
+        <OnlineStatusProvider>
+          <RootLayoutNav />
+        </OnlineStatusProvider>
+      </WebSocketProvider>
     </AuthProvider>
   );
 }

@@ -79,7 +79,7 @@ export default function FinalVerifyScreen() {
       if (foregroundStatus.status !== 'granted') {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') {
-          alert('Для работы автоматического обновления локации нужно разрешить использование геолокации в настройках приложения.');
+          alert('Background location updates require location permission. Please enable location access in app settings.');
           return;
         }
       }
@@ -87,7 +87,7 @@ export default function FinalVerifyScreen() {
       // Request background permissions
       const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
       if (backgroundStatus !== 'granted') {
-        alert('Для автоматического обновления локации нужно разрешить "Всегда" использовать геолокацию.\n\nНастройки → Конфиденциальность → Службы геолокации → odysseaexpo → Выберите "Всегда"');
+        alert('To enable automatic background location updates, set Location permission to "Always".\n\nSettings → Privacy & Security → Location Services → odysseaexpo → Select "Always"');
         return;
       }
 

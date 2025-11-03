@@ -125,8 +125,6 @@ export default function ProfileScreen() {
     }
   }, [pickedAvatar, pickedMeta, authState.user, updateUserAvatar]);
   
-  console.log('pppppppww', userDetails?.organized_data?.vehicle);
-  
   return (
     <View style={styles.screenWrap}>
       <View style={{ height: insets.top, backgroundColor: colors.primary.violet }} />
