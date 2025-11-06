@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator } from 'react-native';
 import { colors, fonts, rem, fp, borderRadius } from '@/lib';
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useRouter } from 'expo-router';
 import BottomNavigation from "../../components/navigation/BottomNavigation";
 import Svg, { Path } from 'react-native-svg';
 import { useChatRooms } from '@/hooks/useChatRooms';
@@ -10,6 +11,7 @@ import { useWebSocket } from '@/context/WebSocketContext';
 import { useOnlineStatusContext } from '@/context/OnlineStatusContext';
 import ChatListItem, { ChatRoom } from '@/components/ChatListItem';
 import ContactsModal from '@/components/modals/ContactsModal';
+import { chatApi } from '@/app-api/chatApi';
 
 type FilterType = 'all' | 'muted' | 'unread' | 'favorite';
 
@@ -31,16 +33,23 @@ const filterOptions: FilterOption[] = [
  */
 export default function MessagesScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const { authState } = useAuth();
   const { isConnected } = useWebSocket();
   const { isUserOnline } = useOnlineStatusContext();
-  const { chatRooms, isLoading, error, loadChatRooms } = useChatRooms();
+  const { chatRooms, isLoading, error, loadChatRooms, updateChatRoom } = useChatRooms();
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [isFilterDropdownOpen, setIsFilterDropdownOpen] = useState(false);
   const [selectedFilter, setSelectedFilter] = useState<FilterType>('all');
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [isContactsOpen, setIsContactsOpen] = useState(false);
+  const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
+  
+  // Function to close all dropdowns
+  const closeAllDropdowns = () => {
+    setOpenDropdownId(null);
+  };
 
   // Debounce search query (similar to Next.js implementation)
   React.useEffect(() => {
@@ -60,12 +69,80 @@ export default function MessagesScreen() {
     setIsFilterDropdownOpen(false);
   };
 
-  // Get display name for chat room (for search filtering)
-  const getChatDisplayName = (chatRoom: ChatRoom): string => {
-    if (chatRoom.name) {
-      return chatRoom.name;
-    }
+  // Determine if all chats are muted (mirrors Next.js logic)
+  const allChatsMuted = useMemo(() => {
+    return chatRooms.length > 0 && chatRooms.every(room => room.isMuted);
+  }, [chatRooms]);
 
+  // Smart mute/unmute function (mirrors Next.js handleSmartMuteToggle)
+  const handleSmartMuteToggle = async () => {
+    if (allChatsMuted) {
+      // All chats are muted, so unmute all
+      await handleUnmuteAll();
+    } else {
+      // Some or no chats are muted, so mute all
+      await handleMuteAll();
+    }
+  };
+
+  // Mute all unmuted chats (mirrors Next.js handleMuteAll)
+  const handleMuteAll = async () => {
+    try {
+      // Get all unmuted chat room IDs
+      const unmutedChatRoomIds = chatRooms
+        .filter(room => !room.isMuted)
+        .map(room => room.id);
+
+      if (unmutedChatRoomIds.length === 0) {
+        return;
+      }
+
+      // Call the API with specific chat room IDs and mute action
+      const result = await chatApi.muteChatRooms(unmutedChatRoomIds, 'mute');
+
+      // Update the store with the muted status for all affected chat rooms
+      result.chatRoomIds.forEach(chatRoomId => {
+        updateChatRoom(chatRoomId, { isMuted: true });
+      });
+
+      // Refresh chat list to update UI
+      await loadChatRooms();
+    } catch (error) {
+      console.error('Failed to mute all chats:', error);
+    }
+  };
+
+  // Unmute all muted chats (mirrors Next.js handleUnmuteAll)
+  const handleUnmuteAll = async () => {
+    try {
+      // Get all muted chat room IDs
+      const mutedChatRoomIds = chatRooms
+        .filter(room => room.isMuted)
+        .map(room => room.id);
+
+      if (mutedChatRoomIds.length === 0) {
+        return;
+      }
+
+      // Call the API with specific chat room IDs and unmute action
+      const result = await chatApi.muteChatRooms(mutedChatRoomIds, 'unmute');
+
+      // Update the store with the unmuted status for all affected chat rooms
+      result.chatRoomIds.forEach(chatRoomId => {
+        updateChatRoom(chatRoomId, { isMuted: false });
+      });
+
+      // Refresh chat list to update UI
+      await loadChatRooms();
+    } catch (error) {
+      console.error('Failed to unmute all chats:', error);
+    }
+  };
+
+  // Get display name for chat room (for search filtering)
+  // Mirrors Next.js ChatList.getChatDisplayName logic
+  const getChatDisplayName = (chatRoom: ChatRoom): string => {
+    // For DIRECT chats, always show the other participant's name first
     if (chatRoom.type === 'DIRECT' && chatRoom.participants.length === 2) {
       const otherParticipant = chatRoom.participants.find(
         p => p.user.id !== authState.user?.id
@@ -75,6 +152,12 @@ export default function MessagesScreen() {
       }
     }
 
+    // For other chats, use the chat name if available
+    if (chatRoom.name) {
+      return chatRoom.name;
+    }
+
+    // For group chats, show participant names
     if (chatRoom.type === 'GROUP' || chatRoom.type === 'LOAD') {
       const participantNames = chatRoom.participants
         .slice(0, 2)
@@ -87,11 +170,29 @@ export default function MessagesScreen() {
   };
 
   // Filter chat rooms based on search query and selected filter
+  // Mirrors Next.js ChatList.filteredChatRooms logic
   const filteredChatRooms = useMemo(() => {
     return chatRooms.filter(chatRoom => {
-      // Apply search filter
-      const matchesSearch = !debouncedSearchQuery.trim() ||
-        getChatDisplayName(chatRoom).toLowerCase().includes(debouncedSearchQuery.toLowerCase());
+      // Apply search filter - search by display name and also by individual name parts
+      const searchQueryLower = debouncedSearchQuery.trim().toLowerCase();
+      let matchesSearch = !searchQueryLower;
+      
+      if (searchQueryLower) {
+        const displayName = getChatDisplayName(chatRoom).toLowerCase();
+        matchesSearch = displayName.includes(searchQueryLower);
+        
+        // For DIRECT chats, also search by firstName and lastName separately
+        if (!matchesSearch && chatRoom.type === 'DIRECT' && chatRoom.participants.length === 2) {
+          const otherParticipant = chatRoom.participants.find(
+            p => p.user.id !== authState.user?.id
+          );
+          if (otherParticipant) {
+            const firstName = otherParticipant.user.firstName?.toLowerCase() || '';
+            const lastName = otherParticipant.user.lastName?.toLowerCase() || '';
+            matchesSearch = firstName.includes(searchQueryLower) || lastName.includes(searchQueryLower);
+          }
+        }
+      }
 
       // Apply selected filter
       let matchesFilter = true;
@@ -117,8 +218,8 @@ export default function MessagesScreen() {
 
   const handleChatPress = (chatRoom: ChatRoom) => {
     setSelectedChatId(chatRoom.id);
-    // TODO: Navigate to chat detail screen
-    console.log('Chat pressed:', chatRoom.id);
+    // Navigate to chat detail screen with chatRoomId
+    router.push(`/chat/${chatRoom.id}` as any);
   };
 
   // Close dropdown when clicking outside (simplified for mobile)
@@ -184,12 +285,12 @@ export default function MessagesScreen() {
           {/* Mute All Button */}
           <TouchableOpacity
             style={styles.muteAllButton}
-            onPress={() => {
-              // TODO: Implement mute all functionality
-            }}
+            onPress={handleSmartMuteToggle}
             activeOpacity={0.7}
           >
-            <Text style={styles.muteAllButtonText}>Mute all</Text>
+            <Text style={styles.muteAllButtonText}>
+              {allChatsMuted ? 'Unmute all' : 'Mute all'}
+            </Text>
           </TouchableOpacity>
 
           {/* Filter Dropdown */}
@@ -238,6 +339,10 @@ export default function MessagesScreen() {
           style={styles.content}
           contentContainerStyle={styles.contentContainer}
           showsVerticalScrollIndicator={false}
+          onScrollBeginDrag={() => {
+            // Close any open dropdowns when scrolling starts
+            // This is handled by the ChatListItem component itself
+          }}
         >
           {isLoading && chatRooms.length === 0 ? (
             <View style={styles.loadingContainer}>
@@ -286,6 +391,17 @@ export default function MessagesScreen() {
                     status={userStatus}
                     onPress={handleChatPress}
                     currentUserId={authState.user?.id}
+                    onChatRoomUpdate={updateChatRoom}
+                    isDropdownOpen={openDropdownId === chatRoom.id}
+                    onDropdownToggle={(isOpen, chatId) => {
+                      if (isOpen) {
+                        // Simply set the new dropdown ID - React will close the old Modal automatically
+                        setOpenDropdownId(chatId);
+                      } else {
+                        setOpenDropdownId(null);
+                      }
+                    }}
+                    onCloseAllDropdowns={closeAllDropdowns}
                   />
                 );
               })}

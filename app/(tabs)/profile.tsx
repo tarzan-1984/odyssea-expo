@@ -128,6 +128,7 @@ export default function ProfileScreen() {
   return (
     <View style={styles.screenWrap}>
       <View style={{ height: insets.top, backgroundColor: colors.primary.violet }} />
+      
       <View style={styles.container}>
         {/* Header with time and profile */}
         <View style={styles.header}>
@@ -417,6 +418,7 @@ export default function ProfileScreen() {
           
         </ScrollView>
       </View>
+      
       {/* Bottom Navigation */}
       <BottomNavigation />
     </View>

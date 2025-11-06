@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, TouchableOpacity, Text, StyleSheet, Dimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import { colors, fonts, fp, rem } from '@/lib';
 import Home from '@/icons/Home';
 import ChatIcon from '@/icons/ChatIcon';
 import ProfileIcon from '@/icons/ProfileIcon';
+import { useChatRooms } from '@/hooks/useChatRooms';
 
 const { width } = Dimensions.get('window');
 
@@ -14,9 +15,10 @@ interface NavItemProps {
   route: string;
   isActive?: boolean;
   onPress?: () => void;
+  badgeCount?: number;
 }
 
-const NavItem: React.FC<NavItemProps> = ({ icon, label, route, isActive = false, onPress }) => {
+const NavItem: React.FC<NavItemProps> = ({ icon, label, route, isActive = false, onPress, badgeCount }) => {
   const router = useRouter();
 
   const handlePress = () => {
@@ -31,6 +33,13 @@ const NavItem: React.FC<NavItemProps> = ({ icon, label, route, isActive = false,
     <TouchableOpacity style={styles.navItem} onPress={handlePress}>
       <View style={[styles.iconContainer, isActive && styles.iconContainerActive]}>
         {icon}
+        {badgeCount !== undefined && badgeCount > 0 ? (
+          <View style={styles.badge}>
+            <Text style={styles.badgeText}>
+              {badgeCount > 99 ? '99+' : badgeCount.toString()}
+            </Text>
+          </View>
+        ) : null}
       </View>
       <Text style={[styles.navText, isActive && styles.navTextActive]}>{label}</Text>
     </TouchableOpacity>
@@ -42,6 +51,15 @@ interface BottomNavigationProps {
 }
 
 export default function BottomNavigation({ currentRoute }: BottomNavigationProps) {
+  const { chatRooms } = useChatRooms();
+
+  // Calculate total unread messages count
+  const totalUnreadCount = useMemo(() => {
+    return chatRooms.reduce((total, room) => {
+      return total + (room.unreadCount || 0);
+    }, 0);
+  }, [chatRooms]);
+
   return (
     <View style={styles.bottomNav}>
       <NavItem 
@@ -56,6 +74,7 @@ export default function BottomNavigation({ currentRoute }: BottomNavigationProps
         label=""
         route="/messages"
         isActive={currentRoute === '/messages'}
+        badgeCount={totalUnreadCount}
       />
       
       <NavItem 
@@ -91,9 +110,29 @@ const styles = StyleSheet.create({
   },
   iconContainer: {
     marginBottom: 5,
+    position: 'relative',
   },
   iconContainerActive: {
     // Additional styling for active state if needed
+  },
+  badge: {
+    position: 'absolute',
+    top: -6,
+    right: -8,
+    minWidth: rem(18),
+    height: rem(18),
+    borderRadius: rem(9),
+    backgroundColor: colors.neutral.white,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: rem(4),
+    borderWidth: 1,
+    borderColor: 'rgba(41, 41, 102, 0.1)',
+  },
+  badgeText: {
+    fontSize: fp(10),
+    fontFamily: fonts['700'],
+    color: colors.primary.blue,
   },
   navText: {
     fontSize: fp(12),

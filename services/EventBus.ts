@@ -23,4 +23,7 @@ export const eventBus = new EventBus();
 // App event names
 export const AppEvents = {
   ChatRoomAdded: 'chatRoomAdded',
+  ChatRoomUpdated: 'chatRoomUpdated',
+  WebSocketReconnected: 'webSocketReconnected',
+  WebSocketDisconnect: 'webSocketDisconnect',
 } as const;

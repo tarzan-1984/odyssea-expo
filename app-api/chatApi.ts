@@ -1,6 +1,6 @@
 import { API_BASE_URL } from '@/lib/config';
 import { secureStorage } from '@/utils/secureStorage';
-import { ChatRoom, User } from '@/components/ChatListItem';
+import { ChatRoom, User, Message } from '@/components/ChatListItem';
 
 export interface UsersPagination {
   current_page: number;
@@ -14,6 +14,44 @@ export interface UsersPagination {
 export interface UsersResponse {
   users: User[];
   pagination: UsersPagination;
+}
+
+/**
+ * Archive-related types
+ */
+export interface ArchiveDay {
+  year: number;
+  month: number;
+  day: number;
+  messageCount: number;
+  createdAt: string;
+}
+
+export interface ArchiveMessage {
+  id: string;
+  content: string;
+  senderId: string;
+  chatRoomId: string;
+  createdAt: string;
+  updatedAt: string;
+  isRead: boolean;
+  fileUrl?: string;
+  fileName?: string;
+  fileSize?: number;
+  sender: {
+    id: string;
+    firstName: string;
+    lastName: string;
+  };
+}
+
+export interface ArchiveFile {
+  chatRoomId: string;
+  year: number;
+  month: number;
+  messages: ArchiveMessage[];
+  totalCount: number;
+  createdAt: string;
 }
 
 /**
@@ -84,6 +122,42 @@ class ChatApiClient {
   }
 
   /**
+   * Get messages for a specific chat room with pagination
+   * Mirrors Next.js chatApi.getMessages implementation
+   */
+  async getMessages(
+    chatRoomId: string,
+    page: number = 1,
+    limit: number = 50
+  ): Promise<{
+    messages: Message[];
+    hasMore: boolean;
+    total: number;
+  }> {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      limit: limit.toString(),
+    });
+
+    const response = await this.request<{
+      messages: Message[];
+      pagination: {
+        page: number;
+        limit: number;
+        total: number;
+        pages: number;
+        hasMore: boolean;
+      };
+    }>(`/v1/messages/chat-room/${chatRoomId}?${params}`);
+
+    return {
+      messages: response.messages || [],
+      hasMore: response.pagination?.hasMore || false,
+      total: response.pagination?.total || 0,
+    };
+  }
+
+  /**
    * Create a chat room (DIRECT/GROUP/LOAD)
    */
   async createChatRoom(data: {
@@ -132,6 +206,172 @@ class ChatApiClient {
       total_pages: 1,
     };
     return { users, pagination } as UsersResponse;
+  }
+
+  /**
+   * Toggle mute status for a chat room
+   * Mirrors Next.js chatApi.toggleMuteChatRoom
+   */
+  async toggleMuteChatRoom(chatRoomId: string): Promise<{ chatRoomId: string; userId: string; mute: boolean }> {
+    return this.request<{ chatRoomId: string; userId: string; mute: boolean }>(`/v1/chat-rooms/${chatRoomId}/mute`, {
+      method: 'PUT',
+    });
+  }
+
+  /**
+   * Toggle pin status for a chat room
+   * Mirrors Next.js chatApi.togglePinChatRoom
+   */
+  async togglePinChatRoom(chatRoomId: string): Promise<{ chatRoomId: string; userId: string; pin: boolean }> {
+    return this.request<{ chatRoomId: string; userId: string; pin: boolean }>(`/v1/chat-rooms/${chatRoomId}/pin`, {
+      method: 'PUT',
+    });
+  }
+
+  /**
+   * Mute/unmute multiple chat rooms
+   * Mirrors Next.js chatApi.muteChatRooms
+   */
+  async muteChatRooms(chatRoomIds: string[], action: 'mute' | 'unmute'): Promise<{ userId: string; mutedCount: number; chatRoomIds: string[] }> {
+    return this.request<{ userId: string; mutedCount: number; chatRoomIds: string[] }>('/v1/chat-rooms/mute', {
+      method: 'PUT',
+      body: JSON.stringify({ chatRoomIds, action }),
+    });
+  }
+
+  /**
+   * Mark a specific message as read
+   * Mirrors Next.js chatApi.markMessageAsRead
+   */
+  async markMessageAsRead(messageId: string): Promise<void> {
+    return this.request<void>(`/v1/messages/${messageId}/read`, {
+      method: 'PATCH',
+    });
+  }
+
+  /**
+   * Mark all messages in a chat room as read
+   * Mirrors Next.js chatApi.markChatRoomAsRead
+   */
+  async markChatRoomAsRead(chatRoomId: string): Promise<void> {
+    return this.request<void>(`/v1/chat-rooms/${chatRoomId}/read`, {
+      method: 'PATCH',
+    });
+  }
+
+  /**
+   * Get available archive days for a chat room
+   * Mirrors Next.js messagesArchiveApi.getAvailableArchiveDays
+   */
+  async getAvailableArchiveDays(chatRoomId: string): Promise<ArchiveDay[]> {
+    try {
+      const apiData = await this.request<{
+        success: boolean;
+        data: {
+          success: boolean;
+          data: {
+            availableDays: ArchiveDay[];
+          };
+        };
+      }>(`/v1/messages/archive/chat-rooms/${chatRoomId}/days`);
+     
+      // Handle nested response structure from backend
+      if (apiData && typeof apiData === 'object' && 'data' in apiData) {
+        const nestedData = (apiData as any).data;
+        if (nestedData && nestedData.data && nestedData.data.availableDays) {
+          return nestedData.data.availableDays;
+        }
+        if (nestedData && nestedData.availableDays) {
+          return nestedData.availableDays;
+        }
+      }
+
+      // Fallback: try direct access
+      if (Array.isArray(apiData)) {
+        return apiData;
+      }
+
+      throw new Error('Invalid response structure for getAvailableArchiveDays');
+    } catch (error) {
+      console.error('❌ [ChatAPI] Failed to get available archive days:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Load archived messages for a specific day
+   * Mirrors Next.js messagesArchiveApi.loadArchivedMessages
+   */
+  async loadArchivedMessages(
+    chatRoomId: string,
+    year: number,
+    month: number,
+    day: number
+  ): Promise<ArchiveFile> {
+    try {
+      const response = await this.request<{
+        success: boolean;
+        data: {
+          messages: ArchiveMessage[];
+          year: number;
+          month: number;
+          totalCount: number;
+          createdAt: string;
+        };
+      }>(`/v1/messages/archive/chat-rooms/${chatRoomId}/${year}/${month}/${day}`);
+      
+      // Handle response structure from backend
+      // Expected structure: { success: true, data: { messages: [], year, month, totalCount, createdAt } }
+      if (response && typeof response === 'object' && 'data' in response) {
+        const data = (response as any).data;
+        
+        // Check if data has messages array (direct structure)
+        if (data && typeof data === 'object' && 'messages' in data) {
+          const archiveFile: ArchiveFile = {
+            chatRoomId,
+            year: data.year || year,
+            month: data.month || month,
+            messages: data.messages || [],
+            totalCount: data.totalCount || 0,
+            createdAt: data.createdAt || new Date().toISOString(),
+          };
+          return archiveFile;
+        }
+        
+        // Check if data has nested data structure (Next.js API route wrapper)
+        if (data && typeof data === 'object' && 'data' in data) {
+          const nestedData = data.data;
+          if (nestedData && typeof nestedData === 'object' && 'messages' in nestedData) {
+            const archiveFile: ArchiveFile = {
+              chatRoomId,
+              year: nestedData.year || year,
+              month: nestedData.month || month,
+              messages: nestedData.messages || [],
+              totalCount: nestedData.totalCount || 0,
+              createdAt: nestedData.createdAt || new Date().toISOString(),
+            };
+            return archiveFile;
+          }
+        }
+      }
+
+      // Fallback: try direct access (response is ArchiveFile)
+      if (response && typeof response === 'object' && 'messages' in response) {
+        const archiveFile = response as any;
+        return {
+          chatRoomId,
+          year: archiveFile.year || year,
+          month: archiveFile.month || month,
+          messages: archiveFile.messages || [],
+          totalCount: archiveFile.totalCount || 0,
+          createdAt: archiveFile.createdAt || new Date().toISOString(),
+        };
+      }
+
+      throw new Error('Invalid response structure for loadArchivedMessages');
+    } catch (error) {
+      throw error;
+    }
   }
 }
 

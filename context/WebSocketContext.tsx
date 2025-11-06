@@ -6,6 +6,7 @@ import { WS_URL } from '@/lib/config';
 import { AppState, AppStateStatus } from 'react-native';
 import { eventBus, AppEvents } from '@/services/EventBus';
 import { chatApi } from '@/app-api/chatApi';
+import { ChatRoom } from '@/components/ChatListItem';
 
 // WebSocket context interface
 interface WebSocketContextType {
@@ -112,11 +113,18 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       transports: ['websocket', 'polling'], // Fallback to polling if websocket fails
       timeout: 20000,
       forceNew: true,
+      // Enable automatic reconnection with exponential backoff
+      reconnection: true,
+      reconnectionAttempts: maxReconnectAttempts,
+      reconnectionDelay: 1000, // Initial delay
+      reconnectionDelayMax: 30000, // Max delay
+      randomizationFactor: 0.5, // Add randomness to prevent thundering herd
     });
 
     // Connection event handlers
     newSocket.on('connect', () => {
       console.log('✅ [WebSocket] Connected');
+      const wasDisconnected = !isConnected;
       setIsConnected(true);
       reconnectAttempts.current = 0;
 
@@ -124,6 +132,13 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
+      }
+
+      // If we were disconnected and now reconnected, trigger sync
+      // This handles the case when device was offline and missed messages
+      if (wasDisconnected) {
+        console.log('🔄 [WebSocket] Reconnected after disconnection, triggering sync...');
+        eventBus.emit(AppEvents.WebSocketReconnected, {});
       }
     });
 
@@ -139,24 +154,82 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       setIsConnected(false);
 
       // Attempt to reconnect if disconnected unexpectedly
-      if (reason === 'io server disconnect' || reason === 'transport close') {
+      // Handle various disconnect reasons:
+      // - 'io server disconnect': Server closed connection
+      // - 'transport close': Network issue or connection lost
+      // - 'io client disconnect': Client manually disconnected (don't reconnect)
+      // - 'ping timeout': Server didn't respond to ping (network issue)
+      if (reason === 'io server disconnect' || 
+          reason === 'transport close' || 
+          reason === 'ping timeout' ||
+          reason === 'transport error') {
         if (reconnectAttempts.current < maxReconnectAttempts) {
           const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
-          console.log(`🔄 [WebSocket] Attempting reconnect in ${delay}ms (attempt ${reconnectAttempts.current + 1}/${maxReconnectAttempts})`);
+          console.log(`🔄 [WebSocket] Disconnected (${reason}), attempting reconnect in ${delay}ms (attempt ${reconnectAttempts.current + 1}/${maxReconnectAttempts})`);
+          
+          // Clear any existing timeout
+          if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current);
+          }
           
           reconnectTimeoutRef.current = setTimeout(() => {
             reconnectAttempts.current += 1;
+            console.log(`🔄 [WebSocket] Retrying connection (attempt ${reconnectAttempts.current}/${maxReconnectAttempts})...`);
             connect();
           }, delay);
         } else {
-          console.error('❌ [WebSocket] Max reconnection attempts reached');
+          console.error(`❌ [WebSocket] Max reconnection attempts (${maxReconnectAttempts}) reached. Stopping reconnection attempts.`);
+          console.log('💡 [WebSocket] Tip: Check your network connection or restart the app to try again.');
         }
+      } else if (reason === 'io client disconnect') {
+        // Client manually disconnected, don't reconnect
+        console.log('ℹ️ [WebSocket] Client manually disconnected, not attempting reconnect');
+        reconnectAttempts.current = 0;
       }
     });
 
     newSocket.on('connect_error', (error) => {
       console.error('❌ [WebSocket] Connection error:', error.message);
       setIsConnected(false);
+      
+      // Attempt to reconnect on connection error
+      // This handles network issues, server unavailable, etc.
+      if (reconnectAttempts.current < maxReconnectAttempts) {
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
+        console.log(`🔄 [WebSocket] Connection error, attempting reconnect in ${delay}ms (attempt ${reconnectAttempts.current + 1}/${maxReconnectAttempts})`);
+        
+        // Clear any existing timeout
+        if (reconnectTimeoutRef.current) {
+          clearTimeout(reconnectTimeoutRef.current);
+        }
+        
+        reconnectTimeoutRef.current = setTimeout(() => {
+          reconnectAttempts.current += 1;
+          console.log(`🔄 [WebSocket] Retrying connection (attempt ${reconnectAttempts.current}/${maxReconnectAttempts})...`);
+          connect();
+        }, delay);
+      } else {
+        console.error(`❌ [WebSocket] Max reconnection attempts (${maxReconnectAttempts}) reached. Stopping reconnection attempts.`);
+      }
+    });
+
+    // Handle Socket.IO reconnection events
+    newSocket.on('reconnect_attempt', (attemptNumber: number) => {
+      console.log(`🔄 [WebSocket] Socket.IO reconnection attempt ${attemptNumber}/${maxReconnectAttempts}`);
+    });
+
+    newSocket.on('reconnect', (attemptNumber: number) => {
+      console.log(`✅ [WebSocket] Socket.IO reconnected successfully after ${attemptNumber} attempts`);
+      reconnectAttempts.current = 0; // Reset our counter when Socket.IO reconnects
+    });
+
+    newSocket.on('reconnect_error', (error: Error) => {
+      console.error(`❌ [WebSocket] Socket.IO reconnection error:`, error.message);
+    });
+
+    newSocket.on('reconnect_failed', () => {
+      console.error(`❌ [WebSocket] Socket.IO reconnection failed after ${maxReconnectAttempts} attempts`);
+      reconnectAttempts.current = maxReconnectAttempts; // Mark as failed
     });
 
     // Handle server's connected event
@@ -166,8 +239,34 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
     // Handle new message from server
     newSocket.on('newMessage', (data: any) => {
-      console.log('📨 [WebSocket] New message received:', data);
-      // TODO: Handle new messages (update chat store, show notifications, etc.)
+      // Handle case where data comes as array (from onAny handler)
+      const messageData = Array.isArray(data) ? data[0] : data;
+
+      if (messageData && messageData.chatRoomId && messageData.message) {
+        const isMessageFromCurrentUser = messageData.message.senderId === currentUser?.id;
+
+        // Prepare updates for chat room
+        const updates: any = {
+          lastMessage: messageData.message,
+          updatedAt: messageData.message.createdAt,
+        };
+
+        // Increment unreadCount only if:
+        // 1. The message is NOT from the current user
+        // 2. Currently there's no chat screen implementation, so we always increment for others' messages
+        // TODO: When chat screen is implemented, check if this is the current active chat
+        if (!isMessageFromCurrentUser) {
+          // We need to get current unreadCount from the chat room in the list
+          // For now, emit event with increment flag and let useChatRooms handle it
+          updates.unreadCountIncrement = 1;
+        }
+
+        // Emit event to update chat room in real-time
+        eventBus.emit(AppEvents.ChatRoomUpdated, {
+          chatRoomId: messageData.chatRoomId,
+          updates,
+        });
+      }
     });
 
     // Handle chat room updates
@@ -177,26 +276,94 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     });
 
     // Handle chat room created / user added to a chat room
+    // Mirrors Next.js WebSocketContext.tsx chatRoomCreated handler
     newSocket.on('chatRoomCreated', async (data: any) => {
       try {
-        const roomId = data?.chatRoom?.id || data?.chatRoomId;
-        if (roomId) {
-          const room = await chatApi.getChatRoom(roomId);
-          eventBus.emit(AppEvents.ChatRoomAdded, room);
-        } else if (data?.chatRoom) {
-          eventBus.emit(AppEvents.ChatRoomAdded, data.chatRoom);
+        console.log('📦 [WebSocket] chatRoomCreated event received:', data);
+        
+        // Backend may emit either the chat room object directly or wrapped as { chatRoom }
+        const raw: any = data && 'chatRoom' in data ? data.chatRoom : data;
+
+        if (raw && raw.id) {
+          // Normalize participant avatar field (profilePhoto -> avatar)
+          // Mirrors Next.js normalization logic
+          const normalized: ChatRoom = {
+            ...raw,
+            participants: Array.isArray(raw.participants)
+              ? raw.participants.map((p: any) => ({
+                  ...p,
+                  user: {
+                    ...p.user,
+                    avatar: p.user?.avatar ?? p.user?.profilePhoto ?? '',
+                  },
+                }))
+              : [],
+          };
+
+          console.log('✅ [WebSocket] Normalized chat room:', normalized.id);
+          
+          // Emit event to add chat room to list
+          eventBus.emit(AppEvents.ChatRoomAdded, normalized);
+
+          // Automatically join the WebSocket room for the new chat
+          // This ensures the user receives real-time messages in this chat
+          if (newSocket && newSocket.connected) {
+            console.log('🔌 [WebSocket] Joining chat room:', normalized.id);
+            newSocket.emit('joinChatRoom', { chatRoomId: normalized.id });
+          }
+        } else {
+          console.error('❌ [WebSocket] Invalid chatRoomCreated payload:', data);
         }
-      } catch {}
+      } catch (error) {
+        console.error('❌ [WebSocket] Error handling chatRoomCreated:', error);
+      }
     });
 
+    // Handle user added to a chat room
+    // Mirrors Next.js WebSocketContext.tsx addedToChatRoom handler
     newSocket.on('addedToChatRoom', async (data: any) => {
       try {
+        console.log('📦 [WebSocket] addedToChatRoom event received:', data);
+        
         const roomId = data?.chatRoomId;
         if (roomId) {
-          const room = await chatApi.getChatRoom(roomId);
-          eventBus.emit(AppEvents.ChatRoomAdded, room);
+          // Try to get chat room from API to ensure we have full data
+          // This is needed because addedToChatRoom might not include full chat room data
+          try {
+            const room = await chatApi.getChatRoom(roomId);
+            
+            // Normalize participant avatar field (profilePhoto -> avatar)
+            const normalized: ChatRoom = {
+              ...room,
+              participants: Array.isArray(room.participants)
+                ? room.participants.map((p: any) => ({
+                    ...p,
+                    user: {
+                      ...p.user,
+                      avatar: p.user?.avatar ?? p.user?.profilePhoto ?? '',
+                    },
+                  }))
+                : [],
+            };
+            
+            console.log('✅ [WebSocket] Loaded and normalized chat room from API:', normalized.id);
+            eventBus.emit(AppEvents.ChatRoomAdded, normalized);
+            
+            // Automatically join the WebSocket room for the new chat
+            if (newSocket && newSocket.connected) {
+              console.log('🔌 [WebSocket] Joining chat room:', normalized.id);
+              newSocket.emit('joinChatRoom', { chatRoomId: normalized.id });
+            }
+          } catch (apiError) {
+            console.error('❌ [WebSocket] Failed to load chat room from API:', apiError);
+            // If API fails, we can't add the chat room, but log the error
+          }
+        } else {
+          console.error('❌ [WebSocket] Invalid addedToChatRoom payload - missing chatRoomId:', data);
         }
-      } catch {}
+      } catch (error) {
+        console.error('❌ [WebSocket] Error handling addedToChatRoom:', error);
+      }
     });
 
     // Handle typing indicators
@@ -210,6 +377,31 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     // These events will be handled by useOnlineStatusWithWebSocket hook
     newSocket.on('userOnline', (data: { userId: string; chatRoomId?: string; isOnline: boolean }) => {
       // Status will be updated by useOnlineStatusWithWebSocket hook listening to socket events
+    });
+
+    // Handle bulk messages marked as read (when markChatRoomAsRead is called)
+    // This updates unreadCount in the chat room list
+    newSocket.on('messagesMarkedAsRead', (data: { chatRoomId: string; messageIds: string[]; userId: string }) => {
+      console.log('✅ [WebSocket] Messages marked as read:', data);
+      
+      // Only update unreadCount if this is for the current user
+      // When current user marks messages as read, unreadCount should decrease
+      if (data.userId === currentUser?.id) {
+        // Calculate how many messages were marked as read
+        const readCount = data.messageIds.length;
+        
+        console.log(`📉 [WebSocket] Decreasing unreadCount by ${readCount} for chat room ${data.chatRoomId}`);
+        
+        // Update chat room's unreadCount through eventBus
+        // This will trigger useChatRooms to update the state
+        eventBus.emit(AppEvents.ChatRoomUpdated, {
+          chatRoomId: data.chatRoomId,
+          updates: {
+            // Decrement unreadCount by the number of messages marked as read
+            unreadCountDecrement: readCount,
+          },
+        });
+      }
     });
 
     setSocket(newSocket);
@@ -258,8 +450,9 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   }, [socket, isConnected]);
 
   const markMessageAsRead = useCallback((messageId: string, chatRoomId: string) => {
-    if (socket && isConnected) {
-      socket.emit('markMessageAsRead', { messageId, chatRoomId });
+    if (socket && isConnected && socket.connected) {
+      // Send messageRead event, matching Next.js implementation
+      socket.emit('messageRead', { messageId, chatRoomId });
     }
   }, [socket, isConnected]);
 
@@ -278,13 +471,35 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     }
   }, [currentUser, isConnected, socket, connect, disconnect]);
 
+  // Listen for WebSocketDisconnect event (triggered on logout)
+  useEffect(() => {
+    const off = eventBus.on(AppEvents.WebSocketDisconnect, () => {
+      console.log('🔌 [WebSocket] Received WebSocketDisconnect event, disconnecting...');
+      disconnect();
+    });
+    
+    return () => { off(); };
+  }, [disconnect]);
+
   // Handle app state changes (reconnect when app comes to foreground)
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
-      if (nextAppState === 'active' && currentUser && !isConnected) {
-        // App came to foreground, try to reconnect
-        console.log('📱 [WebSocket] App became active, attempting to reconnect...');
-        connect();
+      if (nextAppState === 'active' && currentUser) {
+        if (!isConnected) {
+          // App came to foreground and we're disconnected, reset attempts and try to reconnect
+          console.log('📱 [WebSocket] App became active, resetting reconnection attempts and attempting to reconnect...');
+          reconnectAttempts.current = 0; // Reset attempts when app comes to foreground
+          
+          // Clear any existing timeout
+          if (reconnectTimeoutRef.current) {
+            clearTimeout(reconnectTimeoutRef.current);
+            reconnectTimeoutRef.current = null;
+          }
+          
+          connect();
+        } else {
+          console.log('✅ [WebSocket] App became active, already connected');
+        }
       }
     });
 

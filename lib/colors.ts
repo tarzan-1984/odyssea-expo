@@ -10,6 +10,7 @@ export const colors = {
     lightBlue: '#5AC8FA',   // Light blue for profile and secondary elements
     green: '#70FFAE',
     violet: '#6066C5',
+    greyIcon: '#8383AB'
   },
 
   // Secondary colors

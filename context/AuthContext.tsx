@@ -363,19 +363,43 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, [authState.user]);
 
   const resetAuthState = useCallback(async () => {
-    console.log('🔄 [AuthContext] Resetting auth state');
+    console.log('🔄 [AuthContext] Resetting auth state and clearing all app data');
     
-    // Clear secure storage
     try {
+      // Clear secure storage (user data, tokens, location)
       await secureStorage.deleteItemAsync('accessToken');
       await secureStorage.deleteItemAsync('refreshToken');
       await secureStorage.deleteItemAsync('user');
       await secureStorage.deleteItemAsync('userLocation');
-      console.log('💾 [AuthContext] Cleared storage');
+      console.log('💾 [AuthContext] Cleared secure storage');
+      
+      // Clear chat messages cache
+      const { messagesCacheService } = await import('@/services/MessagesCacheService');
+      await messagesCacheService.clearAllMessages();
+      console.log('💾 [AuthContext] Cleared messages cache');
+      
+      // Clear chat rooms cache
+      const { chatCacheService } = await import('@/services/ChatCacheService');
+      await chatCacheService.clearCache();
+      console.log('💾 [AuthContext] Cleared chat rooms cache');
+      
+      // Clear app settings (reset to defaults)
+      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+      await AsyncStorage.removeItem('@odyssea_app_settings');
+      console.log('💾 [AuthContext] Cleared app settings (reset to defaults)');
+      
+      // Disconnect WebSocket if connected
+      const { eventBus, AppEvents } = await import('@/services/EventBus');
+      eventBus.emit(AppEvents.WebSocketDisconnect);
+      console.log('💾 [AuthContext] Disconnected WebSocket');
+      
+      console.log('✅ [AuthContext] All app data cleared successfully');
     } catch (error) {
-      console.error('❌ [AuthContext] Failed to clear storage:', error);
+      console.error('❌ [AuthContext] Failed to clear some data:', error);
+      // Continue with state reset even if some cleanup failed
     }
     
+    // Reset auth state
     setAuthState({
       isLoading: false,
       error: null,

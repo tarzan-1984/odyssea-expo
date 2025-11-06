@@ -112,6 +112,43 @@ class ChatCacheService {
   }
 
   /**
+   * Update a specific chat room in cache
+   */
+  async updateChatRoom(chatRoomId: string, updates: Partial<ChatRoom>): Promise<void> {
+    try {
+      const storedData = await AsyncStorage.getItem(CHAT_ROOMS_KEY);
+      if (!storedData) {
+        return;
+      }
+
+      const storedChatRooms: StoredChatRoom[] = JSON.parse(storedData);
+      const updatedRooms = storedChatRooms.map(room => {
+        if (room.id === chatRoomId) {
+          const updated = {
+            ...room,
+            ...updates,
+            cachedAt: Date.now(), // Update cache timestamp
+          };
+          // Ensure unreadCount is explicitly saved (even if it's 0)
+          if (updates.unreadCount !== undefined) {
+            updated.unreadCount = updates.unreadCount;
+          }
+          return updated;
+        }
+        return room;
+      });
+
+      await AsyncStorage.setItem(CHAT_ROOMS_KEY, JSON.stringify(updatedRooms));
+      console.log(`🔄 [ChatCache] Updated chat room ${chatRoomId} in cache`, {
+        unreadCount: updates.unreadCount,
+      });
+    } catch (error) {
+      console.error('❌ [ChatCache] Failed to update chat room in cache:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Delete a specific chat room from cache
    */
   async deleteChatRoom(chatRoomId: string): Promise<void> {

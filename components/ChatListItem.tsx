@@ -1,10 +1,14 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Image, Modal } from 'react-native';
 import { colors, fonts, rem, fp, borderRadius } from '@/lib';
 import UnreadCheckIcon from '@/icons/UnreadCheckIcon';
 import ReadCheckIcon from '@/icons/ReadCheckIcon';
 import PinIcon from '@/icons/PinIcon';
+import PushPinIcon from '@/icons/PushPinIcon';
 import MuteIcon from '@/icons/MuteIcon';
+import MutedIcon from '@/icons/MutedIcon';
+import MoreDotsIcon from '@/icons/MoreDotsIcon';
+import { chatApi } from '@/app-api/chatApi';
 
 // Types for chat data
 export interface User {
@@ -19,12 +23,24 @@ export interface User {
 
 export interface Message {
   id: string;
+  chatRoomId: string;
+  senderId: string;
+  receiverId?: string;
   content: string;
   fileUrl?: string;
   fileName?: string;
+  fileSize?: number;
+  isRead: boolean;
+  readBy?: string[];
+  replyData?: {
+    avatar?: string;
+    time: string;
+    content: string;
+    senderName: string;
+  };
   createdAt: string;
-  isRead?: boolean;
-  sender?: User;
+  sender: User;
+  receiver?: User;
 }
 
 export interface ChatRoomParticipant {
@@ -53,6 +69,10 @@ interface ChatListItemProps {
   status?: 'online' | 'offline';
   onPress?: (chatRoom: ChatRoom) => void;
   currentUserId?: string;
+  onChatRoomUpdate?: (chatRoomId: string, updates: Partial<ChatRoom>) => void;
+  isDropdownOpen?: boolean;
+  onDropdownToggle?: (isOpen: boolean, chatId: string) => void;
+  onCloseAllDropdowns?: () => void;
 }
 
 /**
@@ -64,7 +84,114 @@ export default function ChatListItem({
   status = 'offline',
   onPress,
   currentUserId,
+  onChatRoomUpdate,
+  isDropdownOpen: controlledDropdownOpen,
+  onDropdownToggle,
+  onCloseAllDropdowns,
 }: ChatListItemProps) {
+  const [internalDropdownOpen, setInternalDropdownOpen] = useState(false);
+  const isDropdownOpen = controlledDropdownOpen !== undefined ? controlledDropdownOpen : internalDropdownOpen;
+  const [isMuted, setIsMuted] = useState(chatRoom.isMuted || false);
+  const [isPinned, setIsPinned] = useState(chatRoom.isPinned || false);
+  const menuButtonRef = useRef<TouchableOpacity>(null);
+  const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
+
+  // Update local state when chatRoom prop changes
+  useEffect(() => {
+    setIsMuted(chatRoom.isMuted || false);
+    setIsPinned(chatRoom.isPinned || false);
+  }, [chatRoom.isMuted, chatRoom.isPinned]);
+
+
+  const toggleDropdown = () => {
+    if (!isDropdownOpen) {
+      // Measure button position first
+      menuButtonRef.current?.measure((x, y, width, height, pageX, pageY) => {
+        setMenuPosition({ x: pageX, y: pageY + height });
+        
+        // Close all other dropdowns and open this one
+        if (onCloseAllDropdowns) {
+          onCloseAllDropdowns();
+        }
+        
+        // Open this dropdown immediately
+        if (onDropdownToggle) {
+          onDropdownToggle(true, chatRoom.id);
+        } else {
+          setInternalDropdownOpen(true);
+        }
+      });
+    } else {
+      // Close this dropdown
+      if (onDropdownToggle) {
+        onDropdownToggle(false, chatRoom.id);
+      } else {
+        setInternalDropdownOpen(false);
+      }
+    }
+  };
+
+  const closeDropdown = () => {
+    if (onDropdownToggle) {
+      onDropdownToggle(false, chatRoom.id);
+    } else {
+      setInternalDropdownOpen(false);
+    }
+  };
+
+  // Sync with controlled state and measure position when opened
+  useEffect(() => {
+    if (controlledDropdownOpen !== undefined) {
+      if (controlledDropdownOpen) {
+        // Measure button position when dropdown is opened externally
+        setTimeout(() => {
+          menuButtonRef.current?.measure((x, y, width, height, pageX, pageY) => {
+            setMenuPosition({ x: pageX, y: pageY + height });
+          });
+        }, 0);
+      } else {
+        setInternalDropdownOpen(false);
+      }
+    }
+  }, [controlledDropdownOpen]);
+
+  const handleToggleMute = async () => {
+    try {
+      const action = isMuted ? 'unmute' : 'mute';
+      await chatApi.muteChatRooms([chatRoom.id], action);
+      
+      // Determine the new mute state based on action
+      const newMuteState = action === 'mute';
+      
+      // Update local state immediately for better UX
+      setIsMuted(newMuteState);
+      closeDropdown();
+      
+      // Update chat room in parent state and cache
+      if (onChatRoomUpdate) {
+        onChatRoomUpdate(chatRoom.id, { isMuted: newMuteState });
+      }
+    } catch (error) {
+      console.error('Failed to toggle mute:', error);
+    }
+  };
+
+  const handleTogglePin = async () => {
+    try {
+      const result = await chatApi.togglePinChatRoom(chatRoom.id);
+      
+      // Update local state immediately for better UX
+      setIsPinned(result.pin);
+      closeDropdown();
+      
+      // Update chat room in parent state and cache
+      if (onChatRoomUpdate) {
+        onChatRoomUpdate(chatRoom.id, { isPinned: result.pin });
+      }
+    } catch (error) {
+      console.error('Failed to toggle pin:', error);
+    }
+  };
   // Get display name for the chat
   // For DIRECT chats, always show the other participant's name
   const getDisplayName = (): string => {
@@ -190,10 +317,115 @@ export default function ChatListItem({
 
   return (
     <TouchableOpacity
-      style={ styles.container }
-      onPress={() => onPress?.(chatRoom)}
+      style={styles.container}
+      onPress={() => {
+        if (!isDropdownOpen) {
+          onPress?.(chatRoom);
+        } else {
+          closeDropdown();
+        }
+      }}
       activeOpacity={0.7}
     >
+      {/* Pinned and Muted icons in top-left corner */}
+      <View style={styles.cornerIconsContainer}>
+        {chatRoom.isPinned ? (
+          <View style={styles.cornerIcon}>
+            <PushPinIcon width={rem(12)} height={rem(12)} color={colors.neutral.darkGrey} />
+          </View>
+        ) : null}
+        {chatRoom.isMuted ? (
+          <View style={styles.cornerIcon}>
+            <MutedIcon width={rem(12)} height={rem(12)} color={colors.neutral.darkGrey} />
+          </View>
+        ) : null}
+      </View>
+      {/* Menu Icon - positioned before avatar */}
+      <View style={styles.menuContainer}>
+        <TouchableOpacity
+          ref={menuButtonRef}
+          style={styles.menuButton}
+          onPress={(e) => {
+            e.stopPropagation();
+            toggleDropdown();
+          }}
+          activeOpacity={0.7}
+        >
+          <MoreDotsIcon width={rem(16)} height={rem(16)} color={colors.neutral.darkGrey} />
+        </TouchableOpacity>
+      </View>
+
+      {/* Dropdown Menu - using Modal to ensure it's above all elements */}
+      <Modal
+        transparent
+        visible={isDropdownOpen}
+        onRequestClose={closeDropdown}
+        animationType="fade"
+      >
+        <TouchableOpacity
+          style={styles.dropdownOverlay}
+          activeOpacity={1}
+          onPress={() => {
+            closeDropdown();
+            // Also close all dropdowns in parent
+            if (onCloseAllDropdowns) {
+              onCloseAllDropdowns();
+            }
+          }}
+        >
+          <View
+            style={[
+              styles.dropdownMenu,
+              {
+                position: 'absolute',
+                left: menuPosition.x,
+                top: menuPosition.y,
+              },
+            ]}
+            onStartShouldSetResponder={() => true}
+          >
+            <TouchableOpacity
+              style={styles.dropdownItem}
+              onPress={(e) => {
+                e.stopPropagation();
+                handleToggleMute();
+              }}
+              activeOpacity={0.7}
+            >
+              <View style={styles.dropdownItemContent}>
+                {isMuted ? (
+                  <MutedIcon width={rem(14)} height={rem(14)} color={colors.neutral.darkGrey} />
+                ) : (
+                  <MuteIcon width={rem(14)} height={rem(14)} color={colors.neutral.darkGrey} />
+                )}
+                <Text style={styles.dropdownItemText}>
+                  {isMuted ? 'Unmute' : 'Mute'}
+                </Text>
+              </View>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.dropdownItem, styles.dropdownItemLast]}
+              onPress={(e) => {
+                e.stopPropagation();
+                handleTogglePin();
+              }}
+              activeOpacity={0.7}
+            >
+              <View style={styles.dropdownItemContent}>
+                {isPinned ? (
+                  <PushPinIcon width={rem(14)} height={rem(14)} color={colors.neutral.darkGrey} />
+                ) : (
+                  <PinIcon width={rem(14)} height={rem(14)} color={colors.neutral.darkGrey} />
+                )}
+                <Text style={styles.dropdownItemText}>
+                  {isPinned ? 'Unpin' : 'Pin'}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       {/* Avatar */}
       <View style={styles.avatarContainer}>
         {avatarSource ? (
@@ -211,6 +443,14 @@ export default function ChatListItem({
         {status === 'online' && chatRoom.type === 'DIRECT' ? (
           <View style={styles.statusIndicator} />
         ) : null}
+        {/* Unread Count Badge */}
+        {chatRoom.unreadCount && chatRoom.unreadCount > 0 ? (
+          <View style={styles.unreadBadge}>
+            <Text style={styles.unreadBadgeText}>
+              {chatRoom.unreadCount > 99 ? '99+' : chatRoom.unreadCount.toString()}
+            </Text>
+          </View>
+        ) : null}
       </View>
 
       {/* Content */}
@@ -225,17 +465,6 @@ export default function ChatListItem({
           <Text style={styles.lastMessage} numberOfLines={1}>
             {lastMessage}
           </Text>
-          {/* Icons for pinned/muted */}
-          {chatRoom.isPinned ? (
-            <View style={styles.iconContainer}>
-              <PinIcon />
-            </View>
-          ) : null}
-          {chatRoom.isMuted ? (
-            <View style={styles.iconContainer}>
-              <MuteIcon />
-            </View>
-          ) : null}
         </View>
       </View>
 
@@ -264,15 +493,6 @@ export default function ChatListItem({
             )}
           </View>
         ) : null}
-
-        {/* Unread Count Badge */}
-        {chatRoom.unreadCount && chatRoom.unreadCount > 0 ? (
-          <View style={styles.unreadBadge}>
-            <Text style={styles.unreadBadgeText}>
-              {chatRoom.unreadCount > 99 ? '99+' : chatRoom.unreadCount.toString()}
-            </Text>
-          </View>
-        ) : null}
       </View>
     </TouchableOpacity>
   );
@@ -294,6 +514,7 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 3,
     marginBottom: rem(7),
+    position: 'relative',
   },
   containerSelected: {
     backgroundColor: colors.neutral.veryLightGrey,
@@ -331,6 +552,21 @@ const styles = StyleSheet.create({
     borderWidth: 2,
     borderColor: colors.neutral.white,
   },
+  unreadBadge: {
+    position: 'absolute',
+    top: -2,
+    right: -2,
+    minWidth: rem(24),
+    height: rem(20),
+    borderRadius: rem(10),
+    backgroundColor: colors.semantic.error,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: rem(6),
+    borderWidth: 2,
+    borderColor: colors.neutral.white,
+    zIndex: 1,
+  },
   contentContainer: {
     flex: 1,
     marginRight: rem(8),
@@ -367,7 +603,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   readStatusContainer: {
-  
+    marginTop: rem(4),
   },
   rightSection: {
     alignItems: 'flex-end',
@@ -386,19 +622,69 @@ const styles = StyleSheet.create({
     color: 'rgba(96, 102, 197, 1)',
     textTransform: 'uppercase'
   },
-  unreadBadge: {
-    minWidth: rem(24),
-    height: rem(20),
-    borderRadius: rem(10),
-    backgroundColor: colors.semantic.error,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: rem(6),
-  },
   unreadBadgeText: {
     fontSize: fp(10),
     fontFamily: fonts['700'],
     color: colors.neutral.white,
+  },
+  menuContainer: {
+    position: 'relative',
+    marginRight: rem(8),
+  },
+  menuButton: {
+    padding: rem(4),
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  dropdownOverlay: {
+    flex: 1,
+    backgroundColor: 'transparent',
+  },
+  dropdownMenu: {
+    backgroundColor: colors.neutral.white,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.neutral.lightGrey,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 10,
+    minWidth: rem(120),
+    overflow: 'hidden',
+  },
+  dropdownItem: {
+    paddingHorizontal: rem(12),
+    paddingVertical: rem(10),
+    borderBottomWidth: 1,
+    borderBottomColor: colors.neutral.veryLightGrey,
+  },
+  dropdownItemLast: {
+    borderBottomWidth: 0,
+  },
+  dropdownItemContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rem(8),
+  },
+  dropdownItemText: {
+    fontSize: fp(14),
+    fontFamily: fonts['400'],
+    color: colors.neutral.black,
+  },
+  cornerIconsContainer: {
+    position: 'absolute',
+    top: rem(8),
+    left: rem(8),
+    zIndex: 2,
+    flexDirection: 'row',
+    gap: rem(4),
+  },
+  cornerIcon: {
+    // Container for individual corner icon
   },
 });
 
