@@ -379,6 +379,21 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       // Status will be updated by useOnlineStatusWithWebSocket hook listening to socket events
     });
 
+    // Handle message read status update (global handler for all chat rooms)
+    // This event is sent to the sender when someone reads their message
+    // We emit it through eventBus so useChatRoom can handle it for the active chat
+    newSocket.on('messageRead', (data: { messageId: string; readBy: string; chatRoomId?: string }) => {
+      console.log('📖 [WebSocket] messageRead event received:', data);
+      
+      // Emit through eventBus so useChatRoom can handle it
+      // This ensures the read status updates in real-time in the active chat
+      eventBus.emit(AppEvents.MessageRead, {
+        messageId: data.messageId,
+        readBy: data.readBy,
+        chatRoomId: data.chatRoomId,
+      });
+    });
+
     // Handle bulk messages marked as read (when markChatRoomAsRead is called)
     // This updates unreadCount in the chat room list
     newSocket.on('messagesMarkedAsRead', (data: { chatRoomId: string; messageIds: string[]; userId: string }) => {
@@ -437,10 +452,16 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   }, [socket, isConnected]);
 
   const sendMessage = useCallback((data: SendMessageData) => {
-    if (socket && isConnected) {
-      console.log('📤 [WebSocket] Sending message:', data);
-      socket.emit('sendMessage', data);
+    if (!socket) {
+      throw new Error('WebSocket not initialized');
     }
+    
+    if (!isConnected || !socket.connected) {
+      throw new Error('WebSocket not connected');
+    }
+    
+    console.log('📤 [WebSocket] Sending message:', data);
+    socket.emit('sendMessage', data);
   }, [socket, isConnected]);
 
   const sendTyping = useCallback((chatRoomId: string, isTyping: boolean) => {

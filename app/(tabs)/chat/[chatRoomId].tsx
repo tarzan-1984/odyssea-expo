@@ -6,10 +6,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChatRoom, Message } from '@/components/ChatListItem';
 import { useAuth } from '@/context/AuthContext';
 import { useChatRoom } from '@/hooks/useChatRoom';
+import { useWebSocket } from '@/context/WebSocketContext';
 import ArrowLeft from '@/icons/ArrowLeft';
 import SmileIcon from '@/icons/SmileIcon';
 import AttachmentIcon from '@/icons/AttachmentIcon';
 import SendIcon from '@/icons/SendIcon';
+import ReadCheckIcon from '@/icons/ReadCheckIcon';
+import UnreadCheckIcon from '@/icons/UnreadCheckIcon';
 import EmojiPicker from '@/components/EmojiPicker';
 
 /**
@@ -39,6 +42,9 @@ export default function ChatRoomScreen() {
     sendMessage,
     isSendingMessage,
   } = useChatRoom(chatRoomId);
+  
+  // Get WebSocket connection status
+  const { isConnected } = useWebSocket();
 
   // Get chat room display name
   const getChatDisplayName = (): string => {
@@ -291,6 +297,7 @@ export default function ChatRoomScreen() {
             inverted
             style={styles.content}
             contentContainerStyle={styles.messagesContainer}
+            extraData={messages.map(msg => `${msg.id}-${msg.isRead}-${msg.readBy?.length || 0}`).join(',')}
             keyExtractor={(item, index) => {
               if (item.type === 'date') {
                 return `date-${index}`;
@@ -359,15 +366,31 @@ export default function ChatRoomScreen() {
                     </Text>
                   </View>
                   
-                 {/* message time*/}
-                  <Text
+                  {/* message time and read status */}
+                  <View
                     style={[
-                      styles.messageTime,
-                      isSender ? styles.messageTimeRight : styles.messageTimeLeft,
+                      styles.messageTimeContainer,
+                      isSender ? styles.messageTimeContainerRight : styles.messageTimeContainerLeft,
                     ]}
                   >
-                    {formatTime(message.createdAt)}
-                  </Text>
+                    {isSender && (
+                      <View style={styles.readStatusIcon}>
+                        {message.isRead ? (
+                          <ReadCheckIcon width={rem(14)} height={rem(14)} color="rgba(41, 41, 102, 0.7)" />
+                        ) : (
+                          <UnreadCheckIcon width={rem(14)} height={rem(14)} color="rgba(41, 41, 102, 0.7)" />
+                        )}
+                      </View>
+                    )}
+                    <Text
+                      style={[
+                        styles.messageTime,
+                        isSender ? styles.messageTimeRight : styles.messageTimeLeft,
+                      ]}
+                    >
+                      {formatTime(message.createdAt)}
+                    </Text>
+                  </View>
                 </View>
               );
             }}
@@ -429,17 +452,19 @@ export default function ChatRoomScreen() {
         <TouchableOpacity
           style={styles.sendButton}
           onPress={async () => {
-            if (messageText.trim() && !isSendingMessage) {
+            if (messageText.trim() && !isSendingMessage && chatRoomId) {
               try {
                 await sendMessage(messageText.trim());
                 setMessageText('');
               } catch (error) {
                 console.error('Failed to send message:', error);
+                // Show error to user (you can add a toast notification here if needed)
+                // For now, we just log it
               }
             }
           }}
           activeOpacity={0.7}
-          disabled={!messageText.trim() || isSendingMessage}
+          disabled={!messageText.trim() || isSendingMessage || !chatRoomId || !isConnected}
         >
           <SendIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} opacity={messageText.trim() ? 1 : 0.5} />
         </TouchableOpacity>
@@ -610,6 +635,21 @@ const styles = StyleSheet.create({
   },
   messageTextOther: {
     color: colors.primary.blue,
+  },
+  messageTimeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rem(4),
+  },
+  messageTimeContainerRight: {
+    justifyContent: 'flex-end',
+  },
+  messageTimeContainerLeft: {
+    justifyContent: 'flex-start',
+  },
+  readStatusIcon: {
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   messageTime: {
     fontSize: fp(10),

@@ -464,8 +464,16 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
       fileData?: { fileUrl: string; fileName: string; fileSize: number },
       replyData?: Message['replyData']
     ) => {
-      if (!chatRoomId || !socket || !isConnected) {
-        throw new Error('Cannot send message: not connected or no chat room');
+      if (!chatRoomId) {
+        throw new Error('Cannot send message: no chat room selected');
+      }
+      
+      if (!socket) {
+        throw new Error('Cannot send message: WebSocket not initialized');
+      }
+      
+      if (!isConnected || !socket.connected) {
+        throw new Error('Cannot send message: WebSocket not connected');
       }
 
       try {
@@ -676,17 +684,49 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
     }
   }, [chatRoom, chatRoomId, getAvailableArchiveDays]);
 
-  // Listen for messageRead events via WebSocket (real-time read status updates)
+  // Listen for messageRead events via eventBus (real-time read status updates)
+  // This listens to events emitted by WebSocketContext when messageRead event is received
   useEffect(() => {
-    if (!socket || !chatRoomId) return;
+    if (!chatRoomId) return;
 
-    const handleMessageRead = (data: { messageId: string; readBy: string }) => {
+    const handleMessageRead = (data: { messageId: string; readBy: string; chatRoomId?: string }) => {
+      console.log('📖 [useChatRoom] messageRead event received via eventBus:', data);
+      
+      // Only process if this event is for the current chat room
+      // If chatRoomId is provided, filter by it; otherwise process all (for backward compatibility)
+      if (data.chatRoomId && data.chatRoomId !== chatRoomId) {
+        console.log('⚠️ [useChatRoom] messageRead event for different chat room, ignoring:', {
+          eventChatRoomId: data.chatRoomId,
+          currentChatRoomId: chatRoomId,
+        });
+        return;
+      }
+      
       const currentUserId = authState.user?.id;
       
       // Update message read status in state
       setMessages(prev => {
         const message = prev.find(msg => msg.id === data.messageId);
-        if (!message) return prev;
+        if (!message) {
+          console.log('⚠️ [useChatRoom] Message not found in state:', data.messageId);
+          return prev;
+        }
+        
+        // Also check if message belongs to current chat room
+        if (message.chatRoomId !== chatRoomId) {
+          console.log('⚠️ [useChatRoom] Message belongs to different chat room, ignoring:', {
+            messageChatRoomId: message.chatRoomId,
+            currentChatRoomId: chatRoomId,
+          });
+          return prev;
+        }
+        
+        console.log('📖 [useChatRoom] Updating message read status:', {
+          messageId: data.messageId,
+          currentIsRead: message.isRead,
+          currentReadBy: message.readBy,
+          newReadBy: data.readBy,
+        });
 
         const currentReadBy = message.readBy || [];
         // Check if current user already read this message BEFORE updating
@@ -700,20 +740,31 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
 
         // Determine isRead based on chat type
         // For DIRECT chats: isRead becomes true when any participant reads
-        // For GROUP/LOAD chats: isRead might stay false, but readBy tracks who read
-        const updatedIsRead = chatRoom?.type === 'DIRECT' 
-          ? true 
-          : message.isRead; // Keep existing isRead for GROUP/LOAD chats
+        // For GROUP/LOAD chats: isRead becomes true when at least one participant reads
+        // This is needed for displaying the read status icon in the chat
+        // The readBy array tracks who specifically read the message
+        const updatedIsRead = updatedReadBy.length > 0 ? true : false;
 
-        const updatedMessages = prev.map(msg =>
-          msg.id === data.messageId
-            ? {
-                ...msg,
-                isRead: updatedIsRead,
-                readBy: updatedReadBy,
-              }
-            : msg
-        );
+        // Create a new array to ensure React detects the change
+        const updatedMessages = prev.map(msg => {
+          if (msg.id === data.messageId) {
+            // Create a completely new object to ensure React detects the change
+            return {
+              ...msg,
+              isRead: updatedIsRead,
+              readBy: updatedReadBy,
+            };
+          }
+          return msg;
+        });
+
+        console.log('✅ [useChatRoom] Message read status updated:', {
+          messageId: data.messageId,
+          updatedIsRead,
+          updatedReadBy,
+          previousIsRead: message.isRead,
+          previousReadBy: message.readBy,
+        });
 
         // If current user just read this message (and wasn't read before), decrease unreadCount
         // This matches Next.js behavior in chatStore.updateMessage
@@ -755,10 +806,10 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
 
             // Determine isRead based on chat type
             // For DIRECT chats: isRead becomes true when any participant reads
-            // For GROUP/LOAD chats: isRead might stay false, but readBy tracks who read
-            const updatedIsRead = chatRoom?.type === 'DIRECT' 
-              ? true 
-              : msg.isRead; // Keep existing isRead for GROUP/LOAD chats
+            // For GROUP/LOAD chats: isRead becomes true when at least one participant reads
+            // This is needed for displaying the read status icon in the chat
+            // The readBy array tracks who specifically read the message
+            const updatedIsRead = updatedReadBy.length > 0 ? true : false;
 
             return {
               ...msg,
@@ -803,14 +854,26 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
       }
     };
 
-    socket.on('messageRead', handleMessageRead);
-    socket.on('messagesMarkedAsRead', handleMessagesMarkedAsRead);
+    // Subscribe to messageRead events via eventBus (emitted by WebSocketContext)
+    console.log('📡 [useChatRoom] Subscribing to messageRead events via eventBus for chat:', chatRoomId);
+    const offMessageRead = eventBus.on<{ messageId: string; readBy: string; chatRoomId?: string }>(
+      AppEvents.MessageRead,
+      handleMessageRead
+    );
+
+    // Subscribe to messagesMarkedAsRead events via socket (for unreadCount updates)
+    if (socket) {
+      socket.on('messagesMarkedAsRead', handleMessagesMarkedAsRead);
+    }
 
     return () => {
-      socket.off('messageRead', handleMessageRead);
-      socket.off('messagesMarkedAsRead', handleMessagesMarkedAsRead);
+      console.log('📡 [useChatRoom] Unsubscribing from messageRead and messagesMarkedAsRead events for chat:', chatRoomId);
+      offMessageRead();
+      if (socket) {
+        socket.off('messagesMarkedAsRead', handleMessagesMarkedAsRead);
+      }
     };
-  }, [socket, chatRoomId, chatRoom?.type]);
+  }, [socket, chatRoomId, chatRoom?.type, authState.user?.id]);
 
   // Reset flags when app starts (comes to foreground after being closed)
   useEffect(() => {

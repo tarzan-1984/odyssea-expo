@@ -26,4 +26,5 @@ export const AppEvents = {
   ChatRoomUpdated: 'chatRoomUpdated',
   WebSocketReconnected: 'webSocketReconnected',
   WebSocketDisconnect: 'webSocketDisconnect',
+  MessageRead: 'messageRead',
 } as const;
