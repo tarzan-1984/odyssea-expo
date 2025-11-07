@@ -741,9 +741,9 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
         // Determine isRead based on chat type
         // For DIRECT chats: isRead becomes true when any participant reads
         // For GROUP/LOAD chats: isRead becomes true when at least one participant reads
-        // This is needed for displaying the read status icon in the chat
+        // This matches Next.js behavior where isRead is always set to true when messageRead event arrives
         // The readBy array tracks who specifically read the message
-        const updatedIsRead = updatedReadBy.length > 0 ? true : false;
+        const updatedIsRead = true; // When messageRead event arrives, message is read by someone
 
         // Create a new array to ensure React detects the change
         const updatedMessages = prev.map(msg => {
@@ -858,7 +858,15 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
     console.log('📡 [useChatRoom] Subscribing to messageRead events via eventBus for chat:', chatRoomId);
     const offMessageRead = eventBus.on<{ messageId: string; readBy: string; chatRoomId?: string }>(
       AppEvents.MessageRead,
-      handleMessageRead
+      (data) => {
+        console.log('📖 [useChatRoom] Received MessageRead event from eventBus:', {
+          messageId: data.messageId,
+          readBy: data.readBy,
+          chatRoomId: data.chatRoomId,
+          currentChatRoomId: chatRoomId,
+        });
+        handleMessageRead(data);
+      }
     );
 
     // Subscribe to messagesMarkedAsRead events via socket (for unreadCount updates)

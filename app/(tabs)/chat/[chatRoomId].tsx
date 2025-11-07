@@ -297,7 +297,7 @@ export default function ChatRoomScreen() {
             inverted
             style={styles.content}
             contentContainerStyle={styles.messagesContainer}
-            extraData={messages.map(msg => `${msg.id}-${msg.isRead}-${msg.readBy?.length || 0}`).join(',')}
+            extraData={messages.map(msg => `${msg.id}-${msg.isRead ? 'read' : 'unread'}-${(msg.readBy || []).join(',')}`).join('|')}
             keyExtractor={(item, index) => {
               if (item.type === 'date') {
                 return `date-${index}`;
