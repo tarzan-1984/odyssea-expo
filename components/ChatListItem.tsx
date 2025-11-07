@@ -483,8 +483,8 @@ export default function ChatListItem({
           <Text style={styles.timestamp}>{timestamp}</Text>
         ) : null}
         
-        {/* Read Status Icon */}
-        {chatRoom.lastMessage ? (
+        {/* Read Status Icon - show only for DIRECT chats */}
+        {chatRoom.type === 'DIRECT' && chatRoom.lastMessage ? (
           <View style={styles.readStatusContainer}>
             {chatRoom.lastMessage.isRead ? (
               <ReadCheckIcon />
