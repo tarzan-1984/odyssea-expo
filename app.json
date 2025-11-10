@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "odyssea-expo",
-    "slug": "odyssea-expo",
+    "name": "Odyssea",
+    "slug": "odyssea",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/app-icon.png",
     "scheme": "odyssea",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -16,6 +16,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.odyssea.app",
+      "icon": "./assets/app-icon.png",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "This app uses location to share your current location and update it automatically.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "This app uses location to share your current location and update it automatically in the background.",
@@ -26,9 +27,9 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
-      },
+          "foregroundImage": "./assets/app-icon.png",
+          "backgroundColor": "#ffffff"
+        },
       "package": "com.odyssea.app",
       "permissions": [
         "ACCESS_FINE_LOCATION",

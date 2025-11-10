@@ -354,7 +354,7 @@ export default function MessagesScreen() {
               <Text style={styles.errorText}>{error}</Text>
               <TouchableOpacity 
                 style={styles.retryButton}
-                onPress={loadChatRooms}
+                onPress={() => { void loadChatRooms(true); }}
                 activeOpacity={0.7}
               >
                 <Text style={styles.retryButtonText}>Retry</Text>

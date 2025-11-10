@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useEffect, useCallback, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, TextInput } from 'react-native';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, TextInput, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { colors, fonts, fp, rem } from '@/lib';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -11,9 +11,12 @@ import ArrowLeft from '@/icons/ArrowLeft';
 import SmileIcon from '@/icons/SmileIcon';
 import AttachmentIcon from '@/icons/AttachmentIcon';
 import SendIcon from '@/icons/SendIcon';
-import ReadCheckIcon from '@/icons/ReadCheckIcon';
-import UnreadCheckIcon from '@/icons/UnreadCheckIcon';
 import EmojiPicker from '@/components/EmojiPicker';
+import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
+import { secureStorage } from '@/utils/secureStorage';
+import { uploadFileViaPresign } from '@/app-api/upload';
+import MessageItem from '@/components/MessageItem';
 
 /**
  * Chat Room Screen
@@ -29,6 +32,8 @@ export default function ChatRoomScreen() {
   // Message input state
   const [messageText, setMessageText] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadQueue, setUploadQueue] = useState<Array<{name: string; mimeType?: string; size?: number; status: 'uploading'|'done'|'error'}>>([]);
   
   // Use useChatRoom hook for loading chat room and messages with caching (same logic as Next.js)
   const {
@@ -42,6 +47,7 @@ export default function ChatRoomScreen() {
     sendMessage,
     isSendingMessage,
   } = useChatRoom(chatRoomId);
+  const handleAttachmentPress = useAttachmentHandler(chatRoomId, sendMessage, setUploadQueue, setIsUploading);
   
   // Get WebSocket connection status
   const { isConnected } = useWebSocket();
@@ -343,56 +349,7 @@ export default function ChatRoomScreen() {
               const message = item.data as Message;
               const isSender = message.senderId === authState.user?.id;
               
-              return (
-                <View
-                  style={[
-                    styles.messageWrapper,
-                    isSender ? styles.messageWrapperRight : styles.messageWrapperLeft,
-                  ]}
-                >
-                  <View
-                    style={[
-                      styles.messageBubble,
-                      isSender ? styles.messageBubbleSender : styles.messageBubbleOther,
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.messageText,
-                        isSender ? styles.messageTextSender : styles.messageTextOther,
-                      ]}
-                    >
-                      {message.content}
-                    </Text>
-                  </View>
-                  
-                  {/* message time and read status */}
-                  <View
-                    style={[
-                      styles.messageTimeContainer,
-                      isSender ? styles.messageTimeContainerRight : styles.messageTimeContainerLeft,
-                    ]}
-                  >
-                    {isSender && (
-                      <View style={styles.readStatusIcon}>
-                        {message.isRead ? (
-                          <ReadCheckIcon width={rem(14)} height={rem(14)} color="rgba(41, 41, 102, 0.7)" />
-                        ) : (
-                          <UnreadCheckIcon width={rem(14)} height={rem(14)} color="rgba(41, 41, 102, 0.7)" />
-                        )}
-                      </View>
-                    )}
-                    <Text
-                      style={[
-                        styles.messageTime,
-                        isSender ? styles.messageTimeRight : styles.messageTimeLeft,
-                      ]}
-                    >
-                      {formatTime(message.createdAt)}
-                    </Text>
-                  </View>
-                </View>
-              );
+              return <MessageItem message={message} isSender={isSender} />;
             }}
             onEndReached={() => {
               // In inverted list, onEndReached fires when scrolling to top
@@ -419,6 +376,21 @@ export default function ChatRoomScreen() {
         )}
       </View>
       <View style={styles.sendSection}>
+        {/* Upload queue preview */}
+        {uploadQueue.length > 0 && (
+          <View style={styles.uploadRow}>
+            {uploadQueue.map((f, idx) => (
+              <View key={`${f.name}-${idx}`} style={styles.uploadChip}>
+                <Text style={styles.uploadChipText} numberOfLines={1}>
+                  {f.name}
+                </Text>
+                <Text style={styles.uploadChipStatus}>
+                  {f.status === 'uploading' ? 'Uploading…' : f.status === 'done' ? 'Sent' : 'Error'}
+                </Text>
+              </View>
+            ))}
+          </View>
+        )}
         <TouchableOpacity
           style={styles.smileButton}
           onPress={() => {
@@ -432,7 +404,7 @@ export default function ChatRoomScreen() {
         <TouchableOpacity
           style={styles.attachmentButton}
           onPress={() => {
-            // TODO: Open file picker
+            handleAttachmentPress().catch(() => {});
           }}
           activeOpacity={0.7}
         >
@@ -481,6 +453,176 @@ export default function ChatRoomScreen() {
   );
 }
 
+// (preview card moved to '@/components/FilePreviewCard')
+
+/**
+ * Pick files with DocumentPicker, upload via presigned URL and send as messages.
+ * For images, thumbnails will display automatically via fileUrl in message.
+ */
+async function pickFiles(): Promise<Array<{ uri: string; name: string; mimeType?: string; size?: number }>> {
+  const result = await DocumentPicker.getDocumentAsync({
+    multiple: true,
+    copyToCacheDirectory: true,
+    type: '*/*',
+  });
+  if (result.canceled) return [];
+  const files = (result.assets || []).map((a) => ({
+    uri: a.uri,
+    name: a.name || 'file',
+    mimeType: a.mimeType || undefined,
+    size: a.size || undefined,
+  }));
+  return files;
+}
+
+/**
+ * Capture a photo using device camera and return as a single-file array.
+ */
+async function capturePhoto(): Promise<Array<{ uri: string; name: string; mimeType?: string; size?: number }>> {
+  const { status } = await ImagePicker.requestCameraPermissionsAsync();
+  if (status !== 'granted') {
+    Alert.alert('Camera permission', 'Camera permission is required to take photos.');
+    return [];
+  }
+  const result = await ImagePicker.launchCameraAsync({
+    quality: 0.9,
+    allowsEditing: false,
+    exif: false,
+  });
+  if (result.canceled) return [];
+  const asset = result.assets?.[0];
+  if (!asset) return [];
+  // Derive filename and mime
+  const isJpg = (asset.type || 'image') === 'image';
+  const filename =
+    asset.fileName ||
+    `photo_${Date.now()}.${isJpg ? 'jpg' : 'bin'}`;
+  const mimeType = asset.mimeType || (isJpg ? 'image/jpeg' : 'application/octet-stream');
+  return [
+    {
+      uri: asset.uri,
+      name: filename,
+      mimeType,
+      size: asset.fileSize || undefined,
+    },
+  ];
+}
+
+/**
+ * Inside component: file pick + upload + send
+ */
+async function handleUploadAndSend(params: {
+  chatRoomId?: string;
+  sendMessage: (content: string, fileData?: { fileUrl: string; fileName: string; fileSize: number }) => Promise<void>;
+  setUploadQueue: React.Dispatch<React.SetStateAction<Array<{name: string; mimeType?: string; size?: number; status: 'uploading'|'done'|'error'}>>>;
+  setIsUploading: React.Dispatch<React.SetStateAction<boolean>>;
+}) {
+  const { chatRoomId, sendMessage, setUploadQueue, setIsUploading } = params;
+  if (!chatRoomId) return;
+  const files = await pickFiles();
+  if (files.length === 0) return;
+  setIsUploading(true);
+  // Load token
+  const token = await secureStorage.getItemAsync('accessToken').catch(() => null);
+  for (const f of files) {
+    setUploadQueue((q) => [...q, { name: f.name, mimeType: f.mimeType, size: f.size, status: 'uploading' }]);
+    try {
+      const fileUrl = await uploadFileViaPresign({
+        fileUri: f.uri,
+        filename: f.name,
+        mimeType: f.mimeType,
+        accessToken: token || '',
+      });
+      await sendMessage('', { fileUrl, fileName: f.name, fileSize: f.size || 0 });
+      setUploadQueue((q) => {
+        const idx = q.findIndex((x) => x.name === f.name && x.status === 'uploading');
+        if (idx === -1) return q;
+        const copy = [...q];
+        copy[idx] = { ...copy[idx], status: 'done' };
+        return copy;
+      });
+    } catch (e) {
+      setUploadQueue((q) => {
+        const idx = q.findIndex((x) => x.name === f.name && x.status === 'uploading');
+        if (idx === -1) return q;
+        const copy = [...q];
+        copy[idx] = { ...copy[idx], status: 'error' };
+        return copy;
+      });
+    }
+  }
+  // Auto-clear items that are done
+  setTimeout(() => setUploadQueue([]), 1200);
+  setIsUploading(false);
+}
+
+// Hook up handler inside component scope
+function useUploadHandlers(chatRoomId: string | undefined, sendMessage: (content: string, fileData?: { fileUrl: string; fileName: string; fileSize: number }) => Promise<void>, setUploadQueue: any, setIsUploading: any) {
+  const handler = useCallback(async () => {
+    await handleUploadAndSend({ chatRoomId, sendMessage, setUploadQueue, setIsUploading });
+  }, [chatRoomId, sendMessage, setUploadQueue, setIsUploading]);
+  return handler;
+}
+
+// Attachment entrypoint with options (camera or files)
+function useAttachmentHandler(chatRoomId: string | undefined, sendMessage: (content: string, fileData?: { fileUrl: string; fileName: string; fileSize: number }) => Promise<void>, setUploadQueue: any, setIsUploading: any) {
+  const handlePickAndSendFiles = useUploadHandlers(chatRoomId, sendMessage, setUploadQueue, setIsUploading);
+  const handler = useCallback(async () => {
+    Alert.alert(
+      'Attach',
+      'Choose source',
+      [
+        {
+          text: 'Take photo',
+          onPress: async () => {
+            const files = await capturePhoto();
+            if (files.length === 0) return;
+            // Reuse upload flow
+            const token = await secureStorage.getItemAsync('accessToken').catch(() => null);
+            setIsUploading(true);
+            for (const f of files) {
+              setUploadQueue((q: any) => [...q, { name: f.name, mimeType: f.mimeType, size: f.size, status: 'uploading' }]);
+              try {
+                const fileUrl = await uploadFileViaPresign({
+                  fileUri: f.uri,
+                  filename: f.name,
+                  mimeType: f.mimeType,
+                  accessToken: token || '',
+                });
+                await sendMessage('', { fileUrl, fileName: f.name, fileSize: f.size || 0 });
+                setUploadQueue((q: any) => {
+                  const idx = q.findIndex((x: any) => x.name === f.name && x.status === 'uploading');
+                  if (idx === -1) return q;
+                  const copy = [...q];
+                  copy[idx] = { ...copy[idx], status: 'done' };
+                  return copy;
+                });
+              } catch {
+                setUploadQueue((q: any) => {
+                  const idx = q.findIndex((x: any) => x.name === f.name && x.status === 'uploading');
+                  if (idx === -1) return q;
+                  const copy = [...q];
+                  copy[idx] = { ...copy[idx], status: 'error' };
+                  return copy;
+                });
+              }
+            }
+            setTimeout(() => setUploadQueue([]), 1200);
+            setIsUploading(false);
+          },
+        },
+        {
+          text: 'Pick files',
+          onPress: () => handlePickAndSendFiles(),
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ],
+      { cancelable: true }
+    );
+  }, [chatRoomId, handlePickAndSendFiles, sendMessage, setUploadQueue, setIsUploading]);
+  return handler;
+}
+
 const styles = StyleSheet.create({
   sendSection: {
     boxShadow: '0px 0px 40px 0px rgba(41, 41, 102, 0.2)',
@@ -520,6 +662,34 @@ const styles = StyleSheet.create({
   sendButton: {
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  uploadRow: {
+    position: 'absolute',
+    left: rem(14),
+    right: rem(14),
+    bottom: '100%',
+    paddingBottom: rem(8),
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: rem(8),
+  },
+  uploadChip: {
+    backgroundColor: 'rgba(96, 102, 197, 0.1)',
+    borderColor: 'rgba(96, 102, 197, 0.31)',
+    borderWidth: 1,
+    borderRadius: rem(12),
+    paddingHorizontal: rem(10),
+    paddingVertical: rem(6),
+    maxWidth: '80%',
+  },
+  uploadChipText: {
+    fontSize: fp(12),
+    fontFamily: fonts['600'],
+    color: colors.primary.blue,
+  },
+  uploadChipStatus: {
+    fontSize: fp(10),
+    color: colors.neutral.darkGrey,
   },
   content: {
     flex: 1,
@@ -597,70 +767,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: rem(15),
     paddingTop: rem(34),
     paddingBottom: rem(15),
-  },
-  messageWrapper: {
-    marginBottom: rem(15),
-    maxWidth: '75%',
-  },
-  messageWrapperRight: {
-    alignSelf: 'flex-end',
-    alignItems: 'flex-end',
-  },
-  messageWrapperLeft: {
-    alignSelf: 'flex-start',
-    alignItems: 'flex-start',
-  },
-  messageBubble: {
-    paddingHorizontal: rem(15),
-    paddingVertical: rem(15),
-    borderRadius: rem(10),
-    marginBottom: rem(6),
-    boxShadow: '0px 0px 20px 0px rgba(96, 102, 197, 0.06)',
-  },
-  messageBubbleSender: {
-    backgroundColor: colors.primary.blue,
-    borderBottomRightRadius: 0,
-  },
-  messageBubbleOther: {
-    backgroundColor: colors.neutral.white,
-    borderBottomLeftRadius: 0,
-  },
-  messageText: {
-    fontSize: fp(15),
-    fontFamily: fonts['400'],
-    letterSpacing: 0,
-  },
-  messageTextSender: {
-    color: colors.neutral.white,
-  },
-  messageTextOther: {
-    color: colors.primary.blue,
-  },
-  messageTimeContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: rem(4),
-  },
-  messageTimeContainerRight: {
-    justifyContent: 'flex-end',
-  },
-  messageTimeContainerLeft: {
-    justifyContent: 'flex-start',
-  },
-  readStatusIcon: {
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  messageTime: {
-    fontSize: fp(10),
-    fontFamily: fonts['400'],
-    color: 'rgba(41, 41, 102, 0.7)',
-  },
-  messageTimeRight: {
-    textAlign: 'right',
-  },
-  messageTimeLeft: {
-    textAlign: 'left',
   },
   dateSeparator: {
     flexDirection: 'row',

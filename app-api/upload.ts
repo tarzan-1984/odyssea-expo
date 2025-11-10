@@ -48,6 +48,51 @@ export async function uploadImageViaPresign(params: {
   return fileUrl;
 }
 
+/**
+ * Generic file upload via presigned URL (any mime type).
+ * Returns the final public file URL.
+ */
+export async function uploadFileViaPresign(params: {
+  fileUri: string;
+  filename: string;
+  mimeType?: string;
+  accessToken: string;
+}): Promise<string> {
+  const { fileUri, filename, mimeType, accessToken } = params;
+
+  const presignRes = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/v1/storage/presign`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ filename, contentType: mimeType || 'application/octet-stream' }),
+  });
+
+  if (!presignRes.ok) {
+    const t = await presignRes.text().catch(() => '');
+    throw new Error(`Failed to get presigned URL: ${presignRes.status} ${t}`);
+  }
+
+  const data = await presignRes.json();
+  const uploadUrl = data.data.uploadUrl as string;
+  const fileUrl = data.data.fileUrl as string;
+
+  const fileResponse = await fetch(fileUri);
+  const blob = await fileResponse.blob();
+  const putRes = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': mimeType || 'application/octet-stream' },
+    body: blob,
+  });
+  if (!putRes.ok) {
+    const et = await putRes.text().catch(() => '');
+    throw new Error(`Upload failed: ${putRes.status} ${et}`);
+  }
+
+  return fileUrl;
+}
+
 export async function updateUserAvatarOnBackend(params: {
   userId: string;
   avatarUrl: string;

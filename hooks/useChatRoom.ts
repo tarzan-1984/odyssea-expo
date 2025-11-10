@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { shallow } from 'zustand/shallow';
 import { AppState, AppStateStatus } from 'react-native';
 import { chatApi, ArchiveDay, ArchiveFile } from '@/app-api/chatApi';
 import { messagesCacheService } from '@/services/MessagesCacheService';
@@ -6,6 +7,10 @@ import { ChatRoom, Message } from '@/components/ChatListItem';
 import { useWebSocket } from '@/context/WebSocketContext';
 import { useAuth } from '@/context/AuthContext';
 import { eventBus, AppEvents } from '@/services/EventBus';
+import { useChatStore } from '@/stores/chatStore';
+
+// Stable empty array to avoid creating a new reference on each render
+const EMPTY_MESSAGES: Message[] = [];
 
 interface UseChatRoomReturn {
   chatRoom: ChatRoom | null;
@@ -48,6 +53,32 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
   const [pendingArchiveLoad, setPendingArchiveLoad] = useState(false);
   const archivedMessagesCacheRef = useRef<Map<string, Message[]>>(new Map());
 
+  // Subscribe to global store messages for this room with a stable selector
+  // Avoid returning a new array each render to prevent infinite update loops
+  const storeMessages =
+    useChatStore(
+      useCallback((s) => (chatRoomId ? (s.messagesByRoom[chatRoomId] as Message[] | undefined) : undefined), [chatRoomId])
+    ) ?? EMPTY_MESSAGES;
+
+  // Keep local messages in sync with store when store changes (no optimistic writes here)
+  useEffect(() => {
+    if (!chatRoomId) return;
+    if (!storeMessages || storeMessages.length === 0) return;
+    setMessages((prev) => {
+      // If different length or any read/isRead differs, replace with store
+      if (prev.length !== storeMessages.length) return [...storeMessages];
+      const changed = storeMessages.some((m) => {
+        const p = prev.find((pm) => pm.id === m.id);
+        if (!p) return true;
+        if (p.isRead !== m.isRead) return true;
+        const a = (p.readBy || []).join(',');
+        const b = (m.readBy || []).join(',');
+        return a !== b;
+      });
+      return changed ? [...storeMessages] : prev;
+    });
+  }, [chatRoomId, storeMessages]);
+
   /**
    * Get user's join date for current chat room
    */
@@ -56,11 +87,11 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
       return null;
     }
     
-    const participant = chatRoom.participants.find(
+    const participant: any = chatRoom.participants.find(
       p => p.userId === authState.user?.id
     );
-    
-    return participant?.joinedAt ? new Date(participant.joinedAt) : null;
+    const joinedAt = participant?.joinedAt as (string | Date | undefined);
+    return joinedAt ? new Date(joinedAt) : null;
   }, [chatRoom, authState.user]);
 
   /**
@@ -304,6 +335,10 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
             // Messages from cache are already sorted by MessagesCacheService
             // Use them directly without additional sorting
             setMessages(cachedMessages);
+            // Keep global store in sync so later addMessage appends to a full list
+            try {
+              useChatStore.getState().setMessages(chatRoomId, cachedMessages);
+            } catch {}
             setIsLoadingMessages(false);
             
             // Recalculate unreadCount based on cached messages
@@ -342,6 +377,9 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
                 // Update with merged messages
                 // saveMessages will sort them again before saving to cache
                 setMessages(mergedMessages);
+                try {
+                  useChatStore.getState().setMessages(chatRoomId, mergedMessages);
+                } catch {}
                 setCurrentPage(page);
                 setHasMoreMessages(response.hasMore);
                 await messagesCacheService.saveMessages(chatRoomId, mergedMessages);
@@ -368,6 +406,9 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
             (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
           );
           setMessages(sortedMessages);
+          try {
+            useChatStore.getState().setMessages(chatRoomId, sortedMessages);
+          } catch {}
           await messagesCacheService.saveMessages(chatRoomId, sortedMessages);
           
           // Recalculate unreadCount based on loaded messages
@@ -380,6 +421,9 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
           console.warn('API unavailable, no cached data available:', apiError);
           setError('Failed to load messages');
           setMessages([]);
+          try {
+            useChatStore.getState().setMessages(chatRoomId, []);
+          } catch {}
         }
 
         // Messages loaded successfully
@@ -420,9 +464,13 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
           const updatedMessages = [...newMessages, ...prev];
           
           // Sort by date to ensure correct order (oldest first)
-          return updatedMessages.sort(
+          const sorted = updatedMessages.sort(
             (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
           );
+          try {
+            useChatStore.getState().setMessages(chatRoomId, sorted);
+          } catch {}
+          return sorted;
         });
 
         setCurrentPage(nextPage);
@@ -855,32 +903,9 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
     };
 
     // Subscribe to messageRead events via eventBus (emitted by WebSocketContext)
-    console.log('📡 [useChatRoom] Subscribing to messageRead events via eventBus for chat:', chatRoomId);
-    const offMessageRead = eventBus.on<{ messageId: string; readBy: string; chatRoomId?: string }>(
-      AppEvents.MessageRead,
-      (data) => {
-        console.log('📖 [useChatRoom] Received MessageRead event from eventBus:', {
-          messageId: data.messageId,
-          readBy: data.readBy,
-          chatRoomId: data.chatRoomId,
-          currentChatRoomId: chatRoomId,
-        });
-        handleMessageRead(data);
-      }
-    );
-
-    // Subscribe to messagesMarkedAsRead events via socket (for unreadCount updates)
-    if (socket) {
-      socket.on('messagesMarkedAsRead', handleMessagesMarkedAsRead);
-    }
-
-    return () => {
-      console.log('📡 [useChatRoom] Unsubscribing from messageRead and messagesMarkedAsRead events for chat:', chatRoomId);
-      offMessageRead();
-      if (socket) {
-        socket.off('messagesMarkedAsRead', handleMessagesMarkedAsRead);
-      }
-    };
+    // Перенос завершён — подписки на EventBus/Socket для read не нужны;
+    // обновление приходит в стор из WebSocketContext
+    return () => {};
   }, [socket, chatRoomId, chatRoom?.type, authState.user?.id]);
 
   // Reset flags when app starts (comes to foreground after being closed)

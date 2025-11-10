@@ -27,4 +27,5 @@ export const AppEvents = {
   WebSocketReconnected: 'webSocketReconnected',
   WebSocketDisconnect: 'webSocketDisconnect',
   MessageRead: 'messageRead',
+  MessagesMarkedAsRead: 'messagesMarkedAsRead',
 } as const;

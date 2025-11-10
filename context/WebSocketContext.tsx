@@ -4,7 +4,7 @@ import { useAuth } from './AuthContext';
 import { secureStorage } from '@/utils/secureStorage';
 import { WS_URL } from '@/lib/config';
 import { AppState, AppStateStatus } from 'react-native';
-import { eventBus, AppEvents } from '@/services/EventBus';
+import { useChatStore, updateLastMessage } from '@/stores/chatStore';
 import { chatApi } from '@/app-api/chatApi';
 import { ChatRoom } from '@/components/ChatListItem';
 
@@ -56,9 +56,12 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   const currentUser = authState.user;
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const chatRoomsList = useChatStore((s) => s.chatRooms);
+  const joinedRoomsRef = useRef<Set<string>>(new Set());
   const reconnectTimeoutRef = useRef<number | null>(null);
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 5;
+  const isConnectingRef = useRef(false);
 
   // Get authentication token from secure storage
   const getAuthToken = useCallback(async (): Promise<string | null> => {
@@ -72,15 +75,20 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   }, []);
 
   const connect = useCallback(async () => {
+    if (socket || isConnectingRef.current) {
+      return;
+    }
+    isConnectingRef.current = true;
     // Only connect if we have a current user
     if (!currentUser) {
       console.log('⚠️ [WebSocket] No user, skipping connection');
+      isConnectingRef.current = false;
       return;
     }
 
     // Disconnect existing connection if any
     if (socket) {
-      socket.disconnect();
+      (socket as Socket).disconnect();
       setSocket(null);
     }
 
@@ -127,6 +135,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       const wasDisconnected = !isConnected;
       setIsConnected(true);
       reconnectAttempts.current = 0;
+      isConnectingRef.current = false;
 
       // Clear any pending reconnection attempts
       if (reconnectTimeoutRef.current) {
@@ -137,8 +146,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       // If we were disconnected and now reconnected, trigger sync
       // This handles the case when device was offline and missed messages
       if (wasDisconnected) {
-        console.log('🔄 [WebSocket] Reconnected after disconnection, triggering sync...');
-        eventBus.emit(AppEvents.WebSocketReconnected, {});
+        console.log('🔄 [WebSocket] Reconnected after disconnection');
       }
     });
 
@@ -152,6 +160,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     newSocket.on('disconnect', (reason) => {
       console.log('⚠️ [WebSocket] Disconnected:', reason);
       setIsConnected(false);
+      isConnectingRef.current = false;
 
       // Attempt to reconnect if disconnected unexpectedly
       // Handle various disconnect reasons:
@@ -191,6 +200,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     newSocket.on('connect_error', (error) => {
       console.error('❌ [WebSocket] Connection error:', error.message);
       setIsConnected(false);
+      isConnectingRef.current = false;
       
       // Attempt to reconnect on connection error
       // This handles network issues, server unavailable, etc.
@@ -237,6 +247,16 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       console.log('✅ [WebSocket] Server confirmed connection');
     });
 
+    // DEV: Log every incoming event to verify names/payloads
+    if (__DEV__) {
+      newSocket.onAny((event: string, payload: any) => {
+        try {
+          const rid = payload?.chatRoomId || payload?.message?.chatRoomId || payload?.[0]?.chatRoomId;
+          console.log(`🛰️ [WebSocket] onAny '${event}'`, rid ? `room=${rid}` : '', payload);
+        } catch {}
+      });
+    }
+
     // Handle new message from server
     newSocket.on('newMessage', (data: any) => {
       // Handle case where data comes as array (from onAny handler)
@@ -244,6 +264,12 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
       if (messageData && messageData.chatRoomId && messageData.message) {
         const isMessageFromCurrentUser = messageData.message.senderId === currentUser?.id;
+
+        // Update Zustand store (как в Next)
+        try {
+          const { addMessage } = useChatStore.getState();
+          addMessage(messageData.chatRoomId, messageData.message);
+        } catch {}
 
         // Prepare updates for chat room
         const updates: any = {
@@ -261,11 +287,17 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           updates.unreadCountIncrement = 1;
         }
 
-        // Emit event to update chat room in real-time
-        eventBus.emit(AppEvents.ChatRoomUpdated, {
-          chatRoomId: messageData.chatRoomId,
-          updates,
-        });
+        // Update chat room in store (unreadCount increment if нужно) 
+        try {
+          const { chatRooms, updateChatRoom } = useChatStore.getState();
+          let patch: any = { lastMessage: updates.lastMessage, updatedAt: updates.updatedAt };
+          if (updates.unreadCountIncrement) {
+            const room = chatRooms.find((r: ChatRoom) => r.id === messageData.chatRoomId);
+            const currentUnread = room?.unreadCount || 0;
+            patch.unreadCount = currentUnread + updates.unreadCountIncrement;
+          }
+          updateChatRoom(messageData.chatRoomId, patch);
+        } catch {}
       }
     });
 
@@ -301,15 +333,18 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           };
 
           console.log('✅ [WebSocket] Normalized chat room:', normalized.id);
-          
-          // Emit event to add chat room to list
-          eventBus.emit(AppEvents.ChatRoomAdded, normalized);
+          // Add to store
+          try {
+            const { mergeChatRooms } = useChatStore.getState();
+            mergeChatRooms([normalized]);
+          } catch {}
 
           // Automatically join the WebSocket room for the new chat
           // This ensures the user receives real-time messages in this chat
           if (newSocket && newSocket.connected) {
             console.log('🔌 [WebSocket] Joining chat room:', normalized.id);
             newSocket.emit('joinChatRoom', { chatRoomId: normalized.id });
+            joinedRoomsRef.current.add(normalized.id);
           }
         } else {
           console.error('❌ [WebSocket] Invalid chatRoomCreated payload:', data);
@@ -347,12 +382,16 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
             };
             
             console.log('✅ [WebSocket] Loaded and normalized chat room from API:', normalized.id);
-            eventBus.emit(AppEvents.ChatRoomAdded, normalized);
+            try {
+              const { mergeChatRooms } = useChatStore.getState();
+              mergeChatRooms([normalized]);
+            } catch {}
             
             // Automatically join the WebSocket room for the new chat
             if (newSocket && newSocket.connected) {
               console.log('🔌 [WebSocket] Joining chat room:', normalized.id);
               newSocket.emit('joinChatRoom', { chatRoomId: normalized.id });
+              joinedRoomsRef.current.add(normalized.id);
             }
           } catch (apiError) {
             console.error('❌ [WebSocket] Failed to load chat room from API:', apiError);
@@ -379,43 +418,83 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       // Status will be updated by useOnlineStatusWithWebSocket hook listening to socket events
     });
 
-    // Handle message read status update (global handler for all chat rooms)
-    // This event is sent to the sender when someone reads their message
-    // We emit it through eventBus so useChatRoom can handle it for the active chat
+    // Handle message read status update (sender gets this when someone reads their message)
     newSocket.on('messageRead', (data: { messageId: string; readBy: string; chatRoomId?: string }) => {
-      console.log('📖 [WebSocket] messageRead event received:', data);
-      
-      // Emit through eventBus so useChatRoom can handle it
-      // This ensures the read status updates in real-time in the active chat
-      eventBus.emit(AppEvents.MessageRead, {
-        messageId: data.messageId,
-        readBy: data.readBy,
-        chatRoomId: data.chatRoomId,
-      });
+      console.log('📖 [WebSocket] messageRead:', data);
+      try {
+        const { chatRooms, messagesByRoom, markMessagesRead } = useChatStore.getState();
+        let roomId = data.chatRoomId;
+        if (!roomId) {
+          const room = chatRooms.find((r: ChatRoom) => r.lastMessage?.id === data.messageId);
+          roomId = room?.id;
+        }
+        if (!roomId) {
+          for (const [rid, msgs] of Object.entries(messagesByRoom)) {
+            if ((msgs || []).some((m) => m.id === data.messageId)) {
+              roomId = rid;
+              break;
+            }
+          }
+        }
+        if (roomId) {
+          console.log('📖 [WebSocket] messageRead -> resolved roomId:', roomId);
+          markMessagesRead(roomId, [data.messageId], data.readBy);
+        } else {
+          console.warn('📖 [WebSocket] messageRead -> roomId not found; will retry once');
+          setTimeout(() => {
+            try {
+              const { chatRooms: cr, messagesByRoom: mbr, markMessagesRead: mmr } = useChatStore.getState();
+              let rid: string | undefined;
+              const room = cr.find((r: ChatRoom) => r.lastMessage?.id === data.messageId);
+              rid = room?.id;
+              if (!rid) {
+                for (const [ridCandidate, msgs] of Object.entries(mbr)) {
+                  if ((msgs || []).some((m) => m.id === data.messageId)) {
+                    rid = ridCandidate;
+                    break;
+                  }
+                }
+              }
+              if (rid) {
+                console.log('📖 [WebSocket] messageRead -> resolved on retry roomId:', rid);
+                mmr(rid, [data.messageId], data.readBy);
+              } else {
+                console.warn('📖 [WebSocket] messageRead -> still no roomId after retry');
+              }
+            } catch {}
+          }, 200);
+        }
+      } catch (e) {
+        console.warn('messageRead handling failed:', e);
+      }
     });
 
     // Handle bulk messages marked as read (when markChatRoomAsRead is called)
     // This updates unreadCount in the chat room list
     newSocket.on('messagesMarkedAsRead', (data: { chatRoomId: string; messageIds: string[]; userId: string }) => {
       console.log('✅ [WebSocket] Messages marked as read:', data);
-      
-      // Only update unreadCount if this is for the current user
-      // When current user marks messages as read, unreadCount should decrease
+      try {
+        const { markMessagesRead } = useChatStore.getState();
+        markMessagesRead(data.chatRoomId, data.messageIds, data.userId);
+      } catch {}
+
+      // Только для текущего пользователя уменьшаем unreadCount через стор
       if (data.userId === currentUser?.id) {
-        // Calculate how many messages were marked as read
-        const readCount = data.messageIds.length;
-        
-        console.log(`📉 [WebSocket] Decreasing unreadCount by ${readCount} for chat room ${data.chatRoomId}`);
-        
-        // Update chat room's unreadCount through eventBus
-        // This will trigger useChatRooms to update the state
-        eventBus.emit(AppEvents.ChatRoomUpdated, {
-          chatRoomId: data.chatRoomId,
-          updates: {
-            // Decrement unreadCount by the number of messages marked as read
-            unreadCountDecrement: readCount,
-          },
-        });
+        try {
+          const { chatRooms, updateChatRoom } = useChatStore.getState();
+          const room = chatRooms.find((r: ChatRoom) => r.id === data.chatRoomId);
+          if (room) {
+            const currentUnread = room.unreadCount || 0;
+            const nextUnread = Math.max(0, currentUnread - data.messageIds.length);
+            updateChatRoom(data.chatRoomId, { unreadCount: nextUnread });
+          }
+        } catch {}
+      }
+    });
+
+    newSocket.on('joinedChatRoom', (data: { chatRoomId: string }) => {
+      if (data?.chatRoomId) {
+        joinedRoomsRef.current.add(data.chatRoomId);
       }
     });
 
@@ -435,6 +514,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       reconnectTimeoutRef.current = null;
     }
     reconnectAttempts.current = 0;
+    isConnectingRef.current = false;
   }, [socket]);
 
   const joinChatRoom = useCallback((chatRoomId: string) => {
@@ -485,28 +565,24 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
   // Auto-connect when user is available
   useEffect(() => {
-    if (currentUser && !isConnected && !socket) {
-      connect();
-    } else if (!currentUser && isConnected) {
-      disconnect();
+    if (currentUser) {
+      if (!isConnected && !socket && !isConnectingRef.current) {
+        connect();
+      }
+    } else {
+      if (isConnected) {
+        disconnect();
+      }
     }
-  }, [currentUser, isConnected, socket, connect, disconnect]);
+  }, [currentUser, isConnected, socket]);
 
-  // Listen for WebSocketDisconnect event (triggered on logout)
-  useEffect(() => {
-    const off = eventBus.on(AppEvents.WebSocketDisconnect, () => {
-      console.log('🔌 [WebSocket] Received WebSocketDisconnect event, disconnecting...');
-      disconnect();
-    });
-    
-    return () => { off(); };
-  }, [disconnect]);
+  // Событие отключения через EventBus больше не используем; вызываем disconnect напрямую там, где нужно
 
   // Handle app state changes (reconnect when app comes to foreground)
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
       if (nextAppState === 'active' && currentUser) {
-        if (!isConnected) {
+        if (!isConnected && !socket && !isConnectingRef.current) {
           // App came to foreground and we're disconnected, reset attempts and try to reconnect
           console.log('📱 [WebSocket] App became active, resetting reconnection attempts and attempting to reconnect...');
           reconnectAttempts.current = 0; // Reset attempts when app comes to foreground
@@ -527,7 +603,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     return () => {
       subscription.remove();
     };
-  }, [currentUser, isConnected, connect]);
+  }, [currentUser, isConnected, connect, socket]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -540,6 +616,9 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       }
     };
   }, [socket]);
+
+  // Removed global auto-join to avoid re-render loops; we join
+  // explicitly on chatRoomCreated/addedToChatRoom and when user opens a chat
 
   const value: WebSocketContextType = {
     socket,

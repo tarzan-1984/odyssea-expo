@@ -3,7 +3,7 @@ import { AppState, AppStateStatus } from 'react-native';
 import { chatApi } from '@/app-api/chatApi';
 import { chatCacheService } from '@/services/ChatCacheService';
 import { ChatRoom } from '@/components/ChatListItem';
-import { eventBus, AppEvents } from '@/services/EventBus';
+import { useChatStore } from '@/stores/chatStore';
 
 /**
  * Sort chat rooms by pin status, mute status, and last message date
@@ -64,7 +64,7 @@ interface UseChatRoomsReturn {
  * Implements the same logic as useChatSync in Next.js application
  */
 export const useChatRooms = (): UseChatRoomsReturn => {
-  const [chatRooms, setChatRooms] = useState<ChatRoom[]>([]);
+  const { chatRooms, setChatRooms: storeSetChatRooms, updateChatRoom: storeUpdateChatRoom, mergeChatRooms } = useChatStore();
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const hasLoadedOnceRef = useRef<boolean>(false);
@@ -106,11 +106,7 @@ export const useChatRooms = (): UseChatRoomsReturn => {
       }
 
       // Get current rooms for merging (using functional update to get latest state)
-      let currentRooms: ChatRoom[] = [];
-      setChatRooms(prev => {
-        currentRooms = prev;
-        return prev;
-      });
+      const currentRooms: ChatRoom[] = chatRooms;
 
       // Check if we have cached chat rooms first
       const hasCachedRooms = await chatCacheService.hasChatRooms();
@@ -143,7 +139,7 @@ export const useChatRooms = (): UseChatRoomsReturn => {
               // This ensures unreadCount from cache is preserved
               return cachedRoom;
             });
-            setChatRooms(mergedCachedRooms);
+            storeSetChatRooms(mergedCachedRooms);
             setIsLoading(false);
             console.log('✅ [useChatRooms] Loaded from fresh cache');
             return;
@@ -162,9 +158,9 @@ export const useChatRooms = (): UseChatRoomsReturn => {
           const cachedRooms = await chatCacheService.getChatRooms();
           
           // Merge API data with current state and cached data to preserve real-time updates
-          setChatRooms(prevRooms => {
+          storeSetChatRooms((() => {
             const mergedRooms = normalizedApiRooms.map(apiRoom => {
-              const storeRoom = prevRooms.find(storeRoom => storeRoom.id === apiRoom.id);
+              const storeRoom = chatRooms.find(storeRoom => storeRoom.id === apiRoom.id);
               const cachedRoom = cachedRooms.find(cachedRoom => cachedRoom.id === apiRoom.id);
               
               // Priority: store > cache > API for unreadCount
@@ -190,7 +186,7 @@ export const useChatRooms = (): UseChatRoomsReturn => {
               console.error('❌ [useChatRooms] Failed to save to cache:', err);
             });
             return mergedRooms;
-          });
+          })());
 
           setIsLoading(false);
           console.log('✅ [useChatRooms] Loaded from API and updated cache');
@@ -201,9 +197,9 @@ export const useChatRooms = (): UseChatRoomsReturn => {
           const cachedRooms = await chatCacheService.getChatRooms();
           if (cachedRooms.length > 0) {
             // Merge cached data with current state
-            setChatRooms(prevRooms => {
+          storeSetChatRooms((() => {
               const mergedCachedRooms = cachedRooms.map(cachedRoom => {
-                const storeRoom = prevRooms.find(storeRoom => storeRoom.id === cachedRoom.id);
+              const storeRoom = chatRooms.find(storeRoom => storeRoom.id === cachedRoom.id);
                 if (storeRoom) {
                   // Prioritize store unreadCount, but use cached if store doesn't have it
                   const finalUnreadCount = storeRoom.unreadCount !== undefined && storeRoom.unreadCount !== null
@@ -219,8 +215,8 @@ export const useChatRooms = (): UseChatRoomsReturn => {
                 // If no store room, use cached data as-is (preserves unreadCount from cache)
                 return cachedRoom;
               });
-              return mergedCachedRooms;
-            });
+            return mergedCachedRooms;
+          })());
             setIsLoading(false);
             console.log('✅ [useChatRooms] Fallback to stale cache');
             return;
@@ -237,9 +233,9 @@ export const useChatRooms = (): UseChatRoomsReturn => {
         }));
 
         // Merge API data with current state to preserve real-time updates
-        setChatRooms(prevRooms => {
+        storeSetChatRooms((() => {
           const mergedRooms = normalizedApiRooms.map(apiRoom => {
-            const storeRoom = prevRooms.find(storeRoom => storeRoom.id === apiRoom.id);
+            const storeRoom = chatRooms.find(storeRoom => storeRoom.id === apiRoom.id);
             if (storeRoom) {
               // Use store unreadCount if available (preserves real-time updates), otherwise use API
               const finalUnreadCount = storeRoom.unreadCount !== undefined && storeRoom.unreadCount !== null
@@ -259,7 +255,7 @@ export const useChatRooms = (): UseChatRoomsReturn => {
             console.error('❌ [useChatRooms] Failed to save to cache:', err);
           });
           return mergedRooms;
-        });
+        })());
       } catch (apiError) {
         console.warn('❌ [useChatRooms] API unavailable, no cached data available:', apiError);
         setError('Failed to load chat rooms');
@@ -286,7 +282,7 @@ export const useChatRooms = (): UseChatRoomsReturn => {
         participants: normalizeParticipants(room.participants || []),
       }));
 
-      setChatRooms(normalizedApiRooms);
+      storeSetChatRooms(normalizedApiRooms);
       await chatCacheService.saveChatRooms(normalizedApiRooms);
       console.log('🔄 [useChatRooms] Refreshed chat rooms from API');
     } catch (error) {
@@ -304,17 +300,13 @@ export const useChatRooms = (): UseChatRoomsReturn => {
 
   // Add a single chat room into state and cache (used by realtime and optimistic updates)
   const addChatRoom = useCallback(async (room: ChatRoom) => {
-    setChatRooms(prev => {
-      const exists = prev.some(r => r.id === room.id);
-      const updated = exists ? prev : [room, ...prev];
-      chatCacheService.saveChatRooms(updated).catch(() => {});
-      return updated;
-    });
-  }, []);
+    mergeChatRooms([room]);
+    chatCacheService.saveChatRooms([...chatRooms]).catch(() => {});
+  }, [chatRooms, mergeChatRooms]);
 
   // Update a single chat room in state and cache
   const updateChatRoom = useCallback(async (chatRoomId: string, updates: any) => {
-    setChatRooms(prev => {
+    const prev = chatRooms;
       // Check if we need to handle unreadCount increment or decrement
       const hasUnreadIncrement = updates.unreadCountIncrement !== undefined;
       const hasUnreadDecrement = updates.unreadCountDecrement !== undefined;
@@ -374,43 +366,14 @@ export const useChatRooms = (): UseChatRoomsReturn => {
       // Save all rooms to cache to ensure consistency
       // This ensures unreadCount is always persisted
       chatCacheService.saveChatRooms(sorted).catch(() => {});
-
-      return sorted;
-    });
+      storeSetChatRooms(sorted);
   }, []);
 
-  // Subscribe to realtime chat room additions
-  useEffect(() => {
-    const off = eventBus.on<ChatRoom>(AppEvents.ChatRoomAdded, (room) => {
-      addChatRoom(room);
-    });
-    return () => { off(); };
-  }, [addChatRoom]);
+  // Realtime добавление чатов теперь приходит из WebSocketContext напрямую в стор
+  useEffect(() => {}, [addChatRoom]);
 
-  // Subscribe to realtime chat room updates
-  useEffect(() => {
-    const off1 = eventBus.on<ChatRoomUpdate>(AppEvents.ChatRoomUpdated, (data) => {
-      updateChatRoom(data.chatRoomId, data.updates);
-    });
-    
-    // Listen for WebSocket reconnection to sync chat rooms
-    // This ensures we get updates for messages received while offline
-    const off2 = eventBus.on(AppEvents.WebSocketReconnected, () => {
-      console.log('🔄 [useChatRooms] WebSocket reconnected after offline, refreshing chat rooms from API...');
-      // Reset flag to force refresh from API
-      // This ensures we get messages that arrived while device was offline
-      hasLoadedOnceRef.current = false;
-      // Force refresh from API to get latest unreadCount and lastMessage
-      loadChatRooms(true).catch((error) => {
-        console.error('Failed to refresh chat rooms after reconnection:', error);
-      });
-    });
-    
-    return () => {
-      off1();
-      off2();
-    };
-  }, [updateChatRoom, loadChatRooms]);
+  // EventBus больше не используем: обновления приходят через WebSocketContext → Zustand
+  useEffect(() => {}, [updateChatRoom, loadChatRooms]);
 
   // Reset flags when app starts (comes to foreground after being closed)
   useEffect(() => {
