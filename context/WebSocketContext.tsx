@@ -20,6 +20,7 @@ interface WebSocketContextType {
   sendTyping: (chatRoomId: string, isTyping: boolean) => void;
   markMessageAsRead: (messageId: string, chatRoomId: string) => void;
   markChatRoomAsRead: (chatRoomId: string) => void;
+  typingByRoom: Record<string, Record<string, { isTyping: boolean; firstName?: string }>>;
 }
 
 // Message sending interface
@@ -56,6 +57,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   const currentUser = authState.user;
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [typingByRoom, setTypingByRoom] = useState<Record<string, Record<string, { isTyping: boolean; firstName?: string }>>>({});
   const chatRoomsList = useChatStore((s) => s.chatRooms);
   const joinedRoomsRef = useRef<Set<string>>(new Set());
   const reconnectTimeoutRef = useRef<number | null>(null);
@@ -407,8 +409,19 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
     // Handle typing indicators
     newSocket.on('userTyping', (data: any) => {
-      console.log('⌨️ [WebSocket] User typing:', data);
-      // TODO: Handle typing indicators
+      try {
+        if (!data?.chatRoomId || !data?.userId) return;
+        setTypingByRoom(prev => {
+          const room = prev[data.chatRoomId] || {};
+          return {
+            ...prev,
+            [data.chatRoomId]: {
+              ...room,
+              [data.userId]: { isTyping: !!data.isTyping, firstName: data.firstName },
+            },
+          };
+        });
+      } catch {}
     });
 
     // Handle user online/offline status
@@ -631,6 +644,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     sendTyping,
     markMessageAsRead,
     markChatRoomAsRead,
+    typingByRoom,
   };
 
   return <WebSocketContext.Provider value={value}>{children}</WebSocketContext.Provider>;

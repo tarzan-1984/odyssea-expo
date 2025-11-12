@@ -4,6 +4,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Switch, ScrollView, TextInput
 import MapView, { Region, Marker } from 'react-native-maps';
 import { BlurView } from 'expo-blur';
 import * as Location from 'expo-location';
+import * as TaskManager from 'expo-task-manager';
 import { colors } from '@/lib/colors';
 import { borderRadius, fonts, fp, rem, typography } from "@/lib";
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -92,23 +93,26 @@ export default function FinalVerifyScreen() {
       }
 
       // ALWAYS stop task first to ensure clean restart with new interval
-      const isTaskDefined = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
-      if (isTaskDefined) {
-        console.log('🔄 [BackgroundTracking] Task already running, FORCE stopping...');
-        try {
-          await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
-          // Wait longer to ensure task fully stops
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          
-          // Double-check it's stopped
-          const stillRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
-          if (stillRunning) {
-            console.warn('⚠️ [BackgroundTracking] Task still running, forcing stop again...');
+      const isRegistered = await TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME);
+      if (isRegistered) {
+        const isRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
+        if (isRunning) {
+          console.log('🔄 [BackgroundTracking] Task already running, FORCE stopping...');
+          try {
             await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+            // Wait longer to ensure task fully stops
             await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // Double-check it's stopped
+            const stillRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
+            if (stillRunning) {
+              console.warn('⚠️ [BackgroundTracking] Task still running, forcing stop again...');
+              await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+          } catch {
+            // Silently ignore "task not found" errors
           }
-        } catch (stopError) {
-          console.error('❌ [BackgroundTracking] Error stopping task:', stopError);
         }
       }
       
@@ -149,18 +153,21 @@ export default function FinalVerifyScreen() {
   // Stop background location tracking
   const stopBackgroundLocationTracking = useCallback(async () => {
     try {
-      const isTaskDefined = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
-      if (isTaskDefined) {
-        console.log('🛑 [BackgroundTracking] Stopping task...');
-        await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
-        // Clear last update timestamp
-        await AsyncStorage.removeItem('@last_location_update_timestamp');
-        // Wait to ensure task is fully stopped
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        console.log('✅ [BackgroundTracking] Task stopped');
+      const isRegistered = await TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME);
+      if (isRegistered) {
+        const isRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
+        if (isRunning) {
+          console.log('🛑 [BackgroundTracking] Stopping task...');
+          await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+          // Clear last update timestamp
+          await AsyncStorage.removeItem('@last_location_update_timestamp');
+          // Wait to ensure task is fully stopped
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          console.log('✅ [BackgroundTracking] Task stopped');
+        }
       }
-    } catch (error) {
-      console.error('❌ [LocationTask] Failed to stop background tracking:', error);
+    } catch {
+      // Silently ignore stop errors when task is not present
     }
   }, []);
 

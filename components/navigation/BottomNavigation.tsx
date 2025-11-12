@@ -5,6 +5,7 @@ import { colors, fonts, fp, rem } from '@/lib';
 import Home from '@/icons/Home';
 import ChatIcon from '@/icons/ChatIcon';
 import ProfileIcon from '@/icons/ProfileIcon';
+import MoreDotsIcon from '@/icons/MoreDotsIcon';
 import { useChatRooms } from '@/hooks/useChatRooms';
 
 const { width } = Dimensions.get('window');
@@ -83,6 +84,13 @@ export default function BottomNavigation({ currentRoute }: BottomNavigationProps
         route="/profile"
         isActive={currentRoute === '/profile'}
       />
+
+      <NavItem 
+        icon={<MoreDotsIcon width={20} height={20} color={currentRoute === '/settings' ? colors.primary.blue : '#8E8E93'} />}
+        label=""
+        route="/settings"
+        isActive={currentRoute === '/settings'}
+      />
     </View>
   );
 }
@@ -96,7 +104,7 @@ const styles = StyleSheet.create({
     width: width,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingHorizontal: rem(58),
+    paddingHorizontal: rem(30),
     paddingTop: rem(19),
     paddingBottom: rem(21),
     backgroundColor: 'rgba(41, 41, 102, 0.96)',

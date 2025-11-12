@@ -4,15 +4,16 @@
  */
 
 import { colors } from './colors';
+import { fp, rem } from "@/lib/responsive";
 
 // Define borderRadius first
 const borderRadiusVar = {
-  sm6: 6,
-  sm: 8,
-  sm10: 10,
-  md: 12,
-  lg: 16,
-  xl: 20,
+  sm6: rem(6),
+  sm: rem(8),
+  sm10: rem(10),
+  md: rem(12),
+  lg: rem(16),
+  xl: rem(20),
   full: 9999,
 };
 
@@ -34,21 +35,21 @@ export const theme = {
   typography: {
     // Headers
     h1: {
-      fontSize: 36,
+      fontSize: fp(36),
       fontWeight: 'bold' as const,
       fontFamily: 'Mulish-Bold',
       color: colors.primary.blue,
       letterSpacing: 2,
     },
     h2: {
-      fontSize: 28,
+      fontSize: fp(28),
       fontWeight: 'bold' as const,
       fontFamily: 'Mulish-Bold',
       color: colors.primary.blue,
       letterSpacing: 1.5,
     },
     h3: {
-      fontSize: 24,
+      fontSize: fp(24),
       fontWeight: 'bold' as const,
       fontFamily: 'Mulish-Bold',
       color: colors.neutral.black,
@@ -56,7 +57,7 @@ export const theme = {
     
     // Body text
     body: {
-      fontSize: 16,
+      fontSize: fp(16),
       fontWeight: '500' as const,
       fontFamily: 'Mulish-Medium',
       color: colors.neutral.black,
@@ -72,21 +73,21 @@ export const theme = {
       backgroundColor: colors.primary.green,
       borderRadius: borderRadiusVar.sm10,
       width: '100%',
-      height: 54,
+      height: rem(54),
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
-      gap: 20,
+      gap: rem(20),
     },
     
     // Buttons
     button: {
-      fontSize: 18,
+      fontSize: fp(18),
       fontFamily: fontsVar["500"],
       color: colors.primary.blue,
     },
     buttonSecondary: {
-      fontSize: 16,
+      fontSize: fp(16),
       fontWeight: '500' as const,
       fontFamily: 'Mulish-Medium',
       color: colors.primary.blue,
@@ -94,13 +95,13 @@ export const theme = {
     
     // Inputs
     input: {
-      fontSize: 16,
+      fontSize: fp(16),
       fontWeight: '500' as const,
       fontFamily: 'Mulish-Medium',
       color: colors.neutral.black,
     },
     placeholder: {
-      fontSize: 16,
+      fontSize: fp(16),
       fontWeight: '500' as const,
       fontFamily: 'Mulish-Medium',
       color: colors.neutral.darkGrey,

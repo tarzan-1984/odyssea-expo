@@ -12,6 +12,9 @@ import { useLocationPermission } from '@/hooks/useLocationPermission';
 import LocationPermissionModal from '@/components/common/LocationPermissionModal';
 // Import background location task to register it
 import '@/tasks/locationTask';
+// Ensure notifications handler is always registered regardless of auth flow
+import '@/services/NotificationsService';
+import PushTokenRegistrar from '@/components/notifications/PushTokenRegistrar';
 
 // Prevent the splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
@@ -167,6 +170,8 @@ export default function RootLayout() {
     <AuthProvider>
       <WebSocketProvider>
         <OnlineStatusProvider>
+          {/* Globally ensure push token is generated/registered for logged-in users too */}
+          <PushTokenRegistrar />
           <RootLayoutNav />
         </OnlineStatusProvider>
       </WebSocketProvider>

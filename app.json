@@ -22,21 +22,26 @@
         "NSLocationAlwaysAndWhenInUseUsageDescription": "This app uses location to share your current location and update it automatically in the background.",
         "NSPhotoLibraryUsageDescription": "This app needs access to your photo library to select an avatar.",
         "NSPhotoLibraryAddUsageDescription": "This app may save selected or edited avatar to your library.",
-        "UIBackgroundModes": ["location"]
+        "UIBackgroundModes": [
+          "location"
+        ]
       }
     },
     "android": {
       "adaptiveIcon": {
-          "foregroundImage": "./assets/app-icon.png",
-          "backgroundColor": "#ffffff"
-        },
+        "foregroundImage": "./assets/app-icon.png",
+        "backgroundColor": "#ffffff"
+      },
       "package": "com.odyssea.app",
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
         "ACCESS_BACKGROUND_LOCATION",
+        "POST_NOTIFICATIONS",
         "READ_MEDIA_IMAGES",
-        "READ_EXTERNAL_STORAGE"
+        "READ_EXTERNAL_STORAGE",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
       ]
     },
     "web": {
@@ -46,6 +51,14 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-notifications",
+        {
+          "sounds": [
+            "./assets/sounds/livechat.wav"
+          ]
+        }
+      ],
       [
         "expo-location",
         {
@@ -63,6 +76,12 @@
     },
     "devServer": {
       "port": 8081
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "7e9d4ee5-5501-4948-b562-b1dac5abb08c"
+      }
     }
   }
 }

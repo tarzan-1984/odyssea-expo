@@ -5,8 +5,6 @@ import ScreenLayout from '@/components/auth/ScreenLayout';
 import { borderRadius, colors, fonts, fp, rem, typography } from "@/lib";
 import { useAuth } from '@/context/AuthContext';
 
-const { width } = Dimensions.get('window');
-
 /**
  * VerifyAccountCodeScreen - OTP code input screen
  * User enters 6-digit verification code
@@ -76,8 +74,6 @@ export default function VerifyAccountCodeScreen() {
       setErrorMessage('Email not found. Please try again.');
       return;
     }
-
-    console.log('🔐 [VerifyCode] Verifying OTP code:', fullCode);
     
     setIsVerifying(true);
     setErrorMessage(null);
@@ -87,8 +83,6 @@ export default function VerifyAccountCodeScreen() {
       const result = await verifyOtp(userEmail, fullCode);
       
       if (result.success) {
-        console.log('✅ [VerifyCode] OTP verification successful!');
-        
         // Show success message briefly
         setSuccessMessage('Verification successful! Redirecting...');
         
@@ -110,7 +104,6 @@ export default function VerifyAccountCodeScreen() {
   };
 
   const handleResendCode = async () => {
-    console.log('🔄 [VerifyCode] Resend code requested for:', contact);
     
     setIsResending(true);
     setSuccessMessage(null); // Clear previous message
@@ -304,13 +297,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
   },
   codeInput: {
-    width: 50,
-    height: 50,
-    borderWidth: 2,
-    borderColor: '#E0E0E0',
-    borderRadius: 12,
-    backgroundColor: '#F8F8F8',
-    fontSize: 24,
+    width: rem(50),
+    height: rem(50),
+    borderRadius: rem(12),
+    backgroundColor: colors.neutral.white,
+    fontSize: fp(24),
     fontWeight: 'bold',
     color: '#000000',
     textAlign: 'center',

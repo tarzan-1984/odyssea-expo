@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useEffect, useCallback, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, TextInput, Alert } from 'react-native';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, TextInput, Alert, KeyboardAvoidingView, Platform, Keyboard, Animated, Easing } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { colors, fonts, fp, rem } from '@/lib';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,6 +17,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { secureStorage } from '@/utils/secureStorage';
 import { uploadFileViaPresign } from '@/app-api/upload';
 import MessageItem from '@/components/MessageItem';
+import { setActiveChatRoomId } from '@/services/ActiveChatService';
 
 /**
  * Chat Room Screen
@@ -28,6 +29,8 @@ export default function ChatRoomScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { authState } = useAuth();
+  const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
+  const [sendSectionHeight, setSendSectionHeight] = useState(0);
   
   // Message input state
   const [messageText, setMessageText] = useState('');
@@ -50,7 +53,7 @@ export default function ChatRoomScreen() {
   const handleAttachmentPress = useAttachmentHandler(chatRoomId, sendMessage, setUploadQueue, setIsUploading);
   
   // Get WebSocket connection status
-  const { isConnected } = useWebSocket();
+  const { isConnected, sendTyping, typingByRoom } = useWebSocket();
 
   // Get chat room display name
   const getChatDisplayName = (): string => {
@@ -257,9 +260,76 @@ export default function ChatRoomScreen() {
     previousMessagesLengthRef.current = messages.length;
   }, [messages.length, flatListData.length, flatListData]);
 
+  // Track keyboard to adjust bottom spacing
+  useEffect(() => {
+    const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => {
+      setIsKeyboardOpen(true);
+    });
+    const hideSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => {
+      setIsKeyboardOpen(false);
+    });
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
+
+  // Track active chat room for notification suppression
+  useEffect(() => {
+    if (chatRoomId) {
+      setActiveChatRoomId(chatRoomId as string);
+      return () => setActiveChatRoomId(null);
+    }
+    return () => {};
+  }, [chatRoomId]);
+
+  // Animated typing dots (mimics Next.js bouncing dots)
+  const TypingDots: React.FC = () => {
+    const d1 = useRef(new Animated.Value(0)).current;
+    const d2 = useRef(new Animated.Value(0)).current;
+    const d3 = useRef(new Animated.Value(0)).current;
+  
+    useEffect(() => {
+      const makeAnim = (value: Animated.Value, delay: number) =>
+        Animated.loop(
+          Animated.sequence([
+            Animated.timing(value, {
+              toValue: -4,
+              duration: 300,
+              delay,
+              easing: Easing.inOut(Easing.quad),
+              useNativeDriver: true,
+            }),
+            Animated.timing(value, {
+              toValue: 0,
+              duration: 300,
+              easing: Easing.inOut(Easing.quad),
+              useNativeDriver: true,
+            }),
+          ]),
+        ).start();
+  
+      makeAnim(d1, 0);
+      makeAnim(d2, 100);
+      makeAnim(d3, 200);
+    }, [d1, d2, d3]);
+  
+    return (
+      <View style={styles.typingDots}>
+        <Animated.View style={[styles.dot, { transform: [{ translateY: d1 }] }]} />
+        <Animated.View style={[styles.dot, { transform: [{ translateY: d2 }] }]} />
+        <Animated.View style={[styles.dot, { transform: [{ translateY: d3 }] }]} />
+      </View>
+    );
+  };
+
 
   return (
-    <View style={styles.screenWrap}>
+    <KeyboardAvoidingView
+      style={styles.screenWrap}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={0}
+    >
       <View style={{ height: insets.top, backgroundColor: colors.primary.violet }} />
       
       <View style={styles.container}>
@@ -375,7 +445,10 @@ export default function ChatRoomScreen() {
           />
         )}
       </View>
-      <View style={styles.sendSection}>
+      <View 
+        style={[styles.sendSection, { paddingBottom: Math.max(rem(16), rem(16) + (isKeyboardOpen ? 0 : insets.bottom)) }]}
+        onLayout={(e) => setSendSectionHeight(e.nativeEvent.layout.height)}
+      >
         {/* Upload queue preview */}
         {uploadQueue.length > 0 && (
           <View style={styles.uploadRow}>
@@ -416,7 +489,12 @@ export default function ChatRoomScreen() {
           placeholder="Type a message"
           placeholderTextColor={colors.neutral.darkGrey}
           value={messageText}
-          onChangeText={setMessageText}
+          onChangeText={(t) => {
+            setMessageText(t);
+            if (chatRoomId) {
+              sendTyping(chatRoomId as string, t.trim().length > 0);
+            }
+          }}
           multiline
           editable={!isSendingMessage}
         />
@@ -428,6 +506,8 @@ export default function ChatRoomScreen() {
               try {
                 await sendMessage(messageText.trim());
                 setMessageText('');
+                // Stop typing indicator after send
+                sendTyping(chatRoomId as string, false);
               } catch (error) {
                 console.error('Failed to send message:', error);
                 // Show error to user (you can add a toast notification here if needed)
@@ -441,6 +521,32 @@ export default function ChatRoomScreen() {
           <SendIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} opacity={messageText.trim() ? 1 : 0.5} />
         </TouchableOpacity>
       </View>
+      {/* Typing indicator (absolute above input bar) */}
+      {chatRoomId ? (() => {
+        const roomTyping = typingByRoom[chatRoomId as string] || {};
+        const entries = Object.entries(roomTyping).filter(
+          ([userId, data]) => data.isTyping && userId !== authState.user?.id
+        );
+        if (entries.length === 0) return null;
+        const names = entries.map(([_, d]) => d.firstName || 'User').slice(0, 2);
+        const text =
+          entries.length === 1
+            ? `${names[0]} is typing...`
+            : entries.length === 2
+            ? `${names[0]} and ${names[1]} are typing...`
+            : `${names[0]} and ${entries.length - 1} others are typing...`;
+        return (
+          <View
+            pointerEvents="none"
+            style={[styles.typingOverlay, { bottom: sendSectionHeight + rem(6) }]}
+          >
+            <View style={styles.typingRow}>
+              <TypingDots />
+              <Text style={styles.typingText}>{text}</Text>
+            </View>
+          </View>
+        );
+      })() : null}
       
       <EmojiPicker
         isOpen={showEmojiPicker}
@@ -449,7 +555,7 @@ export default function ChatRoomScreen() {
           setMessageText(prev => prev + emoji);
         }}
       />
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -783,6 +889,42 @@ const styles = StyleSheet.create({
     fontSize: fp(13),
     fontFamily: fonts['400'],
     color: 'rgba(41, 41, 102, 0.52)',
+  },
+  typingWrap: {
+    display: 'none',
+  },
+  typingOverlay: {
+    position: 'absolute',
+    left: rem(16),
+    right: rem(16),
+    zIndex: 25,
+  },
+  typingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: rem(8),
+    paddingHorizontal: rem(12),
+    paddingVertical: rem(6),
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderRadius: rem(12),
+    boxShadow: '0px 2px 8px rgba(0,0,0,0.08)',
+  },
+  typingDots: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rem(3),
+  },
+  dot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#8E8E93',
+  },
+  typingText: {
+    fontSize: fp(12),
+    fontFamily: fonts['400'],
+    color: '#8E8E93',
   },
 });
 
