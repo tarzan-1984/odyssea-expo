@@ -8,6 +8,7 @@ import ArrowRight from "@/icons/ArrowRight";
 import QuestionIcon from "@/icons/QuestionIcon";
 import FaceIdIcon from "@/icons/FaceIdIcon";
 import ShowPassword from "@/icons/ShowPassword";
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 /**
  * EnterPasswordScreen - Password input screen
@@ -18,6 +19,7 @@ export default function EnterPasswordScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { email, message } = params;
+  const insets = useSafeAreaInsets();
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -82,8 +84,16 @@ export default function EnterPasswordScreen() {
     console.log('Face ID authentication');
   };
 
+  const Dots = (
+    <View style={styles.dots}>
+      <View style={styles.dot} />
+      <View style={[styles.dot, styles.dotActive]} />
+      <View style={styles.dot} />
+    </View>
+  );
+
   return (
-    <ScreenLayout headerTitle={'Enter Password'} headerButtonText={'Cancel'} onHeaderButtonPress={() => router.back()} >
+    <ScreenLayout headerTitle={'Enter Password'} headerButtonText={'Cancel'} onHeaderButtonPress={() => router.back()} footer={Dots}>
           <View style={[styles.container, message && styles.containerWithMessage]}>
             <Text style={styles.title}>Enter Password</Text>
             
@@ -180,12 +190,6 @@ export default function EnterPasswordScreen() {
             )}
           </View>
       
-        {/* Progress dots */}
-        <View style={styles.dots}>
-          <View style={styles.dot} />
-          <View style={[styles.dot, styles.dotActive]} />
-          <View style={styles.dot} />
-        </View>
     </ScreenLayout>
     
   );
@@ -309,8 +313,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     gap: rem(20),
-    marginTop: 'auto',
-    marginBottom: rem(50),
   },
   dot: {
     width: rem(10),
@@ -318,6 +320,7 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.full,
     backgroundColor: '#D5D8FC',
     opacity: 0.2,
+    marginBottom: rem(50),
   },
   dotActive: {
     backgroundColor: colors.neutral.white,

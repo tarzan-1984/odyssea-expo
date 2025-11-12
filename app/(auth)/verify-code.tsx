@@ -4,6 +4,7 @@ import { View, Text, TouchableOpacity, StyleSheet, TextInput, Dimensions, Activi
 import ScreenLayout from '@/components/auth/ScreenLayout';
 import { borderRadius, colors, fonts, fp, rem, typography } from "@/lib";
 import { useAuth } from '@/context/AuthContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 /**
  * VerifyAccountCodeScreen - OTP code input screen
@@ -14,6 +15,7 @@ export default function VerifyAccountCodeScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { method, contact } = params;
+  const insets = useSafeAreaInsets();
   const [code, setCode] = useState(['', '', '', '', '', '']);
   const [isResending, setIsResending] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
@@ -140,8 +142,16 @@ export default function VerifyAccountCodeScreen() {
 
   const isCodeComplete = code.every(digit => digit !== '');
 
+  const Dots = (
+    <View style={styles.dots}>
+      <View style={styles.dot} />
+      <View style={styles.dot} />
+      <View style={[styles.dot, styles.dotActive]} />
+    </View>
+  );
+
   return (
-    <ScreenLayout headerTitle={'Verify account'} headerButtonText={'Cancel'} onHeaderButtonPress={() => router.back()} >
+    <ScreenLayout headerTitle={'Verify account'} headerButtonText={'Cancel'} onHeaderButtonPress={() => router.back()} footer={Dots} >
         <View style={styles.content}>
           <Text style={styles.title}>Verify Account</Text>
           <Text style={styles.subtitle}>Please Enter Your One-Time Verification Code.</Text>
@@ -212,12 +222,6 @@ export default function VerifyAccountCodeScreen() {
             </TouchableOpacity>
           </View>
         </View>
-      {/* Progress dots */}
-      <View style={styles.dots}>
-        <View style={styles.dot} />
-        <View style={styles.dot} />
-        <View style={[styles.dot, styles.dotActive]} />
-      </View>
     </ScreenLayout>
   );
 }
@@ -252,7 +256,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: rem(35),
     paddingHorizontal: 20,
-    lineHeight: 22,
+    lineHeight: fp(22),
     fontWeight: '400',
     fontFamily: fonts["700"]
   },
@@ -293,18 +297,19 @@ const styles = StyleSheet.create({
   codeContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: 50,
-    paddingHorizontal: 10,
+    marginBottom: rem(50),
+    paddingHorizontal: rem(10),
   },
   codeInput: {
     width: rem(50),
     height: rem(50),
     borderRadius: rem(12),
     backgroundColor: colors.neutral.white,
-    fontSize: fp(24),
+    fontSize: fp(20),
     fontWeight: 'bold',
     color: '#000000',
     textAlign: 'center',
+    lineHeight: fp(20),
   },
   button: {
     ...typography.buttonGreen,
@@ -342,8 +347,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     gap: rem(20),
-    marginTop: 'auto',
-    marginBottom: rem(50),
   },
   dot: {
     width: rem(10),

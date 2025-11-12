@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { View, Text, TouchableOpacity, StyleSheet, Switch, ScrollView, TextInput, Image } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Switch, ScrollView, TextInput, Image, Platform } from 'react-native';
 import MapView, { Region, Marker } from 'react-native-maps';
 import { BlurView } from 'expo-blur';
 import * as Location from 'expo-location';
@@ -52,6 +52,9 @@ export default function FinalVerifyScreen() {
     return `Last updated: ${month}/${day}/${year} ${hours}:${minutes}:${seconds}`;
   };
   const mapRef = useRef<MapView>(null);
+  // Avoid native crash on Android when Google Maps API key is not configured.
+  // Expo dev/bare clients require android.config.googleMaps.apiKey in app.json and a rebuild.
+  const canRenderMap = Platform.OS !== 'android' || !!process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY;
   const initialRegion: Region = {
     latitude: 39.2904, // default Baltimore
     longitude: -76.6122,
@@ -407,33 +410,44 @@ export default function FinalVerifyScreen() {
         <View style={styles.contentWrapper}>
             {/* Map section */}
             <View style={styles.mapContainer}>
-              <MapView
-                ref={mapRef}
-                style={StyleSheet.absoluteFill}
-                initialRegion={initialRegion}
-                showsUserLocation={false}
-                showsMyLocationButton={false}
-                scrollEnabled
-                zoomEnabled
-                rotateEnabled
-                pitchEnabled
-                showsCompass
-              >
-                {/* Real marker attached to map at user's coordinates */}
-                {userLocation && (
-                  <Marker coordinate={userLocation} anchor={{ x: 0.5, y: 0.5 }}>
-                    <CarMapMarker width={40} height={40} />
-                  </Marker>
-                )}
-              </MapView>
-              {/* Until location is ready, show center overlay with blur */}
-              {!isLocationReady && (
+              {canRenderMap ? (
                 <>
-                  <BlurView intensity={12} tint="light" style={StyleSheet.absoluteFill} pointerEvents="none" />
-                  <View style={styles.mapPin} pointerEvents="none">
-                    <PinMapIcon />
-                  </View>
+                  <MapView
+                    ref={mapRef}
+                    style={StyleSheet.absoluteFill}
+                    initialRegion={initialRegion}
+                    showsUserLocation={false}
+                    showsMyLocationButton={false}
+                    scrollEnabled
+                    zoomEnabled
+                    rotateEnabled
+                    pitchEnabled
+                    showsCompass
+                  >
+                    {/* Real marker attached to map at user's coordinates */}
+                    {userLocation && (
+                      <Marker coordinate={userLocation} anchor={{ x: 0.5, y: 0.5 }}>
+                        <CarMapMarker width={40} height={40} />
+                      </Marker>
+                    )}
+                  </MapView>
+                  {/* Until location is ready, show center overlay with blur */}
+                  {!isLocationReady && (
+                    <>
+                      <BlurView intensity={12} tint="light" style={StyleSheet.absoluteFill} pointerEvents="none" />
+                      <View style={styles.mapPin} pointerEvents="none">
+                        <PinMapIcon />
+                      </View>
+                    </>
+                  )}
                 </>
+              ) : (
+                <View style={styles.mapPlaceholder}>
+                  <Text style={styles.mapPlaceholderTitle}>Map unavailable</Text>
+                  <Text style={styles.mapPlaceholderText}>
+                    Configure Android Google Maps API key and rebuild the app to enable the map.
+                  </Text>
+                </View>
               )}
 
               {/* Address label overlay */}
@@ -654,6 +668,30 @@ export default function FinalVerifyScreen() {
   customMarker: {
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  mapPlaceholder: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: rem(16),
+  },
+  mapPlaceholderTitle: {
+    fontFamily: fonts['700'],
+    fontSize: fp(16),
+    color: colors.primary.blue,
+    marginBottom: rem(6),
+  },
+  mapPlaceholderText: {
+    fontFamily: fonts['400'],
+    fontSize: fp(13),
+    color: colors.primary.blue,
+    textAlign: 'center',
+    opacity: 0.75,
   },
   pulseRing: {
     position: 'absolute',

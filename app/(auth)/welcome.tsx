@@ -6,6 +6,7 @@ import ArrowRight from '@/icons/ArrowRight';
 import FaceIdIcon from '@/icons/FaceIdIcon';
 import ScreenLayout from '@/components/auth/ScreenLayout';
 import { useAuth } from '@/context/AuthContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const { width } = Dimensions.get('window');
 
@@ -19,6 +20,7 @@ export default function WelcomeScreen() {
   const [email, setEmail] = useState('');
   const [localError, setLocalError] = useState<string | null>(null);
   const { authState, checkEmailAndGeneratePassword, clearError } = useAuth();
+  const insets = useSafeAreaInsets();
 
   // Simple email validation
   const validateEmail = (email: string): boolean => {
@@ -63,8 +65,16 @@ export default function WelcomeScreen() {
     console.log('Face ID authentication');
   };
 
+  const Dots = (
+    <View style={styles.dots}>
+      <View style={[styles.dot, styles.dotActive]} />
+      <View style={styles.dot} />
+      <View style={styles.dot} />
+    </View>
+  );
+
   return (
-    <ScreenLayout>
+    <ScreenLayout footer={Dots}>
       {/* Logo section */}
       <View style={styles.logoSection}>
         <Image 
@@ -132,11 +142,6 @@ export default function WelcomeScreen() {
       )}
       
       {/* Progress dots */}
-      <View style={styles.dots}>
-        <View style={[styles.dot, styles.dotActive]} />
-        <View style={styles.dot} />
-        <View style={styles.dot} />
-      </View>
     </ScreenLayout>
   );
 }
@@ -223,7 +228,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     gap: rem(20),
-    marginTop: 'auto',
     marginBottom: rem(50),
   },
   dot: {
