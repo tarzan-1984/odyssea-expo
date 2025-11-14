@@ -33,6 +33,7 @@
         "backgroundColor": "#ffffff"
       },
       "package": "com.odyssea.app",
+      "useNextNotificationsApi": true,
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
@@ -66,6 +67,14 @@
           "locationAlwaysPermission": "This app uses location to share your current location and update it automatically in the background.",
           "locationWhenInUsePermission": "This app uses location to share your current location and update it automatically."
         }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "googleServicesFile": "./google-services.json"
+          }
+        }
       ]
     ],
     "experiments": {
@@ -80,7 +89,7 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "7e9d4ee5-5501-4948-b562-b1dac5abb08c"
+        "projectId": "d95b9117-4914-4642-ae1d-a6d37a32ec26"
       }
     }
   }

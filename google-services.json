@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "993552328814",
+    "project_id": "odyssea-84d85",
+    "storage_bucket": "odyssea-84d85.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:993552328814:android:72f2de58078414ed4d1e7f",
+        "android_client_info": {
+          "package_name": "com.odyssea.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBa7bauA27jZRA6sOIotRgLlXxmyZyXts8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

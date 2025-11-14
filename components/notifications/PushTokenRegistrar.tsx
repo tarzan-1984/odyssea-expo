@@ -25,6 +25,7 @@ export default function PushTokenRegistrar() {
         if (existing) return;
 
         const token = await registerForPushNotificationsAsync();
+        
         if (!token || canceled) return;
 
         await secureStorage.setItemAsync("expoPushToken", token).catch(() => {});

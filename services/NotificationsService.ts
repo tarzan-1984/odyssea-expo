@@ -27,13 +27,13 @@ Notifications.setNotificationHandler({
       const suppress = (activeId && incomingChatId && activeId === incomingChatId) || isMuted;
 
       const behavior: Notifications.NotificationBehavior = {
-        shouldPlaySound: suppress ? false : true,
+        shouldPlaySound: !suppress,
         shouldSetBadge: false,
         // iOS-specific (safe on Android)
-        shouldShowBanner: suppress ? false : true,
-        shouldShowList: suppress ? false : true,
+        shouldShowBanner: !suppress,
+        shouldShowList: !suppress,
         // Android/iOS fallback
-        shouldShowAlert: suppress ? false : true,
+        shouldShowAlert: !suppress,
       } as any;
       return behavior;
     } catch {
@@ -84,6 +84,8 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 			}
 
 			const expoToken = await Notifications.getExpoPushTokenAsync();
+			
+			console.log('===+++++{expoToken}++++=====', expoToken);
 			token = expoToken.data;
 			return token;
 		} else {
