@@ -378,36 +378,37 @@ export default function FinalVerifyScreen() {
   };
 
   return (
-    <View style={styles.screenWrap}>
-      {/* Paint status bar area exactly to safe inset height */}
-      <View style={{ height: insets.top, backgroundColor: colors.primary.violet }} />
-      <View style={styles.container}>
-        
-        {/* Header with time and profile */}
-        <View style={styles.header}>
-          <Text style={styles.welcome} numberOfLines={2}>
-            Welcome to application, {firstName}
-          </Text>
+    <View style={[styles.screenWrap, { paddingBottom: insets.bottom }]}>
+      <View style={styles.screenContent}>
+        {/* Paint status bar area exactly to safe inset height */}
+        <View style={{ height: insets.top, backgroundColor: colors.primary.violet }} />
+        <View style={styles.container}>
           
-          <TouchableOpacity
-            style={styles.profileIcon}
-            onPress={() => router.push('/(tabs)/profile')}
-            accessibilityRole="button"
-            accessibilityLabel="Open profile"
-          >
-            {profilePhoto ? (
-              <Image 
-                source={{ uri: profilePhoto }} 
-                style={styles.profileImage}
-                resizeMode="cover"
-              />
-            ) : (
-              <Text style={styles.profileText}>{initials}</Text>
-            )}
-          </TouchableOpacity>
-        </View>
-        
-        <View style={styles.contentWrapper}>
+          {/* Header with time and profile */}
+          <View style={styles.header}>
+            <Text style={styles.welcome} numberOfLines={2}>
+              Welcome to application, {firstName}
+            </Text>
+            
+            <TouchableOpacity
+              style={styles.profileIcon}
+              onPress={() => router.push('/(tabs)/profile')}
+              accessibilityRole="button"
+              accessibilityLabel="Open profile"
+            >
+              {profilePhoto ? (
+                <Image
+                  source={{ uri: profilePhoto }}
+                  style={styles.profileImage}
+                  resizeMode="cover"
+                />
+              ) : (
+                 <Text style={styles.profileText}>{initials}</Text>
+               )}
+            </TouchableOpacity>
+          </View>
+          
+          <View style={styles.contentWrapper}>
             {/* Map section */}
             <View style={styles.mapContainer}>
               {canRenderMap ? (
@@ -442,14 +443,14 @@ export default function FinalVerifyScreen() {
                   )}
                 </>
               ) : (
-                <View style={styles.mapPlaceholder}>
-                  <Text style={styles.mapPlaceholderTitle}>Map unavailable</Text>
-                  <Text style={styles.mapPlaceholderText}>
-                    Configure Android Google Maps API key and rebuild the app to enable the map.
-                  </Text>
-                </View>
-              )}
-
+                 <View style={styles.mapPlaceholder}>
+                   <Text style={styles.mapPlaceholderTitle}>Map unavailable</Text>
+                   <Text style={styles.mapPlaceholderText}>
+                     Configure Android Google Maps API key and rebuild the app to enable the map.
+                   </Text>
+                 </View>
+               )}
+              
               {/* Address label overlay */}
               {userLocation && locationLabel && (
                 <View style={styles.addressBadge} pointerEvents="none">
@@ -469,13 +470,14 @@ export default function FinalVerifyScreen() {
               {/* Location toggle */}
               <View style={styles.switchContainer}>
                 <Text style={styles.switchLabel}>Turn on automatic location sharing</Text>
-                
-                <Switch
-                  value={automaticLocationSharing}
-                  onValueChange={handleLocationToggleChange}
-                  trackColor={{ false: '#E8EAFD', true: '#E8EAFD' }}
-                  thumbColor={automaticLocationSharing ? colors.primary.blue : colors.primary.blue}
-                />
+                <View style={{ flexShrink: 0 }}>
+                  <Switch
+                    value={automaticLocationSharing}
+                    onValueChange={handleLocationToggleChange}
+                    trackColor={{ false: '#E8EAFD', true: colors.primary.green }}
+                    thumbColor={automaticLocationSharing ? colors.primary.blue : colors.primary.blue}
+                  />
+                </View>
               </View>
               
               {/* Last update time */}
@@ -523,22 +525,26 @@ export default function FinalVerifyScreen() {
                 </TouchableOpacity>
               </View>
             </View>
+          </View>
         </View>
+        
+        {/* Bottom Navigation */}
+        <BottomNavigation />
       </View>
-      
-      {/* Bottom Navigation */}
-      <BottomNavigation />
     </View>
   );
 }
 
  const styles = StyleSheet.create({
-   screenWrap: {
+   screenContent: {
      flex: 1,
      position: "relative"
    },
+   screenWrap: {
+     flex: 1,
+   },
    settingsLabel: {
-     fontSize: fp(15),
+     fontSize: fp(13),
      width: '25%',
      color: colors.primary.blue,
      fontFamily: fonts["600"],
@@ -613,9 +619,9 @@ export default function FinalVerifyScreen() {
     marginTop: -20,
   },
   welcome: {
-    fontSize: fp(22),
+    fontSize: fp(17),
     fontFamily: fonts["700"],
-    lineHeight: fp(28),
+    lineHeight: fp(20),
     color: colors.neutral.white,
     flex: 1,
     flexShrink: 1,
@@ -721,14 +727,21 @@ export default function FinalVerifyScreen() {
   },
   switchContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    justifyContent: 'flex-start',
+    alignItems: 'flex-start',
     marginBottom: rem(24),
   },
   switchLabel: {
-    fontSize: fp(15),
+    fontSize: fp(14),
     color: colors.primary.blue,
     fontFamily: fonts["500"],
+    flex: 1,
+    flexShrink: 1,
+    flexGrow: 1,
+    lineHeight: fp(18),
+    paddingRight: rem(12),
+    // allow wrapping to next line if text doesn't fit
+    flexWrap: 'wrap',
   },
   lastUpdateContainer: {
     marginTop: rem(-16),
@@ -763,8 +776,8 @@ export default function FinalVerifyScreen() {
   input: {
     flex: 1,
     borderRadius: 10,
-    paddingHorizontal: 16,
-    height: rem(40),
+    paddingHorizontal: rem(16),
+    height: rem(44),
     backgroundColor: 'rgba(232, 234, 253, 1)',
     display: 'flex',
     flexDirection: 'row',
@@ -772,9 +785,14 @@ export default function FinalVerifyScreen() {
   },
   textInput: {
     color: colors.primary.blue,
-    fontSize: fp(15),
+    fontSize: fp(13),
+    lineHeight: fp(16),
     fontFamily: fonts["400"],
     flex: 1,
+    // Prevent text clipping on Android
+    paddingVertical: 0,
+    textAlignVertical: 'center',
+    includeFontPadding: false as any,
   },
   updateButton: {
      marginTop: rem(12),
@@ -789,7 +807,7 @@ export default function FinalVerifyScreen() {
   },
   updateButtonText: {
     color: colors.neutral.white,
-    fontSize: fp(16),
+    fontSize: fp(14),
     fontFamily: fonts["500"],
   },
 });

@@ -34,6 +34,7 @@
       },
       "package": "com.odyssea.app",
       "useNextNotificationsApi": true,
+      "googleServicesFile": "./google-services.json",
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",

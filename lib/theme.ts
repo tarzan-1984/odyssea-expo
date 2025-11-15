@@ -82,7 +82,7 @@ export const theme = {
     
     // Buttons
     button: {
-      fontSize: fp(18),
+      fontSize: fp(16),
       fontFamily: fontsVar["500"],
       color: colors.primary.blue,
     },

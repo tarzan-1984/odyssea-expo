@@ -36,8 +36,9 @@ export const fp = (size: number): number => {
   const scale = screenWidth / baseWidth;
   const newSize = size * scale;
   
-  // Return scaled size rounded to nearest pixel
-  return PixelRatio.roundToNearestPixel(newSize);
+  // Return scaled size rounded to nearest pixel, capped to original size
+  const rounded = PixelRatio.roundToNearestPixel(newSize);
+  return Math.min(rounded, size);
 };
 
 /**
@@ -58,8 +59,9 @@ export const rem = (size: number): number => {
   
   const newSize = size * scale;
   
-  // Return scaled size rounded to nearest pixel
-  return PixelRatio.roundToNearestPixel(newSize);
+  // Return scaled size rounded to nearest pixel, capped to original size
+  const rounded = PixelRatio.roundToNearestPixel(newSize);
+  return Math.min(rounded, size);
 };
 
 /**

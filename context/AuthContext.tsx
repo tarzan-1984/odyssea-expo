@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
 import { secureStorage } from '@/utils/secureStorage';
 import { authApi, CheckEmailResponse, LoginResponse, OtpVerificationResponse } from '@/services/authApi';
+import { registerForPushNotificationsAsync, registerPushTokenToBackend } from '@/services/NotificationsService';
 
 // User interface
 export interface User {
@@ -184,6 +185,37 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           password: null, // Clear password after successful auth
           error: null,
         }));
+
+        // Register push token after successful authentication
+        try {
+          console.log('[AuthContext] Registering push token after login...');
+          
+          // Check if token already exists
+          const existingToken = await secureStorage.getItemAsync("expoPushToken").catch(() => null);
+          let pushToken = existingToken;
+
+          // Get new token if doesn't exist
+          if (!pushToken) {
+            pushToken = await registerForPushNotificationsAsync();
+            if (pushToken) {
+              // Save token to secureStorage
+              await secureStorage.setItemAsync("expoPushToken", pushToken).catch(() => {});
+              console.log('[AuthContext] ✅ Push token saved to secureStorage');
+            }
+          } else {
+            console.log('[AuthContext] Push token already exists in secureStorage');
+          }
+
+          // Register token on backend
+          if (pushToken) {
+            await registerPushTokenToBackend(pushToken, accessToken);
+          } else {
+            console.warn('[AuthContext] Failed to get push token, will retry on app start');
+          }
+        } catch (pushError) {
+          console.error('[AuthContext] Error registering push token after login:', pushError);
+          // Don't fail authentication if push token registration fails
+        }
       } else {
         console.warn('⚠️ [AuthContext] OTP verification failed:', result.error || 'Unknown error');
         
@@ -366,12 +398,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     console.log('🔄 [AuthContext] Resetting auth state and clearing all app data');
     
     try {
-      // Clear secure storage (user data, tokens, location)
+      // Clear secure storage (user data, tokens, location, push token)
       await secureStorage.deleteItemAsync('accessToken');
       await secureStorage.deleteItemAsync('refreshToken');
       await secureStorage.deleteItemAsync('user');
       await secureStorage.deleteItemAsync('userLocation');
-      console.log('💾 [AuthContext] Cleared secure storage');
+      await secureStorage.deleteItemAsync('expoPushToken');
+      console.log('💾 [AuthContext] Cleared secure storage (including push token)');
       
       // Clear chat messages cache
       const { messagesCacheService } = await import('@/services/MessagesCacheService');
@@ -383,10 +416,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await chatCacheService.clearCache();
       console.log('💾 [AuthContext] Cleared chat rooms cache');
       
-      // Clear app settings (reset to defaults)
+      // Clear chat store (Zustand in-memory state)
+      const { useChatStore } = await import('@/stores/chatStore');
+      useChatStore.getState().reset();
+      console.log('💾 [AuthContext] Cleared chat store (in-memory state)');
+      
+      // Clear app settings and pending location updates
       const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
       await AsyncStorage.removeItem('@odyssea_app_settings');
-      console.log('💾 [AuthContext] Cleared app settings (reset to defaults)');
+      await AsyncStorage.removeItem('@pending_location_update');
+      await AsyncStorage.removeItem('@location_last_update');
+      console.log('💾 [AuthContext] Cleared app settings and pending location updates');
       
       // Disconnect WebSocket if connected
       const { eventBus, AppEvents } = await import('@/services/EventBus');

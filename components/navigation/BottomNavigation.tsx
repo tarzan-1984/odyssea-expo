@@ -5,7 +5,7 @@ import { colors, fonts, fp, rem } from '@/lib';
 import Home from '@/icons/Home';
 import ChatIcon from '@/icons/ChatIcon';
 import ProfileIcon from '@/icons/ProfileIcon';
-import MoreDotsIcon from '@/icons/MoreDotsIcon';
+import SettingsIcon from '@/icons/SettingsIcon';
 import { useChatRooms } from '@/hooks/useChatRooms';
 
 const { width } = Dimensions.get('window');
@@ -85,8 +85,8 @@ export default function BottomNavigation({ currentRoute }: BottomNavigationProps
         isActive={currentRoute === '/profile'}
       />
 
-      <NavItem 
-        icon={<MoreDotsIcon width={20} height={20} color={currentRoute === '/settings' ? colors.primary.blue : '#8E8E93'} />}
+      <NavItem
+        icon={<SettingsIcon width={20} height={20} color={currentRoute === '/settings' ? colors.primary.blue : '#8E8E93'} />}
         label=""
         route="/settings"
         isActive={currentRoute === '/settings'}
@@ -106,7 +106,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: rem(30),
     paddingTop: rem(19),
-    paddingBottom: rem(21),
+    paddingBottom: 0,
     backgroundColor: 'rgba(41, 41, 102, 0.96)',
     borderTopLeftRadius: rem(20),
     borderTopRightRadius: rem(20),
@@ -117,7 +117,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   iconContainer: {
-    marginBottom: 5,
     position: 'relative',
   },
   iconContainerActive: {

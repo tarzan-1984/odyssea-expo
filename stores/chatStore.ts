@@ -11,6 +11,7 @@ type ChatState = {
   addMessage: (chatRoomId: string, message: Message) => void;
   updateMessage: (chatRoomId: string, messageId: string, updates: Partial<Message>) => void;
   markMessagesRead: (chatRoomId: string, messageIds: string[], userId: string) => void;
+  reset: () => void;
 };
 
 const storeCreator: StateCreator<ChatState> = (set, get) => ({
@@ -92,6 +93,14 @@ const storeCreator: StateCreator<ChatState> = (set, get) => ({
         lastMessage: { ...room.lastMessage, isRead: true, readBy: withUser } as Message,
       });
     }
+  },
+
+  reset: () => {
+    set({
+      chatRooms: [],
+      messagesByRoom: {},
+    });
+    console.log('🗑️ [ChatStore] Reset chat store (cleared all chat rooms and messages)');
   },
 });
 

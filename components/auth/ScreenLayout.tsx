@@ -42,6 +42,7 @@ const ScreenLayout: React.FC<ScreenLayoutProps> = ({
 			{headerTitle && (
 				<View style={styles.headerPanel}>
 					<Text style={styles.headerTitle} accessibilityRole="header">{headerTitle}</Text>
+					
 					{headerButtonText && onHeaderButtonPress && (
 						<TouchableOpacity
 							onPress={onHeaderButtonPress}

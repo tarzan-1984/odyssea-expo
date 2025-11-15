@@ -84,17 +84,79 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 			}
 
 			const expoToken = await Notifications.getExpoPushTokenAsync();
-			
-			console.log('===+++++{expoToken}++++=====', expoToken);
+			console.log('===========expoToken=========', expoToken);
 			token = expoToken.data;
+			console.log('[NotificationsService] ✅ Push token obtained:', token.substring(0, 20) + '...');
 			return token;
 		} else {
 			console.warn('Must use physical device for Push Notifications');
 			return null;
 		}
-	} catch (e) {
-		console.warn('Failed to register for push notifications:', e);
+	} catch (e: any) {
+		const errorMessage = e?.message || String(e);
+		const fullError = e?.toString() || String(e);
+		
+		// Log full error details
+		console.error('[NotificationsService] ❌ ERROR: Failed to get Expo push token');
+		console.error('[NotificationsService] Error message:', errorMessage);
+		console.error('[NotificationsService] Full error:', fullError);
+		
+		if (errorMessage.includes('FirebaseApp') || errorMessage.includes('FCM') || errorMessage.includes('Firebase')) {
+			console.error('[NotificationsService] ❌ FIREBASE ERROR: Firebase/FCM not configured!');
+			console.error('[NotificationsService] Error details:', errorMessage);
+			console.error('[NotificationsService] For cloud builds: Configure FCM credentials via EAS:');
+			console.error('[NotificationsService]   1. Run: eas credentials');
+			console.error('[NotificationsService]   2. Select Android platform');
+			console.error('[NotificationsService]   3. Select Development/Preview/Production profile');
+			console.error('[NotificationsService]   4. Configure FCM credentials (Service Account JSON or FCM Server Key)');
+			console.error('[NotificationsService]   5. Rebuild: eas build -p android --profile development');
+			console.error('[NotificationsService] For local builds: Ensure google-services.json is in project root and expo-build-properties is configured in app.json');
+		} else {
+			console.error('[NotificationsService] ❌ ERROR: Failed to get Expo push token:', errorMessage);
+		}
 		return null;
+	}
+}
+
+/**
+ * Register push token to backend
+ * @param token - Expo push token
+ * @param accessToken - User access token for authentication
+ * @returns Promise<boolean> - true if successful, false otherwise
+ */
+export async function registerPushTokenToBackend(
+	token: string,
+	accessToken: string
+): Promise<boolean> {
+	try {
+		const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || "";
+		if (!apiBase) {
+			console.warn('[NotificationsService] API base URL not configured');
+			return false;
+		}
+
+		console.log('[NotificationsService] Registering push token on backend...');
+		const response = await fetch(`${apiBase}/v1/notifications/register-token`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"Authorization": `Bearer ${accessToken}`,
+			},
+			credentials: "include",
+			body: JSON.stringify({ token, platform: Platform.OS }),
+		});
+
+		if (response.ok) {
+			console.log('[NotificationsService] ✅ Push token registered on backend');
+			return true;
+		} else {
+			const errorText = await response.text().catch(() => '');
+			console.warn('[NotificationsService] Failed to register token on backend:', response.status, errorText);
+			return false;
+		}
+	} catch (error) {
+		console.error('[NotificationsService] Error registering token on backend:', error);
+		return false;
 	}
 }
 
