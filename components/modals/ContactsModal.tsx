@@ -3,6 +3,8 @@ import { Modal, View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, A
 import { colors, fonts, rem, fp, borderRadius } from '@/lib';
 import { chatApi, UsersResponse } from '@/app-api/chatApi';
 import { useOnlineStatusContext } from '@/context/OnlineStatusContext';
+import { useAuth } from '@/context/AuthContext';
+import { useChatRooms } from '@/hooks/useChatRooms';
 
 interface UserItem {
   id: string;
@@ -22,6 +24,8 @@ interface ContactsModalProps {
 
 export default function ContactsModal({ visible, onClose, onSelectUser }: ContactsModalProps) {
   const { isUserOnline } = useOnlineStatusContext();
+  const { chatRooms } = useChatRooms();
+  const { authState } = useAuth();
   const [users, setUsers] = useState<UserItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -30,6 +34,19 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
   const [debouncedSearch, setDebouncedSearch] = useState('');
   const [page, setPage] = useState(1);
   const [hasNextPage, setHasNextPage] = useState(true);
+
+  // Helper: deduplicate users by id while preserving order
+  const dedupeById = (list: UserItem[]): UserItem[] => {
+    const seen = new Set<string>();
+    const result: UserItem[] = [];
+    for (const u of list) {
+      if (u?.id && !seen.has(u.id)) {
+        seen.add(u.id);
+        result.push(u);
+      }
+    }
+    return result;
+  };
 
   // Debounce search input (300ms)
   useEffect(() => {
@@ -56,7 +73,7 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
       setError(null);
       try {
         const res: UsersResponse = await chatApi.getUsers({ page: 1, limit: 10, search: debouncedSearch || undefined });
-        setUsers(res.users || []);
+        setUsers(dedupeById(res.users || []));
         setPage(res.pagination?.current_page || 1);
         setHasNextPage(!!res.pagination?.has_next_page);
       } catch (e) {
@@ -74,7 +91,7 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
     try {
       const next = page + 1;
       const res: UsersResponse = await chatApi.getUsers({ page: next, limit: 10, search: debouncedSearch || undefined });
-      setUsers(prev => [...prev, ...(res.users || [])]);
+      setUsers(prev => dedupeById([...(prev || []), ...((res.users as UserItem[]) || [])]));
       setPage(res.pagination?.current_page || next);
       setHasNextPage(!!res.pagination?.has_next_page);
     } catch (e) {
@@ -86,9 +103,18 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return users;
-    return users.filter(u => `${u.firstName} ${u.lastName}`.toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q));
-  }, [users, search]);
+    // Build a set of userIds that already have a DIRECT chat with current user
+    const directUserIds = new Set<string>();
+    chatRooms.forEach(room => {
+      if (room.type === 'DIRECT' && room.participants?.length === 2) {
+        const other = room.participants.find(p => p.userId !== authState.user?.id)?.user?.id;
+        if (other) directUserIds.add(other);
+      }
+    });
+    const base = users.filter(u => !directUserIds.has(u.id));
+    if (!q) return base;
+    return base.filter(u => `${u.firstName} ${u.lastName}`.toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q));
+  }, [users, search, chatRooms]);
 
   // Handlers to clear search on close/select
   const handleClose = () => {
@@ -162,7 +188,7 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
           ) : (
             <FlatList
               data={filtered}
-              keyExtractor={(item) => item.id}
+              keyExtractor={(item, index) => `contact-${item.id}-${index}`}
               renderItem={renderItem}
               ItemSeparatorComponent={() => <View style={styles.separator} />}
               contentContainerStyle={styles.listContent}
@@ -233,6 +259,11 @@ const styles = StyleSheet.create({
     fontSize: fp(14),
     fontFamily: fonts['400'],
     color: colors.primary.blue,
+    // Vertical centering for Android
+    paddingVertical: 0,
+    textAlignVertical: 'center',
+    includeFontPadding: false as any,
+    lineHeight: fp(16),
   },
   loaderWrap: { padding: rem(20), alignItems: 'center' },
   loaderMoreWrap: { padding: rem(12), alignItems: 'center' },

@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { View, TouchableOpacity, Text, StyleSheet, Dimensions } from 'react-native';
 import { useRouter } from 'expo-router';
-import { colors, fonts, fp, rem } from '@/lib';
+import { borderRadius, colors, fonts, fp, rem } from '@/lib';
 import Home from '@/icons/Home';
 import ChatIcon from '@/icons/ChatIcon';
 import ProfileIcon from '@/icons/ProfileIcon';
@@ -17,9 +17,10 @@ interface NavItemProps {
   isActive?: boolean;
   onPress?: () => void;
   badgeCount?: number;
+  isLast?: boolean;
 }
 
-const NavItem: React.FC<NavItemProps> = ({ icon, label, route, isActive = false, onPress, badgeCount }) => {
+const NavItem: React.FC<NavItemProps> = ({ icon, label, route, isActive = false, onPress, badgeCount, isLast = false }) => {
   const router = useRouter();
 
   const handlePress = () => {
@@ -31,7 +32,7 @@ const NavItem: React.FC<NavItemProps> = ({ icon, label, route, isActive = false,
   };
 
   return (
-    <TouchableOpacity style={styles.navItem} onPress={handlePress}>
+    <TouchableOpacity style={[styles.navItem, isLast && styles.navItemLast]} onPress={handlePress}>
       <View style={[styles.iconContainer, isActive && styles.iconContainerActive]}>
         {icon}
         {badgeCount !== undefined && badgeCount > 0 ? (
@@ -90,6 +91,7 @@ export default function BottomNavigation({ currentRoute }: BottomNavigationProps
         label=""
         route="/settings"
         isActive={currentRoute === '/settings'}
+        isLast
       />
     </View>
   );
@@ -116,6 +118,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
   },
+  navItemLast: {
+    paddingRight: rem(6),
+  },
   iconContainer: {
     position: 'relative',
   },
@@ -126,20 +131,22 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -6,
     right: -8,
-    minWidth: rem(18),
-    height: rem(18),
-    borderRadius: rem(9),
-    backgroundColor: colors.neutral.white,
-    justifyContent: 'center',
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: 'white',
     alignItems: 'center',
-    paddingHorizontal: rem(4),
-    borderWidth: 1,
-    borderColor: 'rgba(41, 41, 102, 0.1)',
+    justifyContent: 'center',
   },
   badgeText: {
-    fontSize: fp(10),
-    fontFamily: fonts['700'],
+    fontSize: 8,
+    textAlign: 'center',
+    lineHeight: 8,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
     color: colors.primary.blue,
+    padding: 0,
+    fontFamily: fonts['700'],
   },
   navText: {
     fontSize: fp(12),

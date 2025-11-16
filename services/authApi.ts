@@ -151,7 +151,6 @@ class AuthApiService {
 
       const data = await response.json();
       console.log('📦 [AuthAPI] Raw response status:', response.status);
-      console.log('📦 [AuthAPI] Raw response data:', JSON.stringify(data, null, 2));
 
       if (!response.ok) {
         return {

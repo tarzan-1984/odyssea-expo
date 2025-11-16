@@ -93,7 +93,8 @@ export default function ChatListItem({
   const isDropdownOpen = controlledDropdownOpen !== undefined ? controlledDropdownOpen : internalDropdownOpen;
   const [isMuted, setIsMuted] = useState(chatRoom.isMuted || false);
   const [isPinned, setIsPinned] = useState(chatRoom.isPinned || false);
-  const menuButtonRef = useRef<TouchableOpacity>(null);
+  // Ref to measure menu button position (type any to avoid TSX type/value mix issue)
+  const menuButtonRef = useRef<any>(null);
   const [menuPosition, setMenuPosition] = useState({ x: 0, y: 0 });
 
   // Update local state when chatRoom prop changes
@@ -106,7 +107,7 @@ export default function ChatListItem({
   const toggleDropdown = () => {
     if (!isDropdownOpen) {
       // Measure button position first
-      menuButtonRef.current?.measure((x, y, width, height, pageX, pageY) => {
+      menuButtonRef.current?.measure((x: any, y: any, width: any, height: any, pageX: any, pageY: any) => {
         setMenuPosition({ x: pageX, y: pageY + height });
         
         // Close all other dropdowns and open this one
@@ -145,7 +146,7 @@ export default function ChatListItem({
       if (controlledDropdownOpen) {
         // Measure button position when dropdown is opened externally
         setTimeout(() => {
-          menuButtonRef.current?.measure((x, y, width, height, pageX, pageY) => {
+          menuButtonRef.current?.measure((x: any, y: any, width: any, height: any, pageX: any, pageY: any) => {
             setMenuPosition({ x: pageX, y: pageY + height });
           });
         }, 0);
@@ -169,7 +170,13 @@ export default function ChatListItem({
       
       // Update chat room in parent state and cache
       if (onChatRoomUpdate) {
-        onChatRoomUpdate(chatRoom.id, { isMuted: newMuteState });
+        // Explicitly preserve unreadCount, lastMessage and updatedAt
+        onChatRoomUpdate(chatRoom.id, { 
+          isMuted: newMuteState,
+          unreadCount: chatRoom.unreadCount,
+          lastMessage: chatRoom.lastMessage,
+          updatedAt: chatRoom.updatedAt,
+        });
       }
     } catch (error) {
       console.error('Failed to toggle mute:', error);
@@ -524,20 +531,20 @@ const styles = StyleSheet.create({
     marginRight: rem(14),
   },
   avatar: {
-    width: rem(57),
-    height: rem(57),
+    width: rem(60),
+    height: rem(60),
     borderRadius: borderRadius.full,
   },
   avatarPlaceholder: {
-    width: rem(57),
-    height: rem(57),
+    width: rem(60),
+    height: rem(60),
     borderRadius: borderRadius.full,
     backgroundColor: colors.neutral.lightGrey,
     justifyContent: 'center',
     alignItems: 'center',
   },
   avatarText: {
-    fontSize: fp(18),
+    fontSize: fp(14),
     fontFamily: fonts['700'],
     color: colors.neutral.black,
   },
@@ -556,13 +563,12 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: -2,
     right: -2,
-    minWidth: rem(24),
-    height: rem(20),
-    borderRadius: rem(10),
+    minWidth: rem(22),
+    height: rem(22),
+    borderRadius: borderRadius.full,
     backgroundColor: colors.semantic.error,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: rem(6),
     borderWidth: 2,
     borderColor: colors.neutral.white,
     zIndex: 1,
@@ -623,9 +629,14 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase'
   },
   unreadBadgeText: {
-    fontSize: fp(10),
-    fontFamily: fonts['700'],
+    fontSize: 8,
+    textAlign: 'center',
+    lineHeight: 8,
+    includeFontPadding: false,
+    textAlignVertical: 'center',
     color: colors.neutral.white,
+    padding: 0,
+    fontFamily: fonts['700'],
   },
   menuContainer: {
     position: 'relative',

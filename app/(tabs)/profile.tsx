@@ -38,7 +38,6 @@ export default function ProfileScreen() {
         setIsLoadingUser(true);
         setUserError(null);
         const res = await getUserById(authState.user.externalId);
-        console.log('res', res);
         setUserDetails(res ?? null);
       } catch (e) {
         setUserError(e instanceof Error ? e.message : 'Failed to load user');

@@ -234,205 +234,217 @@ export default function MessagesScreen() {
   }, [isFilterDropdownOpen]);
 
   return (
-    <View style={styles.screenWrap}>
-      <View style={{ height: insets.top, backgroundColor: colors.primary.violet }} />
-      <View style={styles.container}>
-        {/* Header with time and profile */}
-        <View style={styles.header}>
-          <View style={styles.titleContainer}>
-            <Text style={styles.screenTitle}>Conversation</Text>
-            <View style={styles.statusContainer}>
-              <Text style={[
-                styles.statusText,
-                isConnected ? styles.statusOnline : styles.statusOffline
-              ]}>
-                {isConnected ? 'Online' : 'Offline'}
-              </Text>
-            </View>
-          </View>
-          <TouchableOpacity style={styles.contactsButton} onPress={() => setIsContactsOpen(true)}>
-            <Text style={styles.contactsButtonText}>Contacts</Text>
-          </TouchableOpacity>
-        </View>
-        
-        {/* Search and Filter Section */}
-        <View style={styles.searchFilterSection}>
-          {/* Search Input */}
-          <View style={styles.searchContainer}>
-            <View style={styles.searchIconContainer}>
-              <SearchIcon />
-            </View>
-            
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search chats..."
-              placeholderTextColor={colors.neutral.darkGrey}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-            />
-            
-            {searchQuery.length > 0 && (
-              <TouchableOpacity
-                style={styles.clearButton}
-                onPress={() => setSearchQuery('')}
-                activeOpacity={0.7}
-              >
-                <ClearIcon />
-              </TouchableOpacity>
-            )}
-          </View>
-
-          {/* Mute All Button */}
-          <TouchableOpacity
-            style={styles.muteAllButton}
-            onPress={handleSmartMuteToggle}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.muteAllButtonText}>
-              {allChatsMuted ? 'Unmute all' : 'Mute all'}
-            </Text>
-          </TouchableOpacity>
-
-          {/* Filter Dropdown */}
-          <View style={styles.filterContainer}>
-            <TouchableOpacity
-              style={styles.filterButton}
-              onPress={() => setIsFilterDropdownOpen(!isFilterDropdownOpen)}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.filterButtonText}>{getCurrentFilterLabel()}</Text>
-              <View style={[styles.arrowIcon, isFilterDropdownOpen && styles.arrowIconRotated]}>
-                <ArrowDownIcon />
+    <View style={[styles.screenWrap, { paddingBottom: insets.bottom }]}>
+      <View style={styles.screenContent}>
+        <View style={{ height: insets.top, backgroundColor: colors.primary.violet }} />
+        <View style={styles.container}>
+          {/* Header with time and profile */}
+          <View style={styles.header}>
+            <View style={styles.titleContainer}>
+              <Text style={styles.screenTitle}>Conversation</Text>
+              <View style={styles.statusContainer}>
+                <Text style={[
+                  styles.statusText,
+                  isConnected ? styles.statusOnline : styles.statusOffline
+                ]}>
+                  {isConnected ? 'Online' : 'Offline'}
+                </Text>
               </View>
+            </View>
+            <TouchableOpacity style={styles.contactsButton} onPress={() => setIsContactsOpen(true)}>
+              <Text style={styles.contactsButtonText}>Contacts</Text>
             </TouchableOpacity>
-
-            {/* Dropdown Menu */}
-            {isFilterDropdownOpen && (
-              <View style={styles.dropdownMenu}>
-                {filterOptions.map((option, index) => (
-                  <TouchableOpacity
-                    key={option.value}
-                    style={[
-                      styles.dropdownItem,
-                      selectedFilter === option.value && styles.dropdownItemSelected,
-                      index === filterOptions.length - 1 && styles.dropdownItemLast,
-                    ]}
-                    onPress={() => handleFilterSelect(option.value)}
-                    activeOpacity={0.7}
-                  >
-                    <Text
-                      style={[
-                        styles.dropdownItemText,
-                        selectedFilter === option.value && styles.dropdownItemTextSelected,
-                      ]}
-                    >
-                      {option.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            )}
           </View>
-        </View>
-        
-        <ScrollView 
-          style={styles.content}
-          contentContainerStyle={styles.contentContainer}
-          showsVerticalScrollIndicator={false}
-          onScrollBeginDrag={() => {
-            // Close any open dropdowns when scrolling starts
-            // This is handled by the ChatListItem component itself
-          }}
-        >
-          {isLoading && chatRooms.length === 0 ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color={colors.primary.violet} />
-              <Text style={styles.loadingText}>Loading chats...</Text>
-            </View>
-          ) : error && chatRooms.length === 0 ? (
-            <View style={styles.errorContainer}>
-              <Text style={styles.errorText}>{error}</Text>
-              <TouchableOpacity 
-                style={styles.retryButton}
-                onPress={() => { void loadChatRooms(true); }}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.retryButtonText}>Retry</Text>
-              </TouchableOpacity>
-            </View>
-          ) : filteredChatRooms.length === 0 ? (
-            <View style={styles.emptyContainer}>
-              <Text style={styles.emptyText}>
-                {debouncedSearchQuery.trim() ? 'No chats found' : 'No chats yet'}
-              </Text>
-              {debouncedSearchQuery.trim() && (
-                <Text style={styles.emptySubtext}>Try a different search term</Text>
+          
+          {/* Search and Filter Section */}
+          <View style={styles.searchFilterSection}>
+            {/* Search Input */}
+            <View style={styles.searchContainer}>
+              <View style={styles.searchIconContainer}>
+                <SearchIcon />
+              </View>
+              
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search chats"
+                placeholderTextColor={colors.neutral.darkGrey}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+              />
+              
+              {searchQuery.length > 0 && (
+                <TouchableOpacity
+                  style={styles.clearButton}
+                  onPress={() => setSearchQuery('')}
+                  activeOpacity={0.7}
+                >
+                  <ClearIcon />
+                </TouchableOpacity>
               )}
             </View>
-          ) : (
-            <View style={styles.chatList}>
-              {filteredChatRooms.map((chatRoom) => {
-                // Determine online status for DIRECT chats
-                let userStatus: 'online' | 'offline' = 'offline';
-                if (chatRoom.type === 'DIRECT' && chatRoom.participants.length === 2) {
-                  const otherParticipant = chatRoom.participants.find(
-                    p => p.user.id !== authState.user?.id
-                  );
-                  if (otherParticipant && isUserOnline(otherParticipant.user.id)) {
-                    userStatus = 'online';
-                  }
-                }
-
-                return (
-                  <ChatListItem
-                    key={chatRoom.id}
-                    chatRoom={chatRoom}
-                    isSelected={selectedChatId === chatRoom.id}
-                    status={userStatus}
-                    onPress={handleChatPress}
-                    currentUserId={authState.user?.id}
-                    onChatRoomUpdate={updateChatRoom}
-                    isDropdownOpen={openDropdownId === chatRoom.id}
-                    onDropdownToggle={(isOpen, chatId) => {
-                      if (isOpen) {
-                        // Simply set the new dropdown ID - React will close the old Modal automatically
-                        setOpenDropdownId(chatId);
-                      } else {
-                        setOpenDropdownId(null);
-                      }
-                    }}
-                    onCloseAllDropdowns={closeAllDropdowns}
-                  />
-                );
-              })}
+            
+            {/* Mute All Button */}
+            <TouchableOpacity
+              style={styles.muteAllButton}
+              onPress={handleSmartMuteToggle}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.muteAllButtonText}>
+                {allChatsMuted ? 'Unmute all' : 'Mute all'}
+              </Text>
+            </TouchableOpacity>
+            
+            {/* Filter Dropdown */}
+            <View style={styles.filterContainer}>
+              <TouchableOpacity
+                style={styles.filterButton}
+                onPress={() => setIsFilterDropdownOpen(!isFilterDropdownOpen)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.filterButtonText}>{getCurrentFilterLabel()}</Text>
+                <View style={[styles.arrowIcon, isFilterDropdownOpen && styles.arrowIconRotated]}>
+                  <ArrowDownIcon />
+                </View>
+              </TouchableOpacity>
+              
+              {/* Dropdown Menu */}
+              {isFilterDropdownOpen && (
+                <View style={styles.dropdownMenu}>
+                  {filterOptions.map((option, index) => (
+                    <TouchableOpacity
+                      key={option.value}
+                      style={[
+                        styles.dropdownItem,
+                        selectedFilter === option.value && styles.dropdownItemSelected,
+                        index === filterOptions.length - 1 && styles.dropdownItemLast,
+                      ]}
+                      onPress={() => handleFilterSelect(option.value)}
+                      activeOpacity={0.7}
+                    >
+                      <Text
+                        style={[
+                          styles.dropdownItemText,
+                          selectedFilter === option.value && styles.dropdownItemTextSelected,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
             </View>
-          )}
-        </ScrollView>
+          </View>
+          
+          <ScrollView
+            style={styles.content}
+            contentContainerStyle={styles.contentContainer}
+            showsVerticalScrollIndicator={false}
+            onScrollBeginDrag={() => {
+              // Close any open dropdowns when scrolling starts
+              // This is handled by the ChatListItem component itself
+            }}
+          >
+            {isLoading && chatRooms.length === 0 ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={colors.primary.violet} />
+                <Text style={styles.loadingText}>Loading chats...</Text>
+              </View>
+            ) : error && chatRooms.length === 0 ? (
+              <View style={styles.errorContainer}>
+                <Text style={styles.errorText}>{error}</Text>
+                <TouchableOpacity
+                  style={styles.retryButton}
+                  onPress={() => { void loadChatRooms(true); }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.retryButtonText}>Retry</Text>
+                </TouchableOpacity>
+              </View>
+            ) : filteredChatRooms.length === 0 ? (
+              <View style={styles.emptyContainer}>
+                <Text style={styles.emptyText}>
+                  {debouncedSearchQuery.trim() ? 'No chats found' : 'No chats yet'}
+                </Text>
+                {debouncedSearchQuery.trim() && (
+                  <Text style={styles.emptySubtext}>Try a different search term</Text>
+                )}
+              </View>
+            ) : (
+                  <View style={styles.chatList}>
+                    {filteredChatRooms.map((chatRoom) => {
+                      // Determine online status for DIRECT chats
+                      let userStatus: 'online' | 'offline' = 'offline';
+                      if (chatRoom.type === 'DIRECT' && chatRoom.participants.length === 2) {
+                        const otherParticipant = chatRoom.participants.find(
+                          p => p.user.id !== authState.user?.id
+                        );
+                        if (otherParticipant && isUserOnline(otherParticipant.user.id)) {
+                          userStatus = 'online';
+                        }
+                      }
+                      
+                      return (
+                        <ChatListItem
+                          key={chatRoom.id}
+                          chatRoom={chatRoom}
+                          isSelected={selectedChatId === chatRoom.id}
+                          status={userStatus}
+                          onPress={handleChatPress}
+                          currentUserId={authState.user?.id}
+                          onChatRoomUpdate={updateChatRoom}
+                          isDropdownOpen={openDropdownId === chatRoom.id}
+                          onDropdownToggle={(isOpen, chatId) => {
+                            if (isOpen) {
+                              // Simply set the new dropdown ID - React will close the old Modal automatically
+                              setOpenDropdownId(chatId);
+                            } else {
+                              setOpenDropdownId(null);
+                            }
+                          }}
+                          onCloseAllDropdowns={closeAllDropdowns}
+                        />
+                      );
+                    })}
+                  </View>
+                )}
+          </ScrollView>
+        </View>
+        
+        {/* Bottom Navigation */}
+        <BottomNavigation />
+        
+        {/* Contacts Modal */}
+        <ContactsModal
+          visible={isContactsOpen}
+          onClose={() => setIsContactsOpen(false)}
+          onSelectUser={async (user) => {
+            try {
+              // If a DIRECT chat with this user already exists, open it instead of creating
+              const existing = chatRooms.find(room => 
+                room.type === 'DIRECT' &&
+                room.participants?.length === 2 &&
+                room.participants.some(p => p.userId === user.id)
+              );
+              if (existing) {
+                router.push(`/chat/${existing.id}` as any);
+                setIsContactsOpen(false);
+                return;
+              }
+              // Otherwise create DIRECT chat
+              const participantIds = [authState.user?.id, user.id].filter(Boolean) as string[];
+              await (await import('@/app-api/chatApi')).chatApi.createChatRoom({
+                type: 'DIRECT',
+                participantIds,
+              });
+              await loadChatRooms(true);
+              setIsContactsOpen(false);
+            } catch (e) {
+              console.error('Failed to create direct chat:', e);
+            }
+          }}
+        />
       </View>
-      
-      {/* Bottom Navigation */}
-      <BottomNavigation />
-
-      {/* Contacts Modal */}
-      <ContactsModal
-        visible={isContactsOpen}
-        onClose={() => setIsContactsOpen(false)}
-        onSelectUser={async (user) => {
-          try {
-            // Create DIRECT chat with selected user
-            const participantIds = [authState.user?.id, user.id].filter(Boolean) as string[];
-            const room = await (await import('@/app-api/chatApi')).chatApi.createChatRoom({
-              type: 'DIRECT',
-              participantIds,
-            });
-            // Refresh chat rooms and close modal
-            await loadChatRooms();
-            setIsContactsOpen(false);
-          } catch (e) {
-            console.error('Failed to create direct chat:', e);
-          }
-        }}
-      />
     </View>
   );
 }
@@ -475,6 +487,10 @@ const ArrowDownIcon = ({ color = '#8E8E93' }: { color?: string }) => (
 );
 
 const styles = StyleSheet.create({
+  screenContent: {
+    flex: 1,
+    position: "relative"
+  },
   chatList: {
     flex: 1,
   },
@@ -545,7 +561,7 @@ const styles = StyleSheet.create({
   screenTitle: {
     color: colors.neutral.white,
     fontFamily: fonts["700"],
-    fontSize: fp(18),
+    fontSize: fp(16),
     textTransform: 'capitalize',
   },
   header: {
@@ -570,9 +586,8 @@ const styles = StyleSheet.create({
     marginLeft: rem(8),
   },
   statusText: {
-    fontSize: fp(12),
+    fontSize: fp(10),
     fontFamily: fonts['600'],
-    textTransform: 'uppercase',
   },
   statusOnline: {
     color: colors.semantic.success,
@@ -625,10 +640,15 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
-    fontSize: fp(14),
+    fontSize: fp(10),
     fontFamily: fonts["400"],
     color: colors.primary.blue,
+    // Ensure vertical centering of text and placeholder on Android
     paddingVertical: 0,
+    textAlignVertical: 'center',
+    includeFontPadding: false as any,
+    height: rem(35),
+    lineHeight: rem(35),
   },
   clearButton: {
     marginLeft: rem(8),
@@ -646,7 +666,7 @@ const styles = StyleSheet.create({
     minWidth: rem(80),
   },
   muteAllButtonText: {
-    fontSize: fp(12),
+    fontSize: fp(10),
     fontFamily: fonts["500"],
     color: colors.primary.blue,
   },
@@ -665,7 +685,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(96, 102, 197, 0.1)',
   },
   filterButtonText: {
-    fontSize: fp(12),
+    fontSize: fp(10),
     fontFamily: fonts["500"],
     color: colors.primary.blue,
   },
