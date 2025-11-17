@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useEffect, useCallback, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, TextInput, Alert, KeyboardAvoidingView, Platform, Keyboard, Animated, Easing } from 'react-native';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform, Keyboard, Animated, Easing } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { colors, fonts, fp, rem } from '@/lib';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -12,12 +12,9 @@ import SmileIcon from '@/icons/SmileIcon';
 import AttachmentIcon from '@/icons/AttachmentIcon';
 import SendIcon from '@/icons/SendIcon';
 import EmojiPicker from '@/components/EmojiPicker';
-import * as DocumentPicker from 'expo-document-picker';
-import * as ImagePicker from 'expo-image-picker';
-import { secureStorage } from '@/utils/secureStorage';
-import { uploadFileViaPresign } from '@/app-api/upload';
 import MessageItem from '@/components/MessageItem';
 import { setActiveChatRoomId } from '@/services/ActiveChatService';
+import { useAttachmentHandler } from '@/utils/chatAttachmentHelpers';
 
 /**
  * Chat Room Screen
@@ -29,8 +26,9 @@ export default function ChatRoomScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { authState } = useAuth();
-  const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
   const [sendSectionHeight, setSendSectionHeight] = useState(0);
+  const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
+  const [flexToggle, setFlexToggle] = useState(false);
   
   // Message input state
   const [messageText, setMessageText] = useState('');
@@ -260,13 +258,19 @@ export default function ChatRoomScreen() {
     previousMessagesLengthRef.current = messages.length;
   }, [messages.length, flatListData.length, flatListData]);
 
-  // Track keyboard to adjust bottom spacing
+  // Track keyboard state
   useEffect(() => {
     const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => {
       setIsKeyboardOpen(true);
+      if (Platform.OS === 'android') {
+        setFlexToggle(false);
+      }
     });
     const hideSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => {
       setIsKeyboardOpen(false);
+      if (Platform.OS === 'android') {
+        setFlexToggle(true);
+      }
     });
     return () => {
       showSub.remove();
@@ -322,411 +326,253 @@ export default function ChatRoomScreen() {
       </View>
     );
   };
-
-
+  
   return (
-    <KeyboardAvoidingView
-      style={styles.screenWrap}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={0}
-    >
+    <View style={[styles.screenWrap]}>
       <View style={{ height: insets.top, backgroundColor: colors.primary.violet }} />
-      
-      <View style={styles.container}>
-        {/* Header with back button and chat name */}
-        <View style={styles.header}>
-          <TouchableOpacity 
-            style={styles.backButton}
-            onPress={() => router.back()}
+      <KeyboardAvoidingView
+        style={
+          flexToggle
+            ? { flexGrow: 1 }
+            : { flex: 1 }
+        }
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+        enabled={!flexToggle}
+      >
+        <View style={styles.container}>
+          {/* Header with back button and chat name */}
+          <View style={styles.header}>
+            <TouchableOpacity
+              style={styles.backButton}
+              onPress={() => router.back()}
+              activeOpacity={0.7}
+            >
+              <ArrowLeft width={rem(10.46)} height={rem(19)} color={colors.neutral.white} />
+            </TouchableOpacity>
+            {isLoadingChatRoom ? (
+              <ActivityIndicator size="small" color={colors.neutral.white} />
+            ) : error ? (
+              <Text style={styles.screenTitle}>Error</Text>
+            ) : (
+              <Text style={styles.screenTitle}>
+                {getChatDisplayName()}
+              </Text>
+            )}
+          </View>
+        
+          {isLoadingMessages && messages.length === 0 ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={colors.primary.violet} />
+              <Text style={styles.loadingText}>Loading messages...</Text>
+            </View>
+          ) : error && messages.length === 0 ? (
+            <View style={styles.errorContainer}>
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : messages.length === 0 ? (
+            <View style={styles.emptyContainer}>
+              <Text style={styles.emptyText}>No messages yet</Text>
+            </View>
+          ) : (
+            <FlatList
+              ref={flatListRef}
+              data={flatListData}
+              inverted
+              style={styles.content}
+              contentContainerStyle={styles.messagesContainer}
+              extraData={messages.map(msg => `${msg.id}-${msg.isRead ? 'read' : 'unread'}-${(msg.readBy || []).join(',')}`).join('|')}
+              keyExtractor={(item, index) => {
+                if (item.type === 'date') {
+                  return `date-${index}`;
+                }
+                return (item.data as Message).id;
+              }}
+              onScroll={(event) => {
+                // Track if user has scrolled up (away from bottom)
+                // In inverted FlatList:
+                // - contentOffset.y === 0 means at visual bottom (newest messages)
+                // - contentOffset.y > 0 means scrolled up (older messages)
+                const { contentOffset } = event.nativeEvent;
+                // If user scrolled more than 100px from bottom, they're looking at older messages
+                isUserScrolledUpRef.current = contentOffset.y > 100;
+                // Mark that user has manually scrolled to bottom
+                if (contentOffset.y <= 10) { // Small threshold for "at bottom"
+                  hasScrolledToBottomRef.current = true;
+                }
+              }}
+              scrollEventThrottle={400}
+              onContentSizeChange={handleContentSizeChange}
+              onScrollToIndexFailed={(info) => {
+                // If scrollToIndex fails, try scrollToOffset as fallback
+                setTimeout(() => {
+                  try {
+                    flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+                  } catch (e) {
+                    console.warn('Failed to scroll after index failure:', e);
+                  }
+                }, 100);
+              }}
+              renderItem={({ item }) => {
+                if (item.type === 'date') {
+                  const dateString = item.data as string;
+                  return (
+                    <View style={styles.dateSeparator}>
+                      <View style={styles.dateSeparatorLine} />
+                      <Text style={styles.dateSeparatorText}>{dateString}</Text>
+                    </View>
+                  );
+                }
+                
+                const message = item.data as Message;
+                const isSender = message.senderId === authState.user?.id;
+                
+                return <MessageItem message={message} isSender={isSender} />;
+              }}
+              onEndReached={() => {
+                // In inverted list, onEndReached fires when scrolling to top
+                // Load more messages when scrolling to top (which is "end" in inverted list)
+                // Note: We call loadMoreMessages even when hasMoreMessages is false,
+                // because it will try to load from archive if database is exhausted
+                if (!isLoadingMessages) {
+                  loadMoreMessages();
+                }
+              }}
+              onEndReachedThreshold={0.5}
+              ListHeaderComponent={
+                // In inverted list, ListHeaderComponent appears at the top (where old messages load)
+                isLoadingMessages && messages.length > 0 ? (
+                  <View style={{ paddingVertical: rem(10) }}>
+                    <ActivityIndicator size="small" color={colors.primary.violet} />
+                  </View>
+                ) : null
+              }
+              maintainVisibleContentPosition={{
+                minIndexForVisible: 0,
+              }}
+            />
+          )}
+        
+        <View
+          style={[
+            styles.sendSection,
+            //!isKeyboardOpen ? { paddingBottom: insets.bottom } : null,
+          ]}
+          onLayout={(e) => setSendSectionHeight(e.nativeEvent.layout.height)}
+        >
+          {/* Upload queue preview */}
+          {uploadQueue.length > 0 && (
+            <View style={styles.uploadRow}>
+              {uploadQueue.map((f, idx) => (
+                <View key={`${f.name}-${idx}`} style={styles.uploadChip}>
+                  <Text style={styles.uploadChipText} numberOfLines={1}>
+                    {f.name}
+                  </Text>
+                  <Text style={styles.uploadChipStatus}>
+                    {f.status === 'uploading' ? 'Uploading…' : f.status === 'done' ? 'Sent' : 'Error'}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+          
+          <TouchableOpacity
+            style={styles.smileButton}
+            onPress={() => {
+              setShowEmojiPicker(!showEmojiPicker);
+            }}
             activeOpacity={0.7}
           >
-            <ArrowLeft width={rem(10.46)} height={rem(19)} color={colors.neutral.white} />
+            <SmileIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} />
           </TouchableOpacity>
-          {isLoadingChatRoom ? (
-            <ActivityIndicator size="small" color={colors.neutral.white} />
-          ) : error ? (
-            <Text style={styles.screenTitle}>Error</Text>
-          ) : (
-            <Text style={styles.screenTitle}>
-              {getChatDisplayName()}
-            </Text>
-          )}
+          
+          <TouchableOpacity
+            style={styles.attachmentButton}
+            onPress={() => {
+              handleAttachmentPress().catch(() => {});
+            }}
+            activeOpacity={0.7}
+          >
+            <AttachmentIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} />
+          </TouchableOpacity>
+          
+          <TextInput
+            style={styles.messageInput}
+            placeholder="Type a message"
+            placeholderTextColor={colors.neutral.darkGrey}
+            value={messageText}
+            onChangeText={(t) => {
+              setMessageText(t);
+              if (chatRoomId) {
+                sendTyping(chatRoomId as string, t.trim().length > 0);
+              }
+            }}
+            multiline
+            editable={!isSendingMessage}
+          />
+          
+          <TouchableOpacity
+            style={styles.sendButton}
+            onPress={async () => {
+              if (messageText.trim() && !isSendingMessage && chatRoomId) {
+                try {
+                  await sendMessage(messageText.trim());
+                  setMessageText('');
+                  // Stop typing indicator after send
+                  sendTyping(chatRoomId as string, false);
+                } catch (error) {
+                  console.error('Failed to send message:', error);
+                  // Show error to user (you can add a toast notification here if needed)
+                  // For now, we just log it
+                }
+              }
+            }}
+            activeOpacity={0.7}
+            disabled={!messageText.trim() || isSendingMessage || !chatRoomId || !isConnected}
+          >
+            <SendIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} opacity={messageText.trim() ? 1 : 0.5} />
+          </TouchableOpacity>
         </View>
         
-        {isLoadingMessages && messages.length === 0 ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={colors.primary.violet} />
-            <Text style={styles.loadingText}>Loading messages...</Text>
-          </View>
-        ) : error && messages.length === 0 ? (
-          <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>{error}</Text>
-          </View>
-        ) : messages.length === 0 ? (
-          <View style={styles.emptyContainer}>
-            <Text style={styles.emptyText}>No messages yet</Text>
-          </View>
-        ) : (
-          <FlatList
-            ref={flatListRef}
-            data={flatListData}
-            inverted
-            style={styles.content}
-            contentContainerStyle={styles.messagesContainer}
-            extraData={messages.map(msg => `${msg.id}-${msg.isRead ? 'read' : 'unread'}-${(msg.readBy || []).join(',')}`).join('|')}
-            keyExtractor={(item, index) => {
-              if (item.type === 'date') {
-                return `date-${index}`;
-              }
-              return (item.data as Message).id;
-            }}
-            onScroll={(event) => {
-              // Track if user has scrolled up (away from bottom)
-              // In inverted FlatList:
-              // - contentOffset.y === 0 means at visual bottom (newest messages)
-              // - contentOffset.y > 0 means scrolled up (older messages)
-              const { contentOffset } = event.nativeEvent;
-              // If user scrolled more than 100px from bottom, they're looking at older messages
-              isUserScrolledUpRef.current = contentOffset.y > 100;
-              // Mark that user has manually scrolled to bottom
-              if (contentOffset.y <= 10) { // Small threshold for "at bottom"
-                hasScrolledToBottomRef.current = true;
-              }
-            }}
-            scrollEventThrottle={400}
-            onContentSizeChange={handleContentSizeChange}
-            onScrollToIndexFailed={(info) => {
-              // If scrollToIndex fails, try scrollToOffset as fallback
-              setTimeout(() => {
-                try {
-                  flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
-                } catch (e) {
-                  console.warn('Failed to scroll after index failure:', e);
-                }
-              }, 100);
-            }}
-            renderItem={({ item }) => {
-              if (item.type === 'date') {
-                const dateString = item.data as string;
-                return (
-                  <View style={styles.dateSeparator}>
-                    <View style={styles.dateSeparatorLine} />
-                    <Text style={styles.dateSeparatorText}>{dateString}</Text>
-                  </View>
-                );
-              }
-              
-              const message = item.data as Message;
-              const isSender = message.senderId === authState.user?.id;
-              
-              return <MessageItem message={message} isSender={isSender} />;
-            }}
-            onEndReached={() => {
-              // In inverted list, onEndReached fires when scrolling to top
-              // Load more messages when scrolling to top (which is "end" in inverted list)
-              // Note: We call loadMoreMessages even when hasMoreMessages is false,
-              // because it will try to load from archive if database is exhausted
-              if (!isLoadingMessages) {
-                loadMoreMessages();
-              }
-            }}
-            onEndReachedThreshold={0.5}
-            ListHeaderComponent={
-              // In inverted list, ListHeaderComponent appears at the top (where old messages load)
-              isLoadingMessages && messages.length > 0 ? (
-                <View style={{ paddingVertical: rem(10) }}>
-                  <ActivityIndicator size="small" color={colors.primary.violet} />
-                </View>
-              ) : null
-            }
-            maintainVisibleContentPosition={{
-              minIndexForVisible: 0,
-            }}
-          />
-        )}
-      </View>
-      <View 
-        style={[styles.sendSection, { paddingBottom: Math.max(rem(16), rem(16) + (isKeyboardOpen ? 0 : insets.bottom)) }]}
-        onLayout={(e) => setSendSectionHeight(e.nativeEvent.layout.height)}
-      >
-        {/* Upload queue preview */}
-        {uploadQueue.length > 0 && (
-          <View style={styles.uploadRow}>
-            {uploadQueue.map((f, idx) => (
-              <View key={`${f.name}-${idx}`} style={styles.uploadChip}>
-                <Text style={styles.uploadChipText} numberOfLines={1}>
-                  {f.name}
-                </Text>
-                <Text style={styles.uploadChipStatus}>
-                  {f.status === 'uploading' ? 'Uploading…' : f.status === 'done' ? 'Sent' : 'Error'}
-                </Text>
+        {/* Typing indicator (absolute above input bar) */}
+        {chatRoomId ? (() => {
+          const roomTyping = typingByRoom[chatRoomId as string] || {};
+          const entries = Object.entries(roomTyping).filter(
+            ([userId, data]) => data.isTyping && userId !== authState.user?.id
+          );
+          if (entries.length === 0) return null;
+          const names = entries.map(([_, d]) => d.firstName || 'User').slice(0, 2);
+          const text =
+            entries.length === 1
+              ? `${names[0]} is typing...`
+              : entries.length === 2
+              ? `${names[0]} and ${names[1]} are typing...`
+              : `${names[0]} and ${entries.length - 1} others are typing...`;
+          return (
+            <View
+              pointerEvents="none"
+              style={[styles.typingOverlay, { bottom: sendSectionHeight + rem(6) }]}
+            >
+              <View style={styles.typingRow}>
+                <TypingDots />
+                <Text style={styles.typingText}>{text}</Text>
               </View>
-            ))}
-          </View>
-        )}
-        <TouchableOpacity
-          style={styles.smileButton}
-          onPress={() => {
-            setShowEmojiPicker(!showEmojiPicker);
-          }}
-          activeOpacity={0.7}
-        >
-          <SmileIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} />
-        </TouchableOpacity>
-        
-        <TouchableOpacity
-          style={styles.attachmentButton}
-          onPress={() => {
-            handleAttachmentPress().catch(() => {});
-          }}
-          activeOpacity={0.7}
-        >
-          <AttachmentIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} />
-        </TouchableOpacity>
-        
-        <TextInput
-          style={styles.messageInput}
-          placeholder="Type a message"
-          placeholderTextColor={colors.neutral.darkGrey}
-          value={messageText}
-          onChangeText={(t) => {
-            setMessageText(t);
-            if (chatRoomId) {
-              sendTyping(chatRoomId as string, t.trim().length > 0);
-            }
-          }}
-          multiline
-          editable={!isSendingMessage}
-        />
-        
-        <TouchableOpacity
-          style={styles.sendButton}
-          onPress={async () => {
-            if (messageText.trim() && !isSendingMessage && chatRoomId) {
-              try {
-                await sendMessage(messageText.trim());
-                setMessageText('');
-                // Stop typing indicator after send
-                sendTyping(chatRoomId as string, false);
-              } catch (error) {
-                console.error('Failed to send message:', error);
-                // Show error to user (you can add a toast notification here if needed)
-                // For now, we just log it
-              }
-            }
-          }}
-          activeOpacity={0.7}
-          disabled={!messageText.trim() || isSendingMessage || !chatRoomId || !isConnected}
-        >
-          <SendIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} opacity={messageText.trim() ? 1 : 0.5} />
-        </TouchableOpacity>
-      </View>
-      {/* Typing indicator (absolute above input bar) */}
-      {chatRoomId ? (() => {
-        const roomTyping = typingByRoom[chatRoomId as string] || {};
-        const entries = Object.entries(roomTyping).filter(
-          ([userId, data]) => data.isTyping && userId !== authState.user?.id
-        );
-        if (entries.length === 0) return null;
-        const names = entries.map(([_, d]) => d.firstName || 'User').slice(0, 2);
-        const text =
-          entries.length === 1
-            ? `${names[0]} is typing...`
-            : entries.length === 2
-            ? `${names[0]} and ${names[1]} are typing...`
-            : `${names[0]} and ${entries.length - 1} others are typing...`;
-        return (
-          <View
-            pointerEvents="none"
-            style={[styles.typingOverlay, { bottom: sendSectionHeight + rem(6) }]}
-          >
-            <View style={styles.typingRow}>
-              <TypingDots />
-              <Text style={styles.typingText}>{text}</Text>
             </View>
-          </View>
-        );
-      })() : null}
-      
-      <EmojiPicker
-        isOpen={showEmojiPicker}
-        onClose={() => setShowEmojiPicker(false)}
-        onEmojiSelect={(emoji) => {
-          setMessageText(prev => prev + emoji);
-        }}
-      />
-    </KeyboardAvoidingView>
+          );
+        })() : null}
+        
+        <EmojiPicker
+          isOpen={showEmojiPicker}
+          onClose={() => setShowEmojiPicker(false)}
+          onEmojiSelect={(emoji) => {
+            setMessageText(prev => prev + emoji);
+          }}
+        />
+      </View>
+      </KeyboardAvoidingView>
+      <View style={{ height: insets.bottom }} />
+    </View>
   );
-}
-
-// (preview card moved to '@/components/FilePreviewCard')
-
-/**
- * Pick files with DocumentPicker, upload via presigned URL and send as messages.
- * For images, thumbnails will display automatically via fileUrl in message.
- */
-async function pickFiles(): Promise<Array<{ uri: string; name: string; mimeType?: string; size?: number }>> {
-  const result = await DocumentPicker.getDocumentAsync({
-    multiple: true,
-    copyToCacheDirectory: true,
-    type: '*/*',
-  });
-  if (result.canceled) return [];
-  const files = (result.assets || []).map((a) => ({
-    uri: a.uri,
-    name: a.name || 'file',
-    mimeType: a.mimeType || undefined,
-    size: a.size || undefined,
-  }));
-  return files;
-}
-
-/**
- * Capture a photo using device camera and return as a single-file array.
- */
-async function capturePhoto(): Promise<Array<{ uri: string; name: string; mimeType?: string; size?: number }>> {
-  const { status } = await ImagePicker.requestCameraPermissionsAsync();
-  if (status !== 'granted') {
-    Alert.alert('Camera permission', 'Camera permission is required to take photos.');
-    return [];
-  }
-  const result = await ImagePicker.launchCameraAsync({
-    quality: 0.9,
-    allowsEditing: false,
-    exif: false,
-  });
-  if (result.canceled) return [];
-  const asset = result.assets?.[0];
-  if (!asset) return [];
-  // Derive filename and mime
-  const isJpg = (asset.type || 'image') === 'image';
-  const filename =
-    asset.fileName ||
-    `photo_${Date.now()}.${isJpg ? 'jpg' : 'bin'}`;
-  const mimeType = asset.mimeType || (isJpg ? 'image/jpeg' : 'application/octet-stream');
-  return [
-    {
-      uri: asset.uri,
-      name: filename,
-      mimeType,
-      size: asset.fileSize || undefined,
-    },
-  ];
-}
-
-/**
- * Inside component: file pick + upload + send
- */
-async function handleUploadAndSend(params: {
-  chatRoomId?: string;
-  sendMessage: (content: string, fileData?: { fileUrl: string; fileName: string; fileSize: number }) => Promise<void>;
-  setUploadQueue: React.Dispatch<React.SetStateAction<Array<{name: string; mimeType?: string; size?: number; status: 'uploading'|'done'|'error'}>>>;
-  setIsUploading: React.Dispatch<React.SetStateAction<boolean>>;
-}) {
-  const { chatRoomId, sendMessage, setUploadQueue, setIsUploading } = params;
-  if (!chatRoomId) return;
-  const files = await pickFiles();
-  if (files.length === 0) return;
-  setIsUploading(true);
-  // Load token
-  const token = await secureStorage.getItemAsync('accessToken').catch(() => null);
-  for (const f of files) {
-    setUploadQueue((q) => [...q, { name: f.name, mimeType: f.mimeType, size: f.size, status: 'uploading' }]);
-    try {
-      const fileUrl = await uploadFileViaPresign({
-        fileUri: f.uri,
-        filename: f.name,
-        mimeType: f.mimeType,
-        accessToken: token || '',
-      });
-      await sendMessage('', { fileUrl, fileName: f.name, fileSize: f.size || 0 });
-      setUploadQueue((q) => {
-        const idx = q.findIndex((x) => x.name === f.name && x.status === 'uploading');
-        if (idx === -1) return q;
-        const copy = [...q];
-        copy[idx] = { ...copy[idx], status: 'done' };
-        return copy;
-      });
-    } catch (e) {
-      setUploadQueue((q) => {
-        const idx = q.findIndex((x) => x.name === f.name && x.status === 'uploading');
-        if (idx === -1) return q;
-        const copy = [...q];
-        copy[idx] = { ...copy[idx], status: 'error' };
-        return copy;
-      });
-    }
-  }
-  // Auto-clear items that are done
-  setTimeout(() => setUploadQueue([]), 1200);
-  setIsUploading(false);
-}
-
-// Hook up handler inside component scope
-function useUploadHandlers(chatRoomId: string | undefined, sendMessage: (content: string, fileData?: { fileUrl: string; fileName: string; fileSize: number }) => Promise<void>, setUploadQueue: any, setIsUploading: any) {
-  const handler = useCallback(async () => {
-    await handleUploadAndSend({ chatRoomId, sendMessage, setUploadQueue, setIsUploading });
-  }, [chatRoomId, sendMessage, setUploadQueue, setIsUploading]);
-  return handler;
-}
-
-// Attachment entrypoint with options (camera or files)
-function useAttachmentHandler(chatRoomId: string | undefined, sendMessage: (content: string, fileData?: { fileUrl: string; fileName: string; fileSize: number }) => Promise<void>, setUploadQueue: any, setIsUploading: any) {
-  const handlePickAndSendFiles = useUploadHandlers(chatRoomId, sendMessage, setUploadQueue, setIsUploading);
-  const handler = useCallback(async () => {
-    Alert.alert(
-      'Attach',
-      'Choose source',
-      [
-        {
-          text: 'Take photo',
-          onPress: async () => {
-            const files = await capturePhoto();
-            if (files.length === 0) return;
-            // Reuse upload flow
-            const token = await secureStorage.getItemAsync('accessToken').catch(() => null);
-            setIsUploading(true);
-            for (const f of files) {
-              setUploadQueue((q: any) => [...q, { name: f.name, mimeType: f.mimeType, size: f.size, status: 'uploading' }]);
-              try {
-                const fileUrl = await uploadFileViaPresign({
-                  fileUri: f.uri,
-                  filename: f.name,
-                  mimeType: f.mimeType,
-                  accessToken: token || '',
-                });
-                await sendMessage('', { fileUrl, fileName: f.name, fileSize: f.size || 0 });
-                setUploadQueue((q: any) => {
-                  const idx = q.findIndex((x: any) => x.name === f.name && x.status === 'uploading');
-                  if (idx === -1) return q;
-                  const copy = [...q];
-                  copy[idx] = { ...copy[idx], status: 'done' };
-                  return copy;
-                });
-              } catch {
-                setUploadQueue((q: any) => {
-                  const idx = q.findIndex((x: any) => x.name === f.name && x.status === 'uploading');
-                  if (idx === -1) return q;
-                  const copy = [...q];
-                  copy[idx] = { ...copy[idx], status: 'error' };
-                  return copy;
-                });
-              }
-            }
-            setTimeout(() => setUploadQueue([]), 1200);
-            setIsUploading(false);
-          },
-        },
-        {
-          text: 'Pick files',
-          onPress: () => handlePickAndSendFiles(),
-        },
-        { text: 'Cancel', style: 'cancel' },
-      ],
-      { cancelable: true }
-    );
-  }, [chatRoomId, handlePickAndSendFiles, sendMessage, setUploadQueue, setIsUploading]);
-  return handler;
 }
 
 const styles = StyleSheet.create({

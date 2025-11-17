@@ -4,7 +4,9 @@ import { colors, fonts, rem, fp, borderRadius } from '@/lib';
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from 'expo-router';
 import BottomNavigation from "../../components/navigation/BottomNavigation";
-import Svg, { Path } from 'react-native-svg';
+import SearchIcon from '@/icons/SearchIcon';
+import ClearIcon from '@/icons/ClearIcon';
+import ArrowDownIcon from '@/icons/ArrowDownIcon';
 import { useChatRooms } from '@/hooks/useChatRooms';
 import { useAuth } from '@/context/AuthContext';
 import { useWebSocket } from '@/context/WebSocketContext';
@@ -448,43 +450,6 @@ export default function MessagesScreen() {
     </View>
   );
 }
-
-// Search Icon Component
-const SearchIcon = ({ color = '#8E8E93' }: { color?: string }) => (
-  <Svg width="16" height="16" viewBox="0 0 20 20" fill="none">
-    <Path
-      fillRule="evenodd"
-      clipRule="evenodd"
-      d="M3.04199 9.37381C3.04199 5.87712 5.87735 3.04218 9.37533 3.04218C12.8733 3.04218 15.7087 5.87712 15.7087 9.37381C15.7087 12.8705 12.8733 15.7055 9.37533 15.7055C5.87735 15.7055 3.04199 12.8705 3.04199 9.37381ZM9.37533 1.54218C5.04926 1.54218 1.54199 5.04835 1.54199 9.37381C1.54199 13.6993 5.04926 17.2055 9.37533 17.2055C11.2676 17.2055 13.0032 16.5346 14.3572 15.4178L17.1773 18.2381C17.4702 18.531 17.945 18.5311 18.2379 18.2382C18.5308 17.9453 18.5309 17.4704 18.238 17.1775L15.4182 14.3575C16.5367 13.0035 17.2087 11.2671 17.2087 9.37381C17.2087 5.04835 13.7014 1.54218 9.37533 1.54218Z"
-      fill={color}
-    />
-  </Svg>
-);
-
-// Clear Icon Component
-const ClearIcon = ({ color = '#8E8E93' }: { color?: string }) => (
-  <Svg width="16" height="16" viewBox="0 0 20 20" fill="none">
-    <Path
-      fillRule="evenodd"
-      clipRule="evenodd"
-      d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
-      fill={color}
-    />
-  </Svg>
-);
-
-// Arrow Down Icon Component
-const ArrowDownIcon = ({ color = '#8E8E93' }: { color?: string }) => (
-  <Svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-    <Path
-      d="M19 9l-7 7-7-7"
-      stroke={color}
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    />
-  </Svg>
-);
 
 const styles = StyleSheet.create({
   screenContent: {
