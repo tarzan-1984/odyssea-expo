@@ -59,6 +59,8 @@ export interface ChatRoom {
   unreadCount?: number;
   isMuted?: boolean;
   isPinned?: boolean;
+  adminId?: string;
+  loadId?: string;
   createdAt: string;
   updatedAt: string;
 }

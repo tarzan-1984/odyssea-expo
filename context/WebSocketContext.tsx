@@ -7,6 +7,7 @@ import { AppState, AppStateStatus } from 'react-native';
 import { useChatStore, updateLastMessage } from '@/stores/chatStore';
 import { chatApi } from '@/app-api/chatApi';
 import { ChatRoom } from '@/components/ChatListItem';
+import { messagesCacheService } from '@/services/MessagesCacheService';
 
 // WebSocket context interface
 interface WebSocketContextType {
@@ -16,6 +17,7 @@ interface WebSocketContextType {
   disconnect: () => void;
   joinChatRoom: (chatRoomId: string) => void;
   leaveChatRoom: (chatRoomId: string) => void;
+  removeParticipant: (data: { chatRoomId: string; participantId: string }) => void;
   sendMessage: (data: SendMessageData) => void;
   sendTyping: (chatRoomId: string, isTyping: boolean) => void;
   markMessageAsRead: (messageId: string, chatRoomId: string) => void;
@@ -260,16 +262,56 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     }
 
     // Handle new message from server
-    newSocket.on('newMessage', (data: any) => {
+    newSocket.on('newMessage', async (data: any) => {
       // Handle case where data comes as array (from onAny handler)
       const messageData = Array.isArray(data) ? data[0] : data;
 
       if (messageData && messageData.chatRoomId && messageData.message) {
         const isMessageFromCurrentUser = messageData.message.senderId === currentUser?.id;
 
-        // Update Zustand store (как в Next)
+        // Check if chat room exists in store
+        const { chatRooms, addMessage, updateChatRoom, mergeChatRooms } = useChatStore.getState();
+        const existingRoom = chatRooms.find((r: ChatRoom) => r.id === messageData.chatRoomId);
+
+        // If chat room doesn't exist in store, it might have been deleted/hidden
+        // Try to restore it by loading from API
+        if (!existingRoom) {
+          console.log('🔄 [WebSocket] Chat room not found in store, attempting to restore:', messageData.chatRoomId);
+          try {
+            const restoredRoom = await chatApi.getChatRoom(messageData.chatRoomId);
+            
+            // Normalize participant avatar field (profilePhoto -> avatar)
+            const normalized: ChatRoom = {
+              ...restoredRoom,
+              participants: Array.isArray(restoredRoom.participants)
+                ? restoredRoom.participants.map((p: any) => ({
+                    ...p,
+                    user: {
+                      ...p.user,
+                      avatar: p.user?.avatar ?? p.user?.profilePhoto ?? '',
+                    },
+                  }))
+                : [],
+            };
+
+            // Add restored chat room to store
+            mergeChatRooms([normalized]);
+            console.log('✅ [WebSocket] Chat room restored:', normalized.id);
+
+            // Join WebSocket room for the restored chat
+            if (newSocket && newSocket.connected) {
+              console.log('🔌 [WebSocket] Joining restored chat room:', normalized.id);
+              newSocket.emit('joinChatRoom', { chatRoomId: normalized.id });
+              joinedRoomsRef.current.add(normalized.id);
+            }
+          } catch (restoreError) {
+            console.error('❌ [WebSocket] Failed to restore chat room:', restoreError);
+            // Continue with message processing even if restore failed
+          }
+        }
+
+        // Update Zustand store (same as in Next.js)
         try {
-          const { addMessage } = useChatStore.getState();
           addMessage(messageData.chatRoomId, messageData.message);
         } catch {}
 
@@ -289,16 +331,16 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           updates.unreadCountIncrement = 1;
         }
 
-        // Update chat room in store (unreadCount increment if нужно) 
+        // Update chat room in store (unreadCount increment if needed)
         try {
-          const { chatRooms, updateChatRoom } = useChatStore.getState();
+          const { chatRooms: updatedRooms, updateChatRoom: updateRoom } = useChatStore.getState();
           let patch: any = { lastMessage: updates.lastMessage, updatedAt: updates.updatedAt };
           if (updates.unreadCountIncrement) {
-            const room = chatRooms.find((r: ChatRoom) => r.id === messageData.chatRoomId);
+            const room = updatedRooms.find((r: ChatRoom) => r.id === messageData.chatRoomId);
             const currentUnread = room?.unreadCount || 0;
             patch.unreadCount = currentUnread + updates.unreadCountIncrement;
           }
-          updateChatRoom(messageData.chatRoomId, patch);
+          updateRoom(messageData.chatRoomId, patch);
         } catch {}
       }
     });
@@ -307,6 +349,134 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     newSocket.on('chatRoomUpdated', (data: any) => {
       console.log('💬 [WebSocket] Chat room updated:', data);
       // TODO: Update chat room in store
+    });
+
+    // Handle chat room deleted (permanently deleted from database)
+    newSocket.on('chatRoomDeleted', async (data: { chatRoomId: string; deletedBy: string }) => {
+      try {
+        console.log('🗑️ [WebSocket] Chat room deleted:', data.chatRoomId);
+        const { removeChatRoom } = useChatStore.getState();
+        removeChatRoom(data.chatRoomId);
+        
+        // Clear messages cache for this chat room
+        await messagesCacheService.clearMessages(data.chatRoomId).catch((err) => {
+          console.error('Failed to clear messages cache:', err);
+        });
+      } catch (e) {
+        console.error('Failed to handle chatRoomDeleted:', e);
+      }
+    });
+
+    // Handle chat room hidden (for DIRECT chats - marked as hidden in DB)
+    newSocket.on('chatRoomHidden', async (data: { chatRoomId: string }) => {
+      try {
+        console.log('👁️ [WebSocket] Chat room hidden:', data.chatRoomId);
+        const { removeChatRoom } = useChatStore.getState();
+        removeChatRoom(data.chatRoomId);
+        
+        // Clear messages cache for this chat room
+        await messagesCacheService.clearMessages(data.chatRoomId).catch((err) => {
+          console.error('Failed to clear messages cache:', err);
+        });
+      } catch (e) {
+        console.error('Failed to handle chatRoomHidden:', e);
+      }
+    });
+
+    // Handle chat room restoration (when a message is sent to a hidden DIRECT chat)
+    newSocket.on('chatRoomRestored', async (data: { chatRoomId: string }) => {
+      try {
+        console.log('🔄 [WebSocket] Chat room restored:', data.chatRoomId);
+        
+        // Load the restored chat room from API
+        const restoredRoom = await chatApi.getChatRoom(data.chatRoomId);
+        
+        // Normalize participant avatar field (profilePhoto -> avatar)
+        const normalized: ChatRoom = {
+          ...restoredRoom,
+          participants: Array.isArray(restoredRoom.participants)
+            ? restoredRoom.participants.map((p: any) => ({
+                ...p,
+                user: {
+                  ...p.user,
+                  avatar: p.user?.avatar ?? p.user?.profilePhoto ?? '',
+                },
+              }))
+            : [],
+        };
+
+        // Add restored chat room to store
+        const { mergeChatRooms } = useChatStore.getState();
+        mergeChatRooms([normalized]);
+        console.log('✅ [WebSocket] Chat room added to store:', normalized.id);
+
+        // Join WebSocket room for the restored chat
+        if (newSocket && newSocket.connected) {
+          console.log('🔌 [WebSocket] Joining restored chat room:', normalized.id);
+          newSocket.emit('joinChatRoom', { chatRoomId: normalized.id });
+          joinedRoomsRef.current.add(normalized.id);
+        }
+
+        // Update cache service
+        try {
+          const { chatCacheService } = await import('@/services/ChatCacheService');
+          const cachedRooms = await chatCacheService.getChatRooms();
+          const updatedRooms = [...cachedRooms.filter(r => r.id !== normalized.id), normalized];
+          await chatCacheService.saveChatRooms(updatedRooms);
+          console.log('✅ [WebSocket] Chat room saved to cache');
+        } catch (cacheError) {
+          console.error('❌ [WebSocket] Failed to update cache:', cacheError);
+        }
+      } catch (error) {
+        console.error('❌ [WebSocket] Failed to restore chat room:', error);
+      }
+    });
+
+    // Handle participant removed from chat room
+    newSocket.on('participantRemoved', async (data: { chatRoomId: string; removedUserId: string; removedBy: string }) => {
+      try {
+        const { chatRoomId, removedUserId } = data;
+        const state = useChatStore.getState();
+        const room = state.chatRooms.find((r) => r.id === chatRoomId);
+        if (!room) return;
+
+        // Check if the removed user is the current user
+        if (currentUser?.id === removedUserId) {
+          // Remove the entire chat room from the list
+          state.removeChatRoom(chatRoomId);
+          
+          // Clear messages cache for this chat room
+          await messagesCacheService.clearMessages(chatRoomId).catch((err) => {
+            console.error('Failed to clear messages cache:', err);
+          });
+          return;
+        }
+
+        // Otherwise, just remove the participant from the room
+        const filtered = room.participants.filter(
+          (p) => (p.user?.id || p.userId) !== removedUserId
+        );
+        state.updateChatRoom(chatRoomId, { participants: filtered });
+      } catch (e) {
+        console.error('Failed to handle participantRemoved:', e);
+      }
+    });
+
+    // Handle when current user is removed from a chat room
+    newSocket.on('removedFromChatRoom', async (data: { chatRoomId: string; removedBy: string }) => {
+      try {
+        const { chatRoomId } = data;
+        console.log('🚪 [WebSocket] Removed from chat room:', chatRoomId);
+        const { removeChatRoom } = useChatStore.getState();
+        removeChatRoom(chatRoomId);
+        
+        // Clear messages cache for this chat room
+        await messagesCacheService.clearMessages(chatRoomId).catch((err) => {
+          console.error('Failed to clear messages cache:', err);
+        });
+      } catch (e) {
+        console.error('Failed to handle removedFromChatRoom:', e);
+      }
     });
 
     // Handle chat room created / user added to a chat room
@@ -491,7 +661,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         markMessagesRead(data.chatRoomId, data.messageIds, data.userId);
       } catch {}
 
-      // Только для текущего пользователя уменьшаем unreadCount через стор
+      // Only for current user, decrease unreadCount through store
       if (data.userId === currentUser?.id) {
         try {
           const { chatRooms, updateChatRoom } = useChatStore.getState();
@@ -544,6 +714,13 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     }
   }, [socket, isConnected]);
 
+  const removeParticipant = useCallback((data: { chatRoomId: string; participantId: string }) => {
+    if (socket && isConnected) {
+      console.log('🚪 [WebSocket] Removing participant from chat room:', data);
+      socket.emit('removeParticipant', data);
+    }
+  }, [socket, isConnected]);
+
   const sendMessage = useCallback((data: SendMessageData) => {
     if (!socket) {
       throw new Error('WebSocket not initialized');
@@ -589,7 +766,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     }
   }, [currentUser, isConnected, socket]);
 
-  // Событие отключения через EventBus больше не используем; вызываем disconnect напрямую там, где нужно
+  // Disconnect event via EventBus is no longer used; call disconnect directly where needed
 
   // Handle app state changes (reconnect when app comes to foreground)
   useEffect(() => {
@@ -640,6 +817,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     disconnect,
     joinChatRoom,
     leaveChatRoom,
+    removeParticipant,
     sendMessage,
     sendTyping,
     markMessageAsRead,

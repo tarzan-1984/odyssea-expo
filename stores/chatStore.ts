@@ -11,6 +11,7 @@ type ChatState = {
   addMessage: (chatRoomId: string, message: Message) => void;
   updateMessage: (chatRoomId: string, messageId: string, updates: Partial<Message>) => void;
   markMessagesRead: (chatRoomId: string, messageIds: string[], userId: string) => void;
+  removeChatRoom: (chatRoomId: string) => void;
   reset: () => void;
 };
 
@@ -28,7 +29,7 @@ const storeCreator: StateCreator<ChatState> = (set, get) => ({
       if (!existing) {
         map.set(r.id, r);
       } else {
-        // merge lastMessage and updatedAt предпочтительно более новое
+        // Merge lastMessage and updatedAt, prefer newer values
         const next: ChatRoom = { ...existing, ...r } as ChatRoom;
         map.set(r.id, next);
       }
@@ -58,7 +59,7 @@ const storeCreator: StateCreator<ChatState> = (set, get) => ({
     );
     set({ messagesByRoom: { ...get().messagesByRoom, [chatRoomId]: next } });
 
-    // обновить lastMessage в чате
+    // Update lastMessage in chat
     const room = get().chatRooms.find((r) => r.id === chatRoomId);
     if (room) {
       get().updateChatRoom(chatRoomId, { lastMessage: message });
@@ -72,7 +73,7 @@ const storeCreator: StateCreator<ChatState> = (set, get) => ({
   },
 
   markMessagesRead: (chatRoomId, messageIds, userId) => {
-    // обновляем сообщения в комнате
+    // Update messages in room
     const current = get().messagesByRoom[chatRoomId] || [];
     if (current.length) {
       const next = current.map((m) => {
@@ -84,7 +85,7 @@ const storeCreator: StateCreator<ChatState> = (set, get) => ({
       set({ messagesByRoom: { ...get().messagesByRoom, [chatRoomId]: next } });
     }
 
-    // если последнее сообщение — в списке id, обновляем lastMessage
+    // If last message is in the id list, update lastMessage
     const room = get().chatRooms.find((r) => r.id === chatRoomId);
     if (room?.lastMessage && messageIds.includes(room.lastMessage.id)) {
       const readBy = room.lastMessage.readBy || [];
@@ -93,6 +94,18 @@ const storeCreator: StateCreator<ChatState> = (set, get) => ({
         lastMessage: { ...room.lastMessage, isRead: true, readBy: withUser } as Message,
       });
     }
+  },
+
+  removeChatRoom: (chatRoomId) => {
+    const state = get();
+    const updatedRooms = state.chatRooms.filter((room) => room.id !== chatRoomId);
+    const updatedMessages = { ...state.messagesByRoom };
+    delete updatedMessages[chatRoomId];
+    set({
+      chatRooms: updatedRooms,
+      messagesByRoom: updatedMessages,
+    });
+    console.log('🗑️ [ChatStore] Removed chat room:', chatRoomId);
   },
 
   reset: () => {

@@ -369,10 +369,10 @@ export const useChatRooms = (): UseChatRoomsReturn => {
       storeSetChatRooms(sorted);
   }, []);
 
-  // Realtime добавление чатов теперь приходит из WebSocketContext напрямую в стор
+  // Realtime chat addition now comes from WebSocketContext directly to store
   useEffect(() => {}, [addChatRoom]);
 
-  // EventBus больше не используем: обновления приходят через WebSocketContext → Zustand
+  // EventBus is no longer used: updates come through WebSocketContext → Zustand
   useEffect(() => {}, [updateChatRoom, loadChatRooms]);
 
   // Reset flags when app starts (comes to foreground after being closed)

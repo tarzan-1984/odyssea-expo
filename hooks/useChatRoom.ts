@@ -903,8 +903,8 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
     };
 
     // Subscribe to messageRead events via eventBus (emitted by WebSocketContext)
-    // Перенос завершён — подписки на EventBus/Socket для read не нужны;
-    // обновление приходит в стор из WebSocketContext
+    // Migration complete — EventBus/Socket subscriptions for read are no longer needed;
+    // updates come to store from WebSocketContext
     return () => {};
   }, [socket, chatRoomId, chatRoom?.type, authState.user?.id]);
 

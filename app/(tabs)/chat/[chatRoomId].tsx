@@ -13,6 +13,7 @@ import AttachmentIcon from '@/icons/AttachmentIcon';
 import SendIcon from '@/icons/SendIcon';
 import EmojiPicker from '@/components/EmojiPicker';
 import MessageItem from '@/components/MessageItem';
+import ChatHeaderDropdown from '@/components/ChatHeaderDropdown';
 import { setActiveChatRoomId } from '@/services/ActiveChatService';
 import { useAttachmentHandler } from '@/utils/chatAttachmentHelpers';
 
@@ -43,7 +44,6 @@ export default function ChatRoomScreen() {
     isLoadingChatRoom,
     isLoadingMessages,
     error,
-    hasMoreMessages,
     loadMoreMessages,
     sendMessage,
     isSendingMessage,
@@ -89,16 +89,6 @@ export default function ChatRoomScreen() {
     }
 
     return 'Unknown Chat';
-  };
-
-  // Format time for message timestamp
-  const formatTime = (timestamp: string): string => {
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
-    });
   };
 
   // Format date for date separator
@@ -260,19 +250,38 @@ export default function ChatRoomScreen() {
 
   // Track keyboard state
   useEffect(() => {
+    let hideTimeout: ReturnType<typeof setTimeout> | null = null;
+    
     const showSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow', () => {
+      if (hideTimeout) {
+        clearTimeout(hideTimeout);
+        hideTimeout = null;
+      }
       setIsKeyboardOpen(true);
       if (Platform.OS === 'android') {
-        setFlexToggle(false);
+        // Use requestAnimationFrame for smooth transition
+        requestAnimationFrame(() => {
+          setFlexToggle(false);
+        });
       }
     });
+    
     const hideSub = Keyboard.addListener(Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide', () => {
       setIsKeyboardOpen(false);
       if (Platform.OS === 'android') {
-        setFlexToggle(true);
+        // Add small delay for smooth transition after keyboard closes
+        hideTimeout = setTimeout(() => {
+          requestAnimationFrame(() => {
+            setFlexToggle(true);
+          });
+        }, 150);
       }
     });
+    
     return () => {
+      if (hideTimeout) {
+        clearTimeout(hideTimeout);
+      }
       showSub.remove();
       hideSub.remove();
     };
@@ -343,22 +352,34 @@ export default function ChatRoomScreen() {
         <View style={styles.container}>
           {/* Header with back button and chat name */}
           <View style={styles.header}>
-            <TouchableOpacity
-              style={styles.backButton}
-              onPress={() => router.back()}
-              activeOpacity={0.7}
-            >
-              <ArrowLeft width={rem(10.46)} height={rem(19)} color={colors.neutral.white} />
-            </TouchableOpacity>
-            {isLoadingChatRoom ? (
-              <ActivityIndicator size="small" color={colors.neutral.white} />
-            ) : error ? (
-              <Text style={styles.screenTitle}>Error</Text>
-            ) : (
-              <Text style={styles.screenTitle}>
-                {getChatDisplayName()}
-              </Text>
-            )}
+            <View style={styles.headerLeft}>
+              <TouchableOpacity
+                style={styles.backButton}
+                onPress={() => router.back()}
+                activeOpacity={0.7}
+              >
+                <ArrowLeft width={rem(10.46)} height={rem(19)} color={colors.neutral.white} />
+              </TouchableOpacity>
+              
+              {isLoadingChatRoom ? (
+                <ActivityIndicator size="small" color={colors.neutral.white} />
+              ) : error ? (
+                <Text style={styles.screenTitle}>Error</Text>
+              ) : (
+                <Text style={styles.screenTitle}>
+                  {getChatDisplayName()}
+                </Text>
+              )}
+            </View>
+            
+            <ChatHeaderDropdown
+              chatRoom={chatRoom || null}
+              chatRoomType={chatRoom?.type}
+              onFilesPress={() => {
+                // TODO: Implement files functionality
+                console.log('Files pressed for chat room:', chatRoomId);
+              }}
+            />
           </View>
         
           {isLoadingMessages && messages.length === 0 ? (
@@ -649,7 +670,7 @@ const styles = StyleSheet.create({
   screenTitle: {
     color: colors.neutral.white,
     fontFamily: fonts["700"],
-    fontSize: fp(18),
+    fontSize: fp(14),
     textTransform: 'capitalize',
   },
   screenWrap: {
@@ -664,6 +685,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingTop: 0,
     paddingBottom: rem(16),
@@ -671,7 +693,12 @@ const styles = StyleSheet.create({
     width: '100%',
     position: 'relative',
     zIndex: 20,
-    gap: rem(12),
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rem(20),
+    flex: 1,
   },
   backButton: {
     padding: rem(4),

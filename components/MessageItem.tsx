@@ -6,6 +6,7 @@ import { colors, fonts, fp, rem } from '@/lib';
 import FilePreviewCard from '@/components/FilePreviewCard';
 import ReadCheckIcon from '@/icons/ReadCheckIcon';
 import UnreadCheckIcon from '@/icons/UnreadCheckIcon';
+import MessageDropdown from '@/components/MessageDropdown';
 import { Message } from '@/components/ChatListItem';
 
 type Props = {
@@ -45,14 +46,28 @@ export default function MessageItem({ message, isSender }: Props) {
 					/>
 				) : null}
 				{!!message.content && (
-					<Text
-						style={[
-							styles.messageText,
-							isSender ? styles.messageTextSender : styles.messageTextOther,
-						]}
-					>
-						{message.content}
-					</Text>
+					<View style={styles.messageContentRow}>
+						<Text
+							style={[
+								styles.messageText,
+								isSender ? styles.messageTextSender : styles.messageTextOther,
+							]}
+						>
+							{message.content}
+						</Text>
+						<MessageDropdown
+							message={message}
+							isSender={isSender}
+							onReplyPress={(msg) => {
+								// TODO: Implement reply functionality
+								console.log('Reply pressed for message:', msg.id);
+							}}
+							onMarkUnreadPress={(messageId) => {
+								// TODO: Implement mark as unread functionality
+								console.log('Mark as unread pressed for message:', messageId);
+							}}
+						/>
+					</View>
 				)}
 			</View>
 
@@ -113,7 +128,7 @@ const styles = StyleSheet.create({
 		borderBottomLeftRadius: 0,
 	},
 	messageText: {
-		fontSize: fp(15),
+		fontSize: fp(12),
 		fontFamily: fonts['400'],
 		letterSpacing: 0,
 	},
@@ -122,6 +137,11 @@ const styles = StyleSheet.create({
 	},
 	messageTextOther: {
 		color: colors.primary.blue,
+	},
+	messageContentRow: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		gap: rem(8),
 	},
 	messageTimeContainer: {
 		flexDirection: 'row',

@@ -34,7 +34,7 @@ export default function NotificationsSettings() {
   };
 
   const onToggleVibration = async () => {
-    // Не можем менять системную вибрацию программно — открываем настройки приложения/канала
+    // Cannot change system vibration programmatically — open app/channel settings
     await openSettings();
     await android?.refreshChannel();
   };

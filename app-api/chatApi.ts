@@ -260,6 +260,19 @@ class ChatApiClient {
   }
 
   /**
+   * Delete or hide a chat room
+   * For DIRECT chats: hides the chat for the user (marks as hidden in DB)
+   * For GROUP chats: if user is admin, deletes the chat; if not admin, user leaves the chat
+   * Returns: { deleted: boolean; hidden?: boolean; left?: boolean }
+   * Mirrors Next.js chatApi.deleteChatRoom
+   */
+  async deleteChatRoom(chatRoomId: string): Promise<{ deleted: boolean; hidden?: boolean; left?: boolean }> {
+    return this.request<{ deleted: boolean; hidden?: boolean; left?: boolean }>(`/v1/chat-rooms/${chatRoomId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  /**
    * Get available archive days for a chat room
    * Mirrors Next.js messagesArchiveApi.getAvailableArchiveDays
    */

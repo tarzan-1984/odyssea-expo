@@ -1,9 +1,11 @@
 "use client";
 
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, ActivityIndicator, Linking, ScrollView } from 'react-native';
-import { WebView } from 'react-native-webview';
+import React, { useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Image, Alert } from 'react-native';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
 import { colors, fonts, fp, rem } from '@/lib';
+import FileIcon from '@/icons/FileIcon';
 
 type Props = {
 	fileUrl: string;
@@ -12,231 +14,194 @@ type Props = {
 	isSender: boolean;
 };
 
+// Helper function to determine MIME type
+const getMimeType = (extension: string): string => {
+	const mimeTypes: { [key: string]: string } = {
+		pdf: 'application/pdf',
+		doc: 'application/msword',
+		docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+		xls: 'application/vnd.ms-excel',
+		xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+		txt: 'text/plain',
+		jpg: 'image/jpeg',
+		jpeg: 'image/jpeg',
+		png: 'image/png',
+		gif: 'image/gif',
+		webp: 'image/webp',
+		zip: 'application/zip',
+		rar: 'application/x-rar-compressed',
+	};
+	return mimeTypes[extension.toLowerCase()] || 'application/octet-stream';
+};
+
 export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender }: Props) {
 	const name = fileName || 'Attachment';
 	const ext = name.toLowerCase().split('.').pop() || '';
 	const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
-	const isPdf = ext === 'pdf';
-	const isDoc = ext === 'doc' || ext === 'docx';
-	const isTxt = ext === 'txt';
+	const [isDownloading, setIsDownloading] = useState(false);
 
-	const [txtContent, setTxtContent] = useState<string>('');
-	const [loading, setLoading] = useState<boolean>(false);
-	const [error, setError] = useState<string>('');
-
-	useEffect(() => {
-		let mounted = true;
-		if (isTxt) {
-			setLoading(true);
-			fetch(fileUrl)
-				.then(r => r.text())
-				.then(t => {
-					if (mounted) setTxtContent(t);
-				})
-				.catch(() => {
-					if (mounted) setError('Failed to load preview');
-				})
-				.finally(() => {
-					if (mounted) setLoading(false);
-				});
+	const handleDownload = async () => {
+		if (isDownloading) return;
+		
+		try {
+			setIsDownloading(true);
+			
+			// File name already contains extension, use it as is
+			// Clean name from invalid characters for file system
+			const sanitizedName = name.replace(/[^a-zA-Z0-9._-]/g, '_');
+			const localFileName = sanitizedName || 'file';
+			
+			// Path for saving file
+			const fileUri = `${FileSystem.documentDirectory}${localFileName}`;
+			
+			// Download file
+			const downloadResult = await FileSystem.downloadAsync(fileUrl, fileUri);
+			
+			if (downloadResult.status === 200) {
+				// Check if Sharing API is available
+				const isAvailable = await Sharing.isAvailableAsync();
+				
+				if (isAvailable) {
+					// Open dialog for saving/opening file
+					await Sharing.shareAsync(downloadResult.uri, {
+						mimeType: getMimeType(ext),
+						dialogTitle: `Save ${name}`,
+					});
+				} else {
+					// If Sharing is not available, show success message
+					Alert.alert(
+						'Downloaded',
+						`File "${name}" has been downloaded successfully.`,
+						[{ text: 'OK' }]
+					);
+				}
+			} else {
+				throw new Error(`Download failed with status ${downloadResult.status}`);
+			}
+		} catch (error) {
+			console.error('Failed to download file:', error);
+			Alert.alert(
+				'Error',
+				'Failed to download file. Please try again.',
+				[{ text: 'OK' }]
+			);
+		} finally {
+			setIsDownloading(false);
 		}
-		return () => {
-			mounted = false;
-		};
-	}, [fileUrl, isTxt]);
+	};
 
-	const header = (
-		<View style={styles.previewHeader}>
-			<View style={styles.previewHeaderIcon} />
-			<Text style={styles.previewHeaderTitle} numberOfLines={1}>
-				{name}
-			</Text>
-			{typeof fileSize === 'number' ? (
-				<Text style={styles.previewHeaderSize}>({Math.round(fileSize / 1024)}KB)</Text>
-			) : null}
-		</View>
-	);
-
-	const downloadButton = (
-		<TouchableOpacity
-			onPress={() => Linking.openURL(fileUrl).catch(() => {})}
-			activeOpacity={0.8}
-			style={styles.previewDownloadBtn}
-		>
-			<Text style={styles.previewDownloadText}>Download</Text>
-		</TouchableOpacity>
-	);
-
-	let body: React.ReactNode = null;
+	// Show preview for images
 	if (isImage) {
-		body = (
-			<Image
-				source={{ uri: fileUrl }}
-				style={styles.previewImage}
-				resizeMode="cover"
-			/>
-		);
-	} else if (isPdf) {
-		body = (
-			<View style={styles.previewWebviewWrap}>
-				<WebView
-					source={{ uri: `${fileUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH` }}
-					style={styles.previewWebview}
-					javaScriptEnabled
-					setSupportMultipleWindows={false}
-				/>
-			</View>
-		);
-	} else if (isDoc) {
-		const officeUrl = `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(fileUrl)}`;
-		body = (
-			<View style={styles.previewWebviewWrap}>
-				<WebView
-					source={{ uri: officeUrl }}
-					style={styles.previewWebview}
-					javaScriptEnabled
-					setSupportMultipleWindows={false}
-				/>
-			</View>
-		);
-	} else if (isTxt) {
-		body = (
-			<View style={styles.previewTextWrap}>
-				{loading ? (
-					<ActivityIndicator size="small" color={colors.primary.violet} />
-				) : error ? (
-					<Text style={styles.previewErrorText}>{error}</Text>
-				) : (
-					<ScrollView style={{ maxHeight: rem(180) }}>
-						<Text style={styles.previewText}>{txtContent}</Text>
-					</ScrollView>
-				)}
-			</View>
-		);
-	} else {
-		// Fallback: simple attachment row
 		return (
 			<TouchableOpacity
-				onPress={() => Linking.openURL(fileUrl).catch(() => {})}
-				activeOpacity={0.7}
-				style={[
-					styles.fallbackAttachment,
-					{ backgroundColor: isSender ? 'rgba(255,255,255,0.15)' : 'rgba(96,102,197,0.08)' },
-				]}
+				onPress={handleDownload}
+				activeOpacity={0.9}
+				style={styles.imageCard}
 			>
-				<Text style={[styles.fallbackAttachmentText, { color: isSender ? colors.neutral.white : colors.primary.blue }]}>
-					{name}
-				</Text>
+				<Image
+					source={{ uri: fileUrl }}
+					style={styles.previewImage}
+					resizeMode="cover"
+				/>
 			</TouchableOpacity>
 		);
 	}
 
+	// For all other files - only card with icon and name
 	return (
-		<View style={styles.previewCard}>
-			{header}
-			<View style={styles.previewBody}>{body}</View>
-			<View style={styles.previewFooter}>{downloadButton}</View>
-		</View>
+		<TouchableOpacity
+			onPress={handleDownload}
+			activeOpacity={0.7}
+			style={[
+				styles.fileCard,
+				isSender ? styles.fileCardSender : styles.fileCardOther,
+			]}
+		>
+			<View style={styles.fileIconContainer}>
+				<FileIcon width={rem(40)} height={rem(40)} color={isSender ? colors.neutral.white : colors.primary.blue} />
+			</View>
+			<View style={styles.fileInfo}>
+				<Text 
+					style={[
+						styles.fileName,
+						isSender ? styles.fileNameSender : styles.fileNameOther,
+					]}
+					numberOfLines={1}
+				>
+					{name}
+				</Text>
+				{typeof fileSize === 'number' && (
+					<Text 
+						style={[
+							styles.fileSize,
+							isSender ? styles.fileSizeSender : styles.fileSizeOther,
+						]}
+					>
+						{Math.round(fileSize / 1024)}KB
+					</Text>
+				)}
+			</View>
+		</TouchableOpacity>
 	);
 }
 
 const styles = StyleSheet.create({
-	previewCard: {
+	// Card for images
+	imageCard: {
 		width: rem(260),
-		borderWidth: 1,
-		borderColor: 'rgba(41,41,102,0.15)',
 		borderRadius: rem(10),
 		overflow: 'hidden',
-		backgroundColor: 'rgba(255,255,255,0.96)',
 		marginBottom: rem(6),
-	},
-	previewHeader: {
-		flexDirection: 'row',
-		alignItems: 'center',
-		paddingHorizontal: rem(10),
-		paddingVertical: rem(8),
-		backgroundColor: 'rgba(247, 248, 255, 1)',
-		gap: rem(8),
-	},
-	previewHeaderIcon: {
-		width: rem(16),
-		height: rem(16),
-		borderRadius: rem(3),
-		backgroundColor: colors.primary.blue,
-		opacity: 0.5,
-	},
-	previewHeaderTitle: {
-		flex: 1,
-		fontSize: fp(12),
-		fontFamily: fonts['600'],
-		color: colors.primary.blue,
-	},
-	previewHeaderSize: {
-		fontSize: fp(11),
-		color: colors.neutral.darkGrey,
-	},
-	previewBody: {
-		padding: rem(10),
-		backgroundColor: 'white',
 	},
 	previewImage: {
 		width: '100%',
 		height: rem(180),
 		borderRadius: rem(8),
 	},
-	previewWebviewWrap: {
-		width: '100%',
-		height: rem(220),
-		borderRadius: rem(8),
-		overflow: 'hidden',
-		borderWidth: 1,
-		borderColor: 'rgba(41,41,102,0.15)',
-	},
-	previewWebview: {
-		flex: 1,
-		backgroundColor: 'white',
-	},
-	previewTextWrap: {
-		borderRadius: rem(8),
-		borderWidth: 1,
-		borderColor: 'rgba(41,41,102,0.15)',
-		padding: rem(10),
-	},
-	previewText: {
-		fontSize: fp(12),
-		fontFamily: fonts['400'],
-		color: colors.primary.blue,
-	},
-	previewErrorText: {
-		fontSize: fp(12),
-		color: colors.semantic.error,
-	},
-	previewFooter: {
-		paddingHorizontal: rem(10),
-		paddingVertical: rem(8),
-		borderTopWidth: 1,
-		borderTopColor: 'rgba(41,41,102,0.12)',
-		backgroundColor: 'rgba(247, 248, 255, 1)',
-	},
-	previewDownloadBtn: {
-		backgroundColor: colors.primary.violet,
+	// Card for files (not images)
+	fileCard: {
+		width: rem(260),
+		flexDirection: 'row',
+		alignItems: 'center',
+		padding: rem(12),
 		borderRadius: rem(10),
-		paddingVertical: rem(10),
+		marginBottom: rem(6),
+		gap: rem(12),
+	},
+	fileCardSender: {
+		backgroundColor: 'rgba(255, 255, 255, 0.15)',
+	},
+	fileCardOther: {
+		backgroundColor: 'rgba(96, 102, 197, 0.08)',
+	},
+	fileIconContainer: {
+		justifyContent: 'center',
 		alignItems: 'center',
 	},
-	previewDownloadText: {
+	fileInfo: {
+		flex: 1,
+		justifyContent: 'center',
+	},
+	fileName: {
+		fontSize: fp(14),
+		fontFamily: fonts['600'],
+		marginBottom: rem(4),
+	},
+	fileNameSender: {
 		color: colors.neutral.white,
-		fontFamily: fonts['600'],
-		fontSize: fp(14),
 	},
-	fallbackAttachment: {
-		paddingVertical: rem(10),
-		paddingHorizontal: rem(12),
-		borderRadius: rem(8),
+	fileNameOther: {
+		color: colors.primary.blue,
 	},
-	fallbackAttachmentText: {
-		fontSize: fp(14),
-		fontFamily: fonts['600'],
+	fileSize: {
+		fontSize: fp(12),
+		fontFamily: fonts['400'],
+	},
+	fileSizeSender: {
+		color: 'rgba(255, 255, 255, 0.7)',
+	},
+	fileSizeOther: {
+		color: 'rgba(41, 41, 102, 0.6)',
 	},
 });
 
