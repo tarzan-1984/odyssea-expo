@@ -16,6 +16,7 @@ import MessageItem from '@/components/MessageItem';
 import ChatHeaderDropdown from '@/components/ChatHeaderDropdown';
 import { setActiveChatRoomId } from '@/services/ActiveChatService';
 import { useAttachmentHandler } from '@/utils/chatAttachmentHelpers';
+import FilesModal from '@/components/modals/FilesModal';
 
 /**
  * Chat Room Screen
@@ -30,6 +31,7 @@ export default function ChatRoomScreen() {
   const [sendSectionHeight, setSendSectionHeight] = useState(0);
   const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
   const [flexToggle, setFlexToggle] = useState(false);
+  const [isFilesModalOpen, setIsFilesModalOpen] = useState(false);
   
   // Message input state
   const [messageText, setMessageText] = useState('');
@@ -372,14 +374,13 @@ export default function ChatRoomScreen() {
               )}
             </View>
             
-            <ChatHeaderDropdown
-              chatRoom={chatRoom || null}
-              chatRoomType={chatRoom?.type}
-              onFilesPress={() => {
-                // TODO: Implement files functionality
-                console.log('Files pressed for chat room:', chatRoomId);
-              }}
-            />
+                  <ChatHeaderDropdown
+                    chatRoom={chatRoom || null}
+                    chatRoomType={chatRoom?.type}
+                    onFilesPress={() => {
+                      setIsFilesModalOpen(true);
+                    }}
+                  />
           </View>
         
           {isLoadingMessages && messages.length === 0 ? (
@@ -589,6 +590,15 @@ export default function ChatRoomScreen() {
             setMessageText(prev => prev + emoji);
           }}
         />
+        
+        {/* Files Modal */}
+        {chatRoomId && (
+          <FilesModal
+            isOpen={isFilesModalOpen}
+            onClose={() => setIsFilesModalOpen(false)}
+            chatRoomId={chatRoomId}
+          />
+        )}
       </View>
       </KeyboardAvoidingView>
       <View style={{ height: insets.bottom }} />

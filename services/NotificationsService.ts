@@ -5,6 +5,30 @@ import * as Device from 'expo-device';
 import { Platform } from 'react-native';
 import { getActiveChatRoomId } from '@/services/ActiveChatService';
 import { useChatStore } from '@/stores/chatStore';
+import { getChatAvatarSource, getChatDisplayName } from '@/utils/chatAvatarUtils';
+import { ChatRoom } from '@/components/ChatListItem';
+
+/**
+ * Get chat room avatar URL for notification
+ * Uses the same logic as ChatListItem component
+ */
+function getNotificationAvatar(chatRoomId: string | undefined, currentUserId?: string): string | null {
+  if (!chatRoomId) {
+    return null;
+  }
+
+  try {
+    const { chatRooms } = useChatStore.getState();
+    const chatRoom = chatRooms.find((r) => r.id === chatRoomId);
+    if (!chatRoom) {
+      return null;
+    }
+
+    return getChatAvatarSource(chatRoom, currentUserId);
+  } catch {
+    return null;
+  }
+}
 
 // Foreground behavior: show alert + play sound (newer SDKs also require banner/list on iOS)
 Notifications.setNotificationHandler({
@@ -16,15 +40,43 @@ Notifications.setNotificationHandler({
 
       // Check mute status from store
       let isMuted = false;
+      let chatRoom: ChatRoom | null = null;
       if (incomingChatId) {
         try {
           const { chatRooms } = useChatStore.getState();
-          const room = chatRooms.find((r) => r.id === incomingChatId);
-          isMuted = !!room?.isMuted;
+          chatRoom = chatRooms.find((r) => r.id === incomingChatId) || null;
+          isMuted = !!chatRoom?.isMuted;
         } catch {}
       }
 
       const suppress = (activeId && incomingChatId && activeId === incomingChatId) || isMuted;
+
+      // Get avatar URL for notification (if not already in data)
+      // For Android, we can use largeIcon with URL
+      // For iOS, we would need to download and use attachments (more complex)
+      let avatarUrl: string | null = null;
+      if (Platform.OS === 'android' && chatRoom && !data?.avatarUrl) {
+        try {
+          const { chatRooms } = useChatStore.getState();
+          const room = chatRooms.find((r) => r.id === incomingChatId);
+          if (room) {
+            // Get current user ID from secure storage if available
+            const secureStorage = (await import('@/utils/secureStorage')).secureStorage;
+            const userStr = await secureStorage.getItemAsync('user').catch(() => null);
+            const currentUserId = userStr ? JSON.parse(userStr).id : undefined;
+            avatarUrl = getChatAvatarSource(room, currentUserId);
+          }
+        } catch (e) {
+          console.warn('[NotificationsService] Failed to get avatar:', e);
+        }
+      }
+
+      // Note: We cannot modify the notification content here,
+      // but we can log the avatar URL for debugging
+      // The avatar should be included in the notification data from backend
+      if (avatarUrl) {
+        console.log('[NotificationsService] Avatar URL for notification:', avatarUrl);
+      }
 
       const behavior: Notifications.NotificationBehavior = {
         shouldPlaySound: !suppress,
@@ -161,8 +213,39 @@ export async function registerPushTokenToBackend(
 }
 
 export function addNotificationListeners() {
-	const receivedSub = Notifications.addNotificationReceivedListener(() => {
-		// Foreground notifications are handled by system; no-op
+	const receivedSub = Notifications.addNotificationReceivedListener(async (notification) => {
+		// Foreground notifications are handled by system
+		// But we can enhance them with avatar if needed
+		try {
+			const data = notification.request.content.data as any;
+			const chatRoomId = data?.chatRoomId as string | undefined;
+			
+			if (chatRoomId && Platform.OS === 'android') {
+				// For Android, try to get avatar and enhance notification
+				// Note: This is a workaround - we cannot modify the original notification
+				// But we can log the avatar URL for debugging
+				try {
+					const { chatRooms } = useChatStore.getState();
+					const chatRoom = chatRooms.find((r) => r.id === chatRoomId);
+					if (chatRoom) {
+						const secureStorage = (await import('@/utils/secureStorage')).secureStorage;
+						const userStr = await secureStorage.getItemAsync('user').catch(() => null);
+						const currentUserId = userStr ? JSON.parse(userStr).id : undefined;
+						const avatarUrl = getChatAvatarSource(chatRoom, currentUserId);
+						
+						if (avatarUrl) {
+							console.log('[NotificationsService] Avatar URL for notification:', avatarUrl);
+							// Note: The avatar should be included in notification data from backend
+							// For Android, backend should use this URL in largeIcon field
+						}
+					}
+				} catch (e) {
+					console.warn('[NotificationsService] Failed to get avatar for notification:', e);
+				}
+			}
+		} catch (e) {
+			// Ignore errors
+		}
 	});
 	const responseSub = Notifications.addNotificationResponseReceivedListener(() => {
 		// Handle tap on notification if needed (navigate to chat)

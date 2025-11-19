@@ -26,7 +26,7 @@ const ScreenLayout: React.FC<ScreenLayoutProps> = ({
 	}) as number;
 
 	return (
-		<View style={styles.container}>
+		<View style={[styles.container, { paddingBottom: insets.bottom }]}>
 		
 		<View style={styles.bgImageWrapper} pointerEvents="none">
 			<Image
@@ -117,13 +117,13 @@ const styles = StyleSheet.create({
 		alignItems: 'center',
 	},
 	headerTitle: {
-		fontSize: fp(17),
+		fontSize: fp(14),
 		fontFamily: fonts["700"],
 		color: colors.neutral.white,
 		flex: 1,
 	},
 	headerButtonText: {
-		fontSize: fp(16),
+		fontSize: fp(14),
 		fontFamily: fonts["400"],
 		color: colors.neutral.white,
 	},

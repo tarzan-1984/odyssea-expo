@@ -12,6 +12,7 @@ type Props = {
 	fileName?: string;
 	fileSize?: number;
 	isSender: boolean;
+	createdAt?: string; // Optional date to display next to file size
 };
 
 // Helper function to determine MIME type
@@ -34,7 +35,7 @@ const getMimeType = (extension: string): string => {
 	return mimeTypes[extension.toLowerCase()] || 'application/octet-stream';
 };
 
-export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender }: Props) {
+export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender, createdAt }: Props) {
 	const name = fileName || 'Attachment';
 	const ext = name.toLowerCase().split('.').pop() || '';
 	const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
@@ -137,7 +138,7 @@ export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender 
 							isSender ? styles.fileSizeSender : styles.fileSizeOther,
 						]}
 					>
-						{Math.round(fileSize / 1024)}KB
+						{Math.round(fileSize / 1024)}KB{createdAt ? ` • ${new Date(createdAt).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}
 					</Text>
 				)}
 			</View>

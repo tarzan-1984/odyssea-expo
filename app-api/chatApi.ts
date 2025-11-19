@@ -158,6 +158,42 @@ class ChatApiClient {
   }
 
   /**
+   * Get files (messages with fileUrl) from chat room
+   * Mirrors Next.js chatApi.getFiles implementation
+   */
+  async getFiles(
+    chatRoomId: string,
+    page: number = 1,
+    limit: number = 10
+  ): Promise<{
+    messages: Message[];
+    hasMore: boolean;
+    total: number;
+  }> {
+    const params = new URLSearchParams({
+      page: page.toString(),
+      limit: limit.toString(),
+    });
+
+    const response = await this.request<{
+      messages: Message[];
+      pagination: {
+        page: number;
+        limit: number;
+        total: number;
+        pages: number;
+        hasMore: boolean;
+      };
+    }>(`/v1/messages/chat-room/${chatRoomId}/files?${params}`);
+
+    return {
+      messages: response.messages || [],
+      hasMore: response.pagination?.hasMore || false,
+      total: response.pagination?.total || 0,
+    };
+  }
+
+  /**
    * Create a chat room (DIRECT/GROUP/LOAD)
    */
   async createChatRoom(data: {

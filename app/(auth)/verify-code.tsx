@@ -229,7 +229,7 @@ export default function VerifyAccountCodeScreen() {
 const styles = StyleSheet.create({
   resendWrapText: {
     color: colors.neutral.white,
-    fontSize: fp(14),
+    fontSize: fp(13),
     fontFamily: fonts["300"],
     
   },
@@ -243,7 +243,7 @@ const styles = StyleSheet.create({
     paddingTop: rem(70),
   },
   title: {
-    fontSize: fp(22),
+    fontSize: fp(20),
     fontFamily: fonts["700"],
     color: colors.neutral.white,
     textAlign: 'center',
@@ -251,7 +251,7 @@ const styles = StyleSheet.create({
     lineHeight: fp(35),
   },
   subtitle: {
-    fontSize: 18,
+    fontSize: fp(16),
     color: colors.neutral.white,
     textAlign: 'center',
     marginBottom: rem(35),
@@ -338,7 +338,7 @@ const styles = StyleSheet.create({
   },
   resendText: {
     color: colors.primary.green,
-    fontSize: fp(14),
+    fontSize: fp(12),
     fontFamily: fonts["300"],
   },
   
