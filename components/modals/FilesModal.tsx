@@ -133,38 +133,52 @@ export default function FilesModal({ isOpen, onClose, chatRoomId }: FilesModalPr
       setIsLoadingMore(true);
       
       try {
-        const nextPage = page + 1;
-        setPage(nextPage);
-        
-        // Try to load from database API first
-        const apiResult = await loadFilesFromAPI(nextPage, true);
+        // Try to load from database API first (if we still have pages)
+        const apiResult = await loadFilesFromAPI(page + 1, true);
         
         if (apiResult.fileMessages.length > 0) {
           // We have files from database
           setFiles(prev => [...prev, ...apiResult.fileMessages]);
-          setHasMore(apiResult.hasMore);
-        } else if (availableArchives.length > 0 && currentArchiveIndex < availableArchives.length) {
+          setPage(prev => prev + 1);
+          setHasMore(apiResult.hasMore || availableArchives.length > 0);
+        } else {
           // No more files from database, try archives
-          const archive = availableArchives[currentArchiveIndex];
-          const archiveFiles = await loadFilesFromArchive(archive);
-          
-          if (archiveFiles.length > 0) {
-            setFiles(prev => [...prev, ...archiveFiles]);
+          // Make sure archives are loaded
+          let archivesToUse = availableArchives;
+          if (archivesToUse.length === 0) {
+            const loadedArchives = await loadAvailableArchives();
+            if (loadedArchives.length === 0) {
+              // No archives available, no more files
+              setHasMore(false);
+              return;
+            }
+            archivesToUse = loadedArchives;
           }
           
-          setCurrentArchiveIndex(prev => prev + 1);
-          setHasMore(currentArchiveIndex + 1 < availableArchives.length);
-        } else {
-          // No more files anywhere
-          setHasMore(false);
+          if (currentArchiveIndex < archivesToUse.length) {
+            const archive = archivesToUse[currentArchiveIndex];
+            const archiveFiles = await loadFilesFromArchive(archive);
+            
+            if (archiveFiles.length > 0) {
+              setFiles(prev => [...prev, ...archiveFiles]);
+            }
+            
+            const nextArchiveIndex = currentArchiveIndex + 1;
+            setCurrentArchiveIndex(nextArchiveIndex);
+            setHasMore(nextArchiveIndex < archivesToUse.length);
+          } else {
+            // No more files anywhere
+            setHasMore(false);
+          }
         }
       } catch (error) {
         console.error('Failed to load more files:', error);
+        setHasMore(false);
       } finally {
         setIsLoadingMore(false);
       }
     }
-  }, [page, isLoadingMore, hasMore, loadFilesFromAPI, availableArchives, currentArchiveIndex, loadFilesFromArchive]);
+  }, [page, isLoadingMore, hasMore, loadFilesFromAPI, availableArchives, currentArchiveIndex, loadFilesFromArchive, loadAvailableArchives]);
 
   // Handle scroll to load more
   const handleScroll = useCallback((event: any) => {
