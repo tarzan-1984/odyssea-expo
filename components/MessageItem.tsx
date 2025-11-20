@@ -1,5 +1,3 @@
-"use client";
-
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { colors, fonts, fp, rem } from '@/lib';
@@ -7,14 +5,16 @@ import FilePreviewCard from '@/components/FilePreviewCard';
 import ReadCheckIcon from '@/icons/ReadCheckIcon';
 import UnreadCheckIcon from '@/icons/UnreadCheckIcon';
 import MessageDropdown from '@/components/MessageDropdown';
+import MessageReply from '@/components/MessageReply';
 import { Message } from '@/components/ChatListItem';
 
 type Props = {
 	message: Message;
 	isSender: boolean;
+	onReplyPress?: (message: Message) => void;
 };
 
-export default function MessageItem({ message, isSender }: Props) {
+export default function MessageItem({ message, isSender, onReplyPress }: Props) {
 	const formatTime = (timestamp: string): string => {
 		const date = new Date(timestamp);
 		return date.toLocaleTimeString('en-US', {
@@ -47,21 +47,24 @@ export default function MessageItem({ message, isSender }: Props) {
 				) : null}
 				{!!message.content && (
 					<View style={styles.messageContentRow}>
-						<Text
-							style={[
-								styles.messageText,
-								isSender ? styles.messageTextSender : styles.messageTextOther,
-							]}
-						>
-							{message.content}
-						</Text>
+						<View style={styles.messageTextWrapper}>
+							{/* Reply to message */}
+							{message.replyData && (
+								<MessageReply replyData={message.replyData} isSender={isSender} />
+							)}
+							<Text
+								style={[
+									styles.messageText,
+									isSender ? styles.messageTextSender : styles.messageTextOther,
+								]}
+							>
+								{message.content}
+							</Text>
+						</View>
 						<MessageDropdown
 							message={message}
 							isSender={isSender}
-							onReplyPress={(msg) => {
-								// TODO: Implement reply functionality
-								console.log('Reply pressed for message:', msg.id);
-							}}
+							onReplyPress={onReplyPress}
 							onMarkUnreadPress={(messageId) => {
 								// TODO: Implement mark as unread functionality
 								console.log('Mark as unread pressed for message:', messageId);
@@ -140,8 +143,11 @@ const styles = StyleSheet.create({
 	},
 	messageContentRow: {
 		flexDirection: 'row',
-		alignItems: 'center',
+		alignItems: 'flex-start',
 		gap: rem(8),
+	},
+	messageTextWrapper: {
+		// No flex needed - just a container for reply and text
 	},
 	messageTimeContainer: {
 		flexDirection: 'row',

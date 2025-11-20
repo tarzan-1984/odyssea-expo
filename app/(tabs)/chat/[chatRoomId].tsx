@@ -14,6 +14,7 @@ import SendIcon from '@/icons/SendIcon';
 import EmojiPicker from '@/components/EmojiPicker';
 import MessageItem from '@/components/MessageItem';
 import ChatHeaderDropdown from '@/components/ChatHeaderDropdown';
+import ReplyPreview from '@/components/ReplyPreview';
 import { setActiveChatRoomId } from '@/services/ActiveChatService';
 import { useAttachmentHandler } from '@/utils/chatAttachmentHelpers';
 import FilesModal from '@/components/modals/FilesModal';
@@ -38,6 +39,7 @@ export default function ChatRoomScreen() {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadQueue, setUploadQueue] = useState<Array<{name: string; mimeType?: string; size?: number; status: 'uploading'|'done'|'error'}>>([]);
+  const [replyingTo, setReplyingTo] = useState<Message['replyData'] | null>(null);
   
   // Use useChatRoom hook for loading chat room and messages with caching (same logic as Next.js)
   const {
@@ -449,7 +451,20 @@ export default function ChatRoomScreen() {
                 const message = item.data as Message;
                 const isSender = message.senderId === authState.user?.id;
                 
-                return <MessageItem message={message} isSender={isSender} />;
+                return (
+                  <MessageItem
+                    message={message}
+                    isSender={isSender}
+                    onReplyPress={(msg) => {
+                      setReplyingTo({
+                        avatar: msg.sender.avatar,
+                        time: msg.createdAt,
+                        content: msg.content || '',
+                        senderName: `${msg.sender.firstName} ${msg.sender.lastName}`,
+                      });
+                    }}
+                  />
+                );
               }}
               onEndReached={() => {
                 // In inverted list, onEndReached fires when scrolling to top
@@ -482,6 +497,16 @@ export default function ChatRoomScreen() {
           ]}
           onLayout={(e) => setSendSectionHeight(e.nativeEvent.layout.height)}
         >
+          {/* Reply Preview - above input row */}
+          {replyingTo && (
+            <View style={styles.replyPreviewContainer}>
+              <ReplyPreview
+                replyData={replyingTo}
+                onCancel={() => setReplyingTo(null)}
+              />
+            </View>
+          )}
+          
           {/* Upload queue preview */}
           {uploadQueue.length > 0 && (
             <View style={styles.uploadRow}>
@@ -498,62 +523,66 @@ export default function ChatRoomScreen() {
             </View>
           )}
           
-          <TouchableOpacity
-            style={styles.smileButton}
-            onPress={() => {
-              setShowEmojiPicker(!showEmojiPicker);
-            }}
-            activeOpacity={0.7}
-          >
-            <SmileIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} />
-          </TouchableOpacity>
-          
-          <TouchableOpacity
-            style={styles.attachmentButton}
-            onPress={() => {
-              handleAttachmentPress().catch(() => {});
-            }}
-            activeOpacity={0.7}
-          >
-            <AttachmentIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} />
-          </TouchableOpacity>
-          
-          <TextInput
-            style={styles.messageInput}
-            placeholder="Type a message"
-            placeholderTextColor={colors.neutral.darkGrey}
-            value={messageText}
-            onChangeText={(t) => {
-              setMessageText(t);
-              if (chatRoomId) {
-                sendTyping(chatRoomId as string, t.trim().length > 0);
-              }
-            }}
-            multiline
-            editable={!isSendingMessage}
-          />
-          
-          <TouchableOpacity
-            style={styles.sendButton}
-            onPress={async () => {
-              if (messageText.trim() && !isSendingMessage && chatRoomId) {
-                try {
-                  await sendMessage(messageText.trim());
-                  setMessageText('');
-                  // Stop typing indicator after send
-                  sendTyping(chatRoomId as string, false);
-                } catch (error) {
-                  console.error('Failed to send message:', error);
-                  // Show error to user (you can add a toast notification here if needed)
-                  // For now, we just log it
+          {/* Input row - buttons and text input */}
+          <View style={styles.inputRow}>
+            <TouchableOpacity
+              style={styles.smileButton}
+              onPress={() => {
+                setShowEmojiPicker(!showEmojiPicker);
+              }}
+              activeOpacity={0.7}
+            >
+              <SmileIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} />
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={styles.attachmentButton}
+              onPress={() => {
+                handleAttachmentPress().catch(() => {});
+              }}
+              activeOpacity={0.7}
+            >
+              <AttachmentIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} />
+            </TouchableOpacity>
+            
+            <TextInput
+              style={styles.messageInput}
+              placeholder="Type a message"
+              placeholderTextColor={colors.neutral.darkGrey}
+              value={messageText}
+              onChangeText={(t) => {
+                setMessageText(t);
+                if (chatRoomId) {
+                  sendTyping(chatRoomId as string, t.trim().length > 0);
                 }
-              }
-            }}
-            activeOpacity={0.7}
-            disabled={!messageText.trim() || isSendingMessage || !chatRoomId || !isConnected}
-          >
-            <SendIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} opacity={messageText.trim() ? 1 : 0.5} />
-          </TouchableOpacity>
+              }}
+              multiline
+              editable={!isSendingMessage}
+            />
+            
+            <TouchableOpacity
+              style={styles.sendButton}
+              onPress={async () => {
+                if (messageText.trim() && !isSendingMessage && chatRoomId) {
+                  try {
+                    await sendMessage(messageText.trim(), undefined, replyingTo || undefined);
+                    setMessageText('');
+                    setReplyingTo(null); // Clear reply after sending
+                    // Stop typing indicator after send
+                    sendTyping(chatRoomId as string, false);
+                  } catch (error) {
+                    console.error('Failed to send message:', error);
+                    // Show error to user (you can add a toast notification here if needed)
+                    // For now, we just log it
+                  }
+                }
+              }}
+              activeOpacity={0.7}
+              disabled={!messageText.trim() || isSendingMessage || !chatRoomId || !isConnected}
+            >
+              <SendIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} opacity={messageText.trim() ? 1 : 0.5} />
+            </TouchableOpacity>
+          </View>
         </View>
         
         {/* Typing indicator (absolute above input bar) */}
@@ -614,6 +643,11 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: rem(15),
     paddingHorizontal: rem(14),
     paddingVertical: rem(24),
+  },
+  replyPreviewContainer: {
+    marginBottom: rem(12),
+  },
+  inputRow: {
     flexDirection: 'row',
     alignItems: "center",
     gap: rem(10),

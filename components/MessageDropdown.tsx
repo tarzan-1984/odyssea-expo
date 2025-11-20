@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Modal, Pressable, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, Pressable, Alert, Dimensions } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import { colors, fonts, fp, rem } from '@/lib';
 import MoreDotIcon from '@/icons/MoreDotIcon';
@@ -7,6 +7,11 @@ import ReplyIcon from '@/icons/ReplyIcon';
 import MarkUnreadIcon from '@/icons/MarkUnreadIcon';
 import CopyIcon from '@/icons/CopyIcon';
 import { Message } from '@/components/ChatListItem';
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
+const SCREEN_HEIGHT = Dimensions.get('window').height;
+const DROPDOWN_WIDTH = rem(140); // Approximate width of dropdown
+const DROPDOWN_HEIGHT = rem(120); // Approximate height of dropdown (3 items)
 
 interface MessageDropdownProps {
   message: Message;
@@ -61,9 +66,40 @@ export default function MessageDropdown({
   const handleTriggerPress = () => {
     if (triggerRef.current) {
       triggerRef.current.measureInWindow((x, y, width, height) => {
+        let top = y + height + rem(4);
+        let left = x;
+        
+        // Check if dropdown goes beyond right edge of screen
+        if (left + DROPDOWN_WIDTH > SCREEN_WIDTH) {
+          // Position dropdown to the left of the trigger button
+          left = x + width - DROPDOWN_WIDTH;
+          // Ensure it doesn't go beyond left edge
+          if (left < rem(10)) {
+            left = rem(10);
+          }
+        }
+        
+        // Check if dropdown goes beyond bottom edge of screen
+        if (top + DROPDOWN_HEIGHT > SCREEN_HEIGHT) {
+          // Position dropdown above the trigger button
+          top = y - DROPDOWN_HEIGHT - rem(4);
+          // Ensure it doesn't go beyond top edge
+          if (top < rem(10)) {
+            top = rem(10);
+          }
+        }
+        
+        // Ensure minimum margins from screen edges
+        if (left < rem(10)) {
+          left = rem(10);
+        }
+        if (top < rem(10)) {
+          top = rem(10);
+        }
+        
         setDropdownPosition({
-          top: y + height + rem(4),
-          left: x,
+          top,
+          left,
         });
         setIsOpen(true);
       });
@@ -109,7 +145,7 @@ export default function MessageDropdown({
               onPress={handleCopyPress}
               activeOpacity={0.7}
             >
-              <CopyIcon />
+              <CopyIcon width={rem(18)} height={rem(18)} color={colors.primary.blue} />
               <Text style={styles.menuItemText}>Copy</Text>
             </TouchableOpacity>
 
