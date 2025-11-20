@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Modal, Pressable } from 'react-native';
+import React, { useState, useRef } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, Pressable, Alert } from 'react-native';
+import Clipboard from '@react-native-clipboard/clipboard';
 import { colors, fonts, fp, rem } from '@/lib';
 import MoreDotIcon from '@/icons/MoreDotIcon';
 import ReplyIcon from '@/icons/ReplyIcon';
 import MarkUnreadIcon from '@/icons/MarkUnreadIcon';
+import CopyIcon from '@/icons/CopyIcon';
 import { Message } from '@/components/ChatListItem';
 
 interface MessageDropdownProps {
@@ -20,6 +22,8 @@ export default function MessageDropdown({
   onMarkUnreadPress,
 }: MessageDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
+  const triggerRef = useRef<View>(null);
 
   // Only show dropdown for messages that don't belong to the user (incoming messages)
   if (isSender) {
@@ -40,15 +44,43 @@ export default function MessageDropdown({
     setIsOpen(false);
   };
 
+  const handleCopyPress = () => {
+    try {
+      const textToCopy = message.content || '';
+      if (textToCopy) {
+        Clipboard.setString(textToCopy);
+        Alert.alert('Copied', 'Message copied to clipboard');
+      }
+    } catch (error) {
+      console.error('Failed to copy message:', error);
+      Alert.alert('Error', 'Failed to copy message');
+    }
+    setIsOpen(false);
+  };
+
+  const handleTriggerPress = () => {
+    if (triggerRef.current) {
+      triggerRef.current.measureInWindow((x, y, width, height) => {
+        setDropdownPosition({
+          top: y + height + rem(4),
+          left: x,
+        });
+        setIsOpen(true);
+      });
+    } else {
+      setIsOpen(true);
+    }
+  };
+
   return (
     <>
-      <View style={styles.container}>
+      <View style={styles.container} ref={triggerRef} collapsable={false}>
       <TouchableOpacity
-        onPress={() => setIsOpen(true)}
+        onPress={handleTriggerPress}
         style={styles.triggerButton}
         activeOpacity={0.7}
       >
-        <MoreDotIcon width={rem(16)} height={rem(16)} color={colors.primary.blue} />
+        <MoreDotIcon width={rem(18)} height={rem(18)} color={colors.primary.blue} />
       </TouchableOpacity>
       </View>
 
@@ -62,14 +94,23 @@ export default function MessageDropdown({
           style={styles.modalOverlay}
           onPress={() => setIsOpen(false)}
         >
-          <View style={styles.dropdown}>
+          <View style={[styles.dropdown, { top: dropdownPosition.top, left: dropdownPosition.left }]}>
             <TouchableOpacity
               style={styles.menuItem}
               onPress={handleReplyPress}
               activeOpacity={0.7}
             >
-              <ReplyIcon width={rem(14)} height={rem(14)} color={colors.primary.blue} />
+              <ReplyIcon width={rem(18)} height={rem(18)} color={colors.primary.blue} />
               <Text style={styles.menuItemText}>Reply</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.menuItem}
+              onPress={handleCopyPress}
+              activeOpacity={0.7}
+            >
+              <CopyIcon />
+              <Text style={styles.menuItemText}>Copy</Text>
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -77,7 +118,7 @@ export default function MessageDropdown({
               onPress={handleMarkUnreadPress}
               activeOpacity={0.7}
             >
-              <MarkUnreadIcon width={rem(14)} height={rem(14)} color={colors.primary.blue} />
+              <MarkUnreadIcon width={rem(18)} height={rem(18)} color={colors.primary.blue} />
               <Text style={styles.menuItemText}>Mark as unread</Text>
             </TouchableOpacity>
           </View>
@@ -98,10 +139,9 @@ const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.3)',
-    justifyContent: 'flex-start',
-    paddingTop: rem(100),
   },
   dropdown: {
+    position: 'absolute',
     backgroundColor: colors.neutral.white,
     borderRadius: rem(8),
     shadowColor: '#000',
@@ -113,8 +153,6 @@ const styles = StyleSheet.create({
     minWidth: rem(140),
     borderWidth: 1,
     borderColor: 'rgba(41, 41, 102, 0.15)',
-    alignSelf: 'flex-start',
-    marginLeft: rem(20),
   },
   menuItem: {
     flexDirection: 'row',

@@ -23,7 +23,8 @@ type UseNotificationPermission = {
   } | null;
 };
 
-const ANDROID_CHANNEL_ID = "odysseia-messages";
+import { ANDROID_NOTIFICATION_CHANNEL_ID } from '@/constants/notificationChannel';
+const ANDROID_CHANNEL_ID = ANDROID_NOTIFICATION_CHANNEL_ID;
 
 export function useNotificationPermission(): UseNotificationPermission {
   const [status, setStatus] = useState<PermissionStatus>("undetermined");

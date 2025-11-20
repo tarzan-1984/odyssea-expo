@@ -6,6 +6,7 @@ import * as Notifications from "expo-notifications";
 import { useNotificationPermission } from "@/hooks/useNotificationPermission";
 import { colors, fonts, fp, rem } from "@/lib";
 import { playIncomingMessageSound } from "@/utils/SoundManager";
+import { ANDROID_NOTIFICATION_CHANNEL_ID } from "@/constants/notificationChannel";
 
 export default function NotificationsSettings() {
   const {
@@ -108,7 +109,7 @@ export default function NotificationsSettings() {
               sound: Platform.OS === "ios" ? "livechat.wav" : undefined,
               // On Android use the app channel with sound configured
               // TS types may not include channelId in content; cast to any if needed
-              channelId: "odysseia-messages" as any,
+              channelId: ANDROID_NOTIFICATION_CHANNEL_ID as any,
             },
             trigger: null,
           });

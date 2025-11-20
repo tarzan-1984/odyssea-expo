@@ -107,7 +107,8 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 
 		// Android channel with sound
 		if (Platform.OS === 'android') {
-			await Notifications.setNotificationChannelAsync('odysseia-messages', {
+			const { ANDROID_NOTIFICATION_CHANNEL_ID } = await import('@/constants/notificationChannel');
+			await Notifications.setNotificationChannelAsync(ANDROID_NOTIFICATION_CHANNEL_ID, {
 				name: 'Odysseia Messages',
 				importance: Notifications.AndroidImportance.MAX,
 				// Use custom bundled sound; file must be declared in app.json plugin "sounds".
@@ -134,11 +135,14 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 				console.warn('Push notification permission not granted');
 				return null;
 			}
-
-			const expoToken = await Notifications.getExpoPushTokenAsync();
-			console.log('===========expoToken=========', expoToken);
-			token = expoToken.data;
-			console.log('[NotificationsService] ✅ Push token obtained:', token.substring(0, 20) + '...');
+			
+			// Use getDevicePushTokenAsync() for FCM device token
+			const { data: devicePushToken } = await Notifications.getDevicePushTokenAsync();
+			console.log('[NotificationsService++++++++] FCM device token:', devicePushToken);
+			token = devicePushToken;
+			if (token) {
+				console.log('[NotificationsService] ✅ FCM device push token obtained:', token.substring(0, 20) + '...');
+			}
 			return token;
 		} else {
 			console.warn('Must use physical device for Push Notifications');
@@ -247,9 +251,31 @@ export function addNotificationListeners() {
 			// Ignore errors
 		}
 	});
-	const responseSub = Notifications.addNotificationResponseReceivedListener(() => {
-		// Handle tap on notification if needed (navigate to chat)
+	
+	const responseSub = Notifications.addNotificationResponseReceivedListener(async (response) => {
+		// Handle tap on notification - navigate to chat room
+		try {
+			const data = response.notification.request.content.data as any;
+			const chatRoomId = data?.chatRoomId as string | undefined;
+			
+			if (chatRoomId) {
+				console.log('[NotificationsService] Notification tapped, navigating to chat:', chatRoomId);
+				
+				// Import router dynamically to avoid circular dependencies
+				const { useRouter } = await import('expo-router');
+				// Note: We can't use hooks here, so we'll use a different approach
+				// The navigation will be handled by the app's navigation system
+				// For now, we'll just log - actual navigation should be handled in app component
+				
+				// Emit event that can be listened to by navigation components
+				const { eventBus, AppEvents } = await import('@/services/EventBus');
+				eventBus.emit(AppEvents.NavigateToChat, { chatRoomId });
+			}
+		} catch (e) {
+			console.error('[NotificationsService] Failed to handle notification tap:', e);
+		}
 	});
+	
 	return () => {
 		receivedSub.remove();
 		responseSub.remove();

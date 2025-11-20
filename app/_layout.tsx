@@ -37,6 +37,22 @@ function RootLayoutNav() {
     openLocationSettings,
   } = useLocationPermission();
   const lastCheckedSegment = useRef<string>('');
+  
+  // Handle navigation from push notifications
+  useEffect(() => {
+    const { eventBus, AppEvents } = require('@/services/EventBus');
+    const handleNavigateToChat = (data: { chatRoomId: string }) => {
+      if (authState.isAuthenticated && data.chatRoomId) {
+        console.log('[RootLayoutNav] Navigating to chat from notification:', data.chatRoomId);
+        router.push(`/chat/${data.chatRoomId}` as any);
+      }
+    };
+    
+    eventBus.on(AppEvents.NavigateToChat, handleNavigateToChat);
+    return () => {
+      eventBus.off(AppEvents.NavigateToChat, handleNavigateToChat);
+    };
+  }, [authState.isAuthenticated, router]);
 
   // Load stored auth and check permissions on mount (first load)
   useEffect(() => {
