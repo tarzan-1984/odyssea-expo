@@ -4,6 +4,7 @@ import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { View, StyleSheet } from 'react-native';
 import { BlurView } from 'expo-blur';
+import * as Location from 'expo-location';
 import { fonts } from '@/lib';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { WebSocketProvider } from '@/context/WebSocketContext';
@@ -33,10 +34,13 @@ function RootLayoutNav() {
     isLocationEnabled,
     checkBackgroundPermission,
     checkLocationEnabled,
+    requestForegroundPermission,
+    requestBackgroundPermission,
     openAppSettings,
     openLocationSettings,
   } = useLocationPermission();
   const lastCheckedSegment = useRef<string>('');
+  const hasRequestedPermissionRef = useRef(false);
   
   // Handle navigation from push notifications
   useEffect(() => {
@@ -102,13 +106,48 @@ function RootLayoutNav() {
     }
   }, [authState.isAuthenticated, segments, isReady, router]);
 
-  if (!isReady) {
-    return null; // Keep splash screen visible until auth complete
-  }
+  // Request permission when needed (if not already requested)
+  // This ensures the permission appears in app settings even if user denies
+  useEffect(() => {
+    if (!isReady) return;
+    
+    const shouldShowModal = isLocationEnabled === false || backgroundPermissionGranted === false;
+    
+    if (shouldShowModal && !hasRequestedPermissionRef.current) {
+      const requestPermission = async () => {
+        try {
+          // Check current permission status
+          const foregroundStatus = await Location.getForegroundPermissionsAsync();
+          
+          // If permission was never requested (status is 'undetermined'), request it now
+          // This will show the system dialog and create the entry in app settings
+          if (foregroundStatus.status === 'undetermined') {
+            console.log('📍 [RootLayoutNav] Requesting location permission for the first time...');
+            hasRequestedPermissionRef.current = true;
+            await requestForegroundPermission();
+            await requestBackgroundPermission();
+            await checkBackgroundPermission();
+          } else {
+            // Permission was already requested (granted or denied)
+            // Entry should already exist in app settings
+            hasRequestedPermissionRef.current = true;
+          }
+        } catch (error) {
+          console.error('❌ [RootLayoutNav] Failed to request permission:', error);
+        }
+      };
+      
+      requestPermission();
+    }
+  }, [isReady, isLocationEnabled, backgroundPermissionGranted, requestForegroundPermission, requestBackgroundPermission, checkBackgroundPermission]);
 
   // Show modal if location services are disabled or background access is not granted
   const FORCE_SHOW_MODAL = false;
   const showPermissionModal = FORCE_SHOW_MODAL || (isLocationEnabled === false || backgroundPermissionGranted === false);
+
+  if (!isReady) {
+    return null; // Keep splash screen visible until auth complete
+  }
   
   // For testing specific scenarios:
   // FORCE_SHOW_MODAL = true → Shows permission modal immediately

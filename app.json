@@ -23,7 +23,8 @@
         "NSPhotoLibraryUsageDescription": "This app needs access to your photo library to select an avatar.",
         "NSPhotoLibraryAddUsageDescription": "This app may save selected or edited avatar to your library.",
         "UIBackgroundModes": [
-          "location"
+          "location",
+          "remote-notification"
         ]
       }
     },
@@ -75,7 +76,8 @@
         "expo-build-properties",
         {
           "android": {
-            "googleServicesFile": "./google-services.json"
+            "googleServicesFile": "./google-services.json",
+            "usesCleartextTraffic": true
           }
         }
       ],

@@ -23,6 +23,46 @@ export const useLocationPermission = () => {
     }
   }, []);
 
+  // Request foreground permission (if not already granted)
+  // This ensures the permission is requested at least once, so it appears in app settings
+  const requestForegroundPermission = useCallback(async () => {
+    try {
+      const foregroundStatus = await Location.getForegroundPermissionsAsync();
+      if (foregroundStatus.status === 'granted') {
+        return true; // Already granted
+      }
+      
+      // Request foreground permission
+      // This will show the system dialog on first request
+      // If user denies, they can still change it later in app settings
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      return status === 'granted';
+    } catch (error) {
+      console.error('❌ [useLocationPermission] Failed to request foreground permission:', error);
+      return false;
+    }
+  }, []);
+
+  // Request background permission (if foreground is already granted)
+  const requestBackgroundPermission = useCallback(async () => {
+    try {
+      // First ensure foreground permission is granted
+      const foregroundGranted = await requestForegroundPermission();
+      if (!foregroundGranted) {
+        return false;
+      }
+
+      // Request background permission
+      // On iOS: This will show a dialog asking for "Always" permission
+      // On Android: This will show a dialog asking for "Allow all the time" permission
+      const { status } = await Location.requestBackgroundPermissionsAsync();
+      return status === 'granted';
+    } catch (error) {
+      console.error('❌ [useLocationPermission] Failed to request background permission:', error);
+      return false;
+    }
+  }, [requestForegroundPermission]);
+
   // Check background location permission
   // Works the same on iOS and Android - expo-location provides unified API
   const checkBackgroundPermission = useCallback(async () => {
@@ -43,6 +83,7 @@ export const useLocationPermission = () => {
       if (foregroundStatus.status !== 'granted') {
         // No foreground permission - user must grant it first
         // This is required before background permission can be requested
+        // Note: If user denied, they can still change it in app settings
         setBackgroundPermissionGranted((prev) => prev !== false ? false : prev);
         return false;
       }
@@ -57,6 +98,7 @@ export const useLocationPermission = () => {
         // Background permission not granted
         // iOS: User selected "While Using" instead of "Always"
         // Android: User selected "Allow only while using the app" instead of "Allow all the time"
+        // Note: User can change this in app settings even if they denied initially
         setBackgroundPermissionGranted((prev) => prev !== false ? false : prev);
         return false;
       }
@@ -95,9 +137,16 @@ export const useLocationPermission = () => {
   // Open app settings for location permissions
   const openAppSettings = useCallback(() => {
     if (Platform.OS === 'ios') {
-      // iOS: Opens directly to app settings where user can change location permission
+      // iOS: Open app settings where user can find Location permission
+      // Note: On iOS, there's no direct URL scheme to open Location Services for a specific app
+      // The app-settings: scheme opens the app's settings page where Location permission should be visible
+      // If the permission section is not visible, it means the app hasn't requested permission yet
       Linking.openURL('app-settings:').catch((err) => {
-        console.error('❌ [useLocationPermission] Failed to open iOS settings:', err);
+        console.error('❌ [useLocationPermission] Failed to open iOS app settings:', err);
+        // Fallback: Try to open general Location Services (may not work on iOS 13+)
+        Linking.openURL('App-Prefs:root=Privacy&path=LOCATION').catch((fallbackErr) => {
+          console.error('❌ [useLocationPermission] Failed to open iOS location settings:', fallbackErr);
+        });
       });
     } else {
       // Android: Open app-specific settings (not general system settings)
@@ -131,6 +180,8 @@ export const useLocationPermission = () => {
     isLocationEnabled,
     checkBackgroundPermission,
     checkLocationEnabled,
+    requestForegroundPermission,
+    requestBackgroundPermission,
     openAppSettings,
     openLocationSettings,
   };

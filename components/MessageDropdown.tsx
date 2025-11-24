@@ -11,7 +11,7 @@ import { Message } from '@/components/ChatListItem';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 const DROPDOWN_WIDTH = rem(140); // Approximate width of dropdown
-const DROPDOWN_HEIGHT = rem(120); // Approximate height of dropdown (3 items)
+const DROPDOWN_HEIGHT = rem(80); // Approximate height of dropdown (2 items: Reply and Copy)
 
 interface MessageDropdownProps {
   message: Message;
@@ -149,14 +149,15 @@ export default function MessageDropdown({
               <Text style={styles.menuItemText}>Copy</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
+            {/* Temporarily hidden - Mark as unread button */}
+            {/* <TouchableOpacity
               style={styles.menuItem}
               onPress={handleMarkUnreadPress}
               activeOpacity={0.7}
             >
               <MarkUnreadIcon width={rem(18)} height={rem(18)} color={colors.primary.blue} />
               <Text style={styles.menuItemText}>Mark as unread</Text>
-            </TouchableOpacity>
+            </TouchableOpacity> */}
           </View>
         </Pressable>
       </Modal>

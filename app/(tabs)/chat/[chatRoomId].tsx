@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useEffect, useCallback, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, TextInput, KeyboardAvoidingView, Platform, Keyboard, Animated, Easing } from 'react-native';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, KeyboardAvoidingView, Platform, Keyboard, Animated, Easing } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { colors, fonts, fp, rem } from '@/lib';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,16 +8,13 @@ import { useAuth } from '@/context/AuthContext';
 import { useChatRoom } from '@/hooks/useChatRoom';
 import { useWebSocket } from '@/context/WebSocketContext';
 import ArrowLeft from '@/icons/ArrowLeft';
-import SmileIcon from '@/icons/SmileIcon';
-import AttachmentIcon from '@/icons/AttachmentIcon';
-import SendIcon from '@/icons/SendIcon';
 import EmojiPicker from '@/components/EmojiPicker';
 import MessageItem from '@/components/MessageItem';
 import ChatHeaderDropdown from '@/components/ChatHeaderDropdown';
-import ReplyPreview from '@/components/ReplyPreview';
 import { setActiveChatRoomId } from '@/services/ActiveChatService';
 import { useAttachmentHandler } from '@/utils/chatAttachmentHelpers';
 import FilesModal from '@/components/modals/FilesModal';
+import ChatInputSection from '@/components/chat/ChatInputSection';
 
 /**
  * Chat Room Screen
@@ -490,100 +487,35 @@ export default function ChatRoomScreen() {
             />
           )}
         
-        <View
-          style={[
-            styles.sendSection,
-            //!isKeyboardOpen ? { paddingBottom: insets.bottom } : null,
-          ]}
-          onLayout={(e) => setSendSectionHeight(e.nativeEvent.layout.height)}
-        >
-          {/* Reply Preview - above input row */}
-          {replyingTo && (
-            <View style={styles.replyPreviewContainer}>
-              <ReplyPreview
-                replyData={replyingTo}
-                onCancel={() => setReplyingTo(null)}
-              />
-            </View>
-          )}
-          
-          {/* Upload queue preview */}
-          {uploadQueue.length > 0 && (
-            <View style={styles.uploadRow}>
-              {uploadQueue.map((f, idx) => (
-                <View key={`${f.name}-${idx}`} style={styles.uploadChip}>
-                  <Text style={styles.uploadChipText} numberOfLines={1}>
-                    {f.name}
-                  </Text>
-                  <Text style={styles.uploadChipStatus}>
-                    {f.status === 'uploading' ? 'Uploading…' : f.status === 'done' ? 'Sent' : 'Error'}
-                  </Text>
-                </View>
-              ))}
-            </View>
-          )}
-          
-          {/* Input row - buttons and text input */}
-          <View style={styles.inputRow}>
-            <TouchableOpacity
-              style={styles.smileButton}
-              onPress={() => {
-                setShowEmojiPicker(!showEmojiPicker);
-              }}
-              activeOpacity={0.7}
-            >
-              <SmileIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} />
-            </TouchableOpacity>
-            
-            <TouchableOpacity
-              style={styles.attachmentButton}
-              onPress={() => {
-                handleAttachmentPress().catch(() => {});
-              }}
-              activeOpacity={0.7}
-            >
-              <AttachmentIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} />
-            </TouchableOpacity>
-            
-            <TextInput
-              style={styles.messageInput}
-              placeholder="Type a message"
-              placeholderTextColor={colors.neutral.darkGrey}
-              value={messageText}
-              onChangeText={(t) => {
-                setMessageText(t);
-                if (chatRoomId) {
-                  sendTyping(chatRoomId as string, t.trim().length > 0);
-                }
-              }}
-              multiline
-              editable={!isSendingMessage}
-            />
-            
-            <TouchableOpacity
-              style={styles.sendButton}
-              onPress={async () => {
-                if (messageText.trim() && !isSendingMessage && chatRoomId) {
-                  try {
-                    await sendMessage(messageText.trim(), undefined, replyingTo || undefined);
-                    setMessageText('');
-                    setReplyingTo(null); // Clear reply after sending
-                    // Stop typing indicator after send
-                    sendTyping(chatRoomId as string, false);
-                  } catch (error) {
-                    console.error('Failed to send message:', error);
-                    // Show error to user (you can add a toast notification here if needed)
-                    // For now, we just log it
-                  }
-                }
-              }}
-              activeOpacity={0.7}
-              disabled={!messageText.trim() || isSendingMessage || !chatRoomId || !isConnected}
-            >
-              <SendIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} opacity={messageText.trim() ? 1 : 0.5} />
-            </TouchableOpacity>
-          </View>
-        </View>
+        <ChatInputSection
+          messageText={messageText}
+          onMessageTextChange={(t) => {
+            setMessageText(t);
+            if (chatRoomId) {
+              sendTyping(chatRoomId as string, t.trim().length > 0);
+            }
+          }}
+          onSendPress={async () => {
+            if (messageText.trim() && !isSendingMessage && chatRoomId) {
+              try {
+                await sendMessage(messageText.trim(), undefined, replyingTo || undefined);
+                setMessageText('');
+                setReplyingTo(null);
+                sendTyping(chatRoomId as string, false);
+              } catch (error) {
+                console.error('Failed to send message:', error);
+              }
+            }
+          }}
+          onEmojiPress={() => setShowEmojiPicker(!showEmojiPicker)}
+          onAttachmentPress={() => handleAttachmentPress().catch(() => {})}
+          replyingTo={replyingTo}
+          onCancelReply={() => setReplyingTo(null)}
+          uploadQueue={uploadQueue}
+          isSendingMessage={isSendingMessage}
+          isConnected={isConnected}
+          onLayout={setSendSectionHeight}
+        />
         
         {/* Typing indicator (absolute above input bar) */}
         {chatRoomId ? (() => {
@@ -630,91 +562,22 @@ export default function ChatRoomScreen() {
         )}
       </View>
       </KeyboardAvoidingView>
-      <View style={{ height: insets.bottom }} />
+      
+      {Platform.OS === 'android' &&
+        <View style={{ height: insets.bottom }} />
+      }
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  sendSection: {
-    boxShadow: '0px 0px 40px 0px rgba(41, 41, 102, 0.2)',
-    backgroundColor: 'rgba(255, 255, 255, 0.96)',
-    borderTopRightRadius: rem(15),
-    borderTopLeftRadius: rem(15),
-    paddingHorizontal: rem(14),
-    paddingVertical: rem(24),
-  },
-  replyPreviewContainer: {
-    marginBottom: rem(12),
-  },
-  inputRow: {
-    flexDirection: 'row',
-    alignItems: "center",
-    gap: rem(10),
-  },
-  smileButton: {
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  attachmentButton: {
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  messageInput: {
-    flex: 1,
-    minHeight: rem(36),
-    maxHeight: rem(120),
-    fontSize: fp(14),
-    fontFamily: fonts['400'],
-    color: colors.primary.blue,
-    backgroundColor: 'rgba(96, 102, 197, 0.1)',
-    paddingHorizontal: rem(12),
-    paddingVertical: rem(10),
-    borderRadius: rem(15),
-    borderWidth: 1,
-    borderColor: 'rgba(96, 102, 197, 0.31)',
-    textAlignVertical: 'center',
-    includeFontPadding: false, // Remove extra padding on Android
-  },
-  sendButton: {
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  uploadRow: {
-    position: 'absolute',
-    left: rem(14),
-    right: rem(14),
-    bottom: '100%',
-    paddingBottom: rem(8),
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: rem(8),
-  },
-  uploadChip: {
-    backgroundColor: 'rgba(96, 102, 197, 0.1)',
-    borderColor: 'rgba(96, 102, 197, 0.31)',
-    borderWidth: 1,
-    borderRadius: rem(12),
-    paddingHorizontal: rem(10),
-    paddingVertical: rem(6),
-    maxWidth: '80%',
-  },
-  uploadChipText: {
-    fontSize: fp(12),
-    fontFamily: fonts['600'],
-    color: colors.primary.blue,
-  },
-  uploadChipStatus: {
-    fontSize: fp(10),
-    color: colors.neutral.darkGrey,
-  },
   content: {
     flex: 1,
   },
   screenTitle: {
     color: colors.neutral.white,
     fontFamily: fonts["700"],
-    fontSize: fp(14),
+    fontSize: fp(18),
     textTransform: 'capitalize',
   },
   screenWrap: {

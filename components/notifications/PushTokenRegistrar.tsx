@@ -24,6 +24,8 @@ export default function PushTokenRegistrar() {
     let canceled = false;
     (async () => {
       try {
+        console.log('[PushTokenRegistrar] Effect triggered, authState.isAuthenticated:', authState.isAuthenticated);
+        
         // Check if user is authenticated
         const isAuthenticated = authState.isAuthenticated;
         if (!isAuthenticated) {
@@ -37,28 +39,42 @@ export default function PushTokenRegistrar() {
           console.warn('[PushTokenRegistrar] User is authenticated but no access token found');
           return;
         }
+        console.log('[PushTokenRegistrar] Access token found, checking for existing push token...');
 
         // Check if token already exists in secureStorage
         const existingToken = await secureStorage.getItemAsync("expoPushToken").catch(() => null);
         if (existingToken) {
-          console.log('[PushTokenRegistrar] Push token already exists in secureStorage');
+          console.log('[PushTokenRegistrar] Push token already exists in secureStorage:', existingToken.substring(0, 20) + '...');
           return;
         }
 
         // Get push token
         console.log('[PushTokenRegistrar] No push token found, requesting...');
         const token = await registerForPushNotificationsAsync();
-        if (!token || canceled) {
-          console.error('[PushTokenRegistrar] ❌ Failed to get push token');
+        if (canceled) {
+          console.log('[PushTokenRegistrar] Request canceled');
           return;
         }
+        if (!token) {
+          console.error('[PushTokenRegistrar] ❌ Failed to get push token (token is null)');
+          return;
+        }
+        console.log('[PushTokenRegistrar] ✅ Push token received:', token.substring(0, 20) + '...');
 
         // Save token to secureStorage
-        await secureStorage.setItemAsync("expoPushToken", token).catch(() => {});
+        await secureStorage.setItemAsync("expoPushToken", token).catch((err) => {
+          console.error('[PushTokenRegistrar] Failed to save token to secureStorage:', err);
+        });
         console.log('[PushTokenRegistrar] ✅ Push token saved to secureStorage');
 
         // Register token on backend
-        await registerPushTokenToBackend(token, accessToken);
+        console.log('[PushTokenRegistrar] Registering token on backend...');
+        const registered = await registerPushTokenToBackend(token, accessToken);
+        if (registered) {
+          console.log('[PushTokenRegistrar] ✅ Token registered on backend');
+        } else {
+          console.warn('[PushTokenRegistrar] ⚠️ Failed to register token on backend');
+        }
       } catch (error) {
         console.error('[PushTokenRegistrar] ❌ ERROR: Exception while getting/registering push token');
         console.error('[PushTokenRegistrar] Error:', error);

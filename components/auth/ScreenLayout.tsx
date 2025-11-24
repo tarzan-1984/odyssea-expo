@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Image, StyleSheet, Text, TouchableOpacity, KeyboardAvoidingView, Platform, ScrollView, TouchableWithoutFeedback, Keyboard } from 'react-native';
+import { View, Image, StyleSheet, Text, TouchableOpacity, KeyboardAvoidingView, Platform, TouchableWithoutFeedback, Keyboard } from 'react-native';
 import { colors, fonts, fp, rem } from "@/lib";
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -20,8 +20,9 @@ const ScreenLayout: React.FC<ScreenLayoutProps> = ({
 }) => {
 	const insets = useSafeAreaInsets();
 	// Add vertical offset so that inputs are not overlapped when a header is rendered.
+	// For iOS, we need to account for the header height and safe area top
 	const keyboardOffset = Platform.select({
-		ios: (headerTitle ? rem(76) : 0) + insets.top,
+		ios: headerTitle ? rem(76) + insets.top : insets.top,
 		android: 0,
 	}) as number;
 
@@ -59,18 +60,13 @@ const ScreenLayout: React.FC<ScreenLayoutProps> = ({
 			<KeyboardAvoidingView
 				style={{ flex: 1 }}
 				behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-				keyboardVerticalOffset={keyboardOffset}
+				keyboardVerticalOffset={Platform.OS === 'ios' ? keyboardOffset : 0}
+				enabled={Platform.OS === 'ios'}
 			>
 				<TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
-					<ScrollView
-						contentContainerStyle={[styles.scrollContent, { paddingBottom: rem(24) + insets.bottom }]}
-						keyboardShouldPersistTaps="handled"
-						showsVerticalScrollIndicator={false}
-					>
-						<View style={styles.content} collapsable={false}>
-							{children}
-						</View>
-					</ScrollView>
+					<View style={[styles.content, { paddingBottom: rem(24) + insets.bottom }]} collapsable={false}>
+						{children}
+					</View>
 				</TouchableWithoutFeedback>
 			</KeyboardAvoidingView>
 			{/* Fixed footer area (not affected by KeyboardAvoidingView) */}
@@ -133,9 +129,6 @@ const styles = StyleSheet.create({
 	},
 	safeAreaWithHeader: {
 		paddingTop: rem(76),
-	},
-	scrollContent: {
-		flexGrow: 1,
 	},
 	content: {
 		flex: 1,

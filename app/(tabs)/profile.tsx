@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, ScrollView, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image, ScrollView, ActivityIndicator, Platform } from 'react-native';
 import { colors, fonts, rem, fp, borderRadius } from '@/lib';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import BottomNavigation from "../../components/navigation/BottomNavigation";
@@ -125,7 +125,7 @@ export default function ProfileScreen() {
   }, [pickedAvatar, pickedMeta, authState.user, updateUserAvatar]);
   
   return (
-    <View style={styles.screenWrap}>
+    <View style={[styles.screenWrap, Platform.OS === 'android' && { paddingBottom: insets.bottom }]}>
       <View style={{ height: insets.top, backgroundColor: colors.primary.violet }} />
       
       <View style={styles.container}>

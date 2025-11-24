@@ -103,10 +103,12 @@ Notifications.setNotificationHandler({
 
 export async function registerForPushNotificationsAsync(): Promise<string | null> {
 	try {
+		console.log('[NotificationsService] Starting push token registration...');
 		let token: string | null = null;
 
 		// Android channel with sound
 		if (Platform.OS === 'android') {
+			console.log('[NotificationsService] Setting up Android notification channel...');
 			const { ANDROID_NOTIFICATION_CHANNEL_ID } = await import('@/constants/notificationChannel');
 			await Notifications.setNotificationChannelAsync(ANDROID_NOTIFICATION_CHANNEL_ID, {
 				name: 'Odysseia Messages',
@@ -119,33 +121,44 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 				description: 'Incoming Odysseia chat message alerts',
 				lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
 			});
+			console.log('[NotificationsService] Android notification channel set up');
 		}
 
-		if (Device.isDevice) {
+		const isDevice = Device.isDevice;
+		console.log('[NotificationsService] Device.isDevice:', isDevice);
+		
+		if (isDevice) {
+			console.log('[NotificationsService] Checking notification permissions...');
 			const { status: existingStatus } = await Notifications.getPermissionsAsync();
+			console.log('[NotificationsService] Existing permission status:', existingStatus);
 			
 			let finalStatus = existingStatus;
 			
 			if (existingStatus !== 'granted') {
+				console.log('[NotificationsService] Requesting notification permissions...');
 				const { status } = await Notifications.requestPermissionsAsync();
 				finalStatus = status;
+				console.log('[NotificationsService] Permission request result:', finalStatus);
 			}
 			
 			if (finalStatus !== 'granted') {
-				console.warn('Push notification permission not granted');
+				console.warn('[NotificationsService] Push notification permission not granted, status:', finalStatus);
 				return null;
 			}
 			
+			console.log('[NotificationsService] Permission granted, getting device push token...');
 			// Use getDevicePushTokenAsync() for FCM device token
 			const { data: devicePushToken } = await Notifications.getDevicePushTokenAsync();
 			console.log('[NotificationsService++++++++] FCM device token:', devicePushToken);
 			token = devicePushToken;
 			if (token) {
 				console.log('[NotificationsService] ✅ FCM device push token obtained:', token.substring(0, 20) + '...');
+			} else {
+				console.warn('[NotificationsService] ⚠️ Device push token is null or undefined');
 			}
 			return token;
 		} else {
-			console.warn('Must use physical device for Push Notifications');
+			console.warn('[NotificationsService] Must use physical device for Push Notifications (Device.isDevice = false)');
 			return null;
 		}
 	} catch (e: any) {

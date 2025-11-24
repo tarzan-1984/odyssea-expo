@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Platform } from 'react-native';
 import { colors, fonts, rem, fp, borderRadius } from '@/lib';
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from 'expo-router';
@@ -236,7 +236,7 @@ export default function MessagesScreen() {
   }, [isFilterDropdownOpen]);
 
   return (
-    <View style={[styles.screenWrap, { paddingBottom: insets.bottom }]}>
+    <View style={[styles.screenWrap, Platform.OS === 'android' && { paddingBottom: insets.bottom }]}>
       <View style={styles.screenContent}>
         <View style={{ height: insets.top, backgroundColor: colors.primary.violet }} />
         <View style={styles.container}>
@@ -526,7 +526,7 @@ const styles = StyleSheet.create({
   screenTitle: {
     color: colors.neutral.white,
     fontFamily: fonts["700"],
-    fontSize: fp(16),
+    fontSize: fp(18),
     textTransform: 'capitalize',
   },
   header: {
@@ -605,15 +605,21 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
-    fontSize: fp(10),
+    fontSize: fp(12),
     fontFamily: fonts["400"],
     color: colors.primary.blue,
-    // Ensure vertical centering of text and placeholder on Android
-    paddingVertical: 0,
-    textAlignVertical: 'center',
-    includeFontPadding: false as any,
     height: rem(35),
-    lineHeight: rem(35),
+    // Platform-specific vertical centering
+    ...(Platform.OS === 'android' ? {
+      paddingVertical: 0,
+      textAlignVertical: 'center',
+      includeFontPadding: false as any,
+      lineHeight: rem(35),
+    } : {
+      // iOS: use padding for vertical centering
+      paddingVertical: rem(8),
+      lineHeight: fp(12),
+    }),
   },
   clearButton: {
     marginLeft: rem(8),
@@ -631,7 +637,7 @@ const styles = StyleSheet.create({
     minWidth: rem(80),
   },
   muteAllButtonText: {
-    fontSize: fp(10),
+    fontSize: fp(12),
     fontFamily: fonts["500"],
     color: colors.primary.blue,
   },
@@ -650,7 +656,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(96, 102, 197, 0.1)',
   },
   filterButtonText: {
-    fontSize: fp(10),
+    fontSize: fp(12),
     fontFamily: fonts["500"],
     color: colors.primary.blue,
   },

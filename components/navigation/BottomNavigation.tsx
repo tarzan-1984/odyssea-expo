@@ -1,13 +1,12 @@
 import React, { useMemo } from 'react';
-import { View, TouchableOpacity, Text, StyleSheet, Dimensions } from 'react-native';
+import { View, TouchableOpacity, Text, StyleSheet, Dimensions, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
-import { borderRadius, colors, fonts, fp, rem } from '@/lib';
+import { colors, fonts, fp, rem } from '@/lib';
 import Home from '@/icons/Home';
 import ChatIcon from '@/icons/ChatIcon';
 import ProfileIcon from '@/icons/ProfileIcon';
 import SettingsIcon from '@/icons/SettingsIcon';
 import { useChatRooms } from '@/hooks/useChatRooms';
-
 const { width } = Dimensions.get('window');
 
 interface NavItemProps {
@@ -108,7 +107,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     paddingHorizontal: rem(30),
     paddingTop: rem(19),
-    paddingBottom: 0,
+    ...(Platform.OS === 'ios' && { paddingBottom: rem(10) }),
     backgroundColor: 'rgba(41, 41, 102, 0.96)',
     borderTopLeftRadius: rem(20),
     borderTopRightRadius: rem(20),

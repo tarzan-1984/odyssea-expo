@@ -69,7 +69,8 @@ export default function LocationPermissionModal({
             This app requires "Always" location permission to track your location in the background.{'\n\n'}
             {Platform.OS === 'ios' ? (
               <>
-                Please go to Settings → Privacy & Security → Location Services → odysseaexpo → Select "Always"
+                Please go to Settings → Privacy & Security → Location Services → Odyssea → Select "Always"{'\n\n'}
+                Tap the button below to open app settings, then scroll down to find "Location" and select "Always".
               </>
             ) : (
               <>

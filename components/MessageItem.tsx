@@ -131,7 +131,7 @@ const styles = StyleSheet.create({
 		borderBottomLeftRadius: 0,
 	},
 	messageText: {
-		fontSize: fp(12),
+		fontSize: fp(15),
 		fontFamily: fonts['400'],
 		letterSpacing: 0,
 	},
@@ -165,7 +165,7 @@ const styles = StyleSheet.create({
 		alignItems: 'center',
 	},
 	messageTime: {
-		fontSize: fp(10),
+		fontSize: fp(11),
 		fontFamily: fonts['400'],
 		color: 'rgba(41, 41, 102, 0.7)',
 	},
