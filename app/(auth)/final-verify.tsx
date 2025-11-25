@@ -684,10 +684,10 @@ export default function FinalVerifyScreen() {
       <View style={styles.screenContent}>
         {/* Paint status bar area exactly to safe inset height */}
         <View style={{ height: insets.top, backgroundColor: colors.primary.violet }} />
-        <View style={styles.container}>
+      <View style={styles.container}>
           
-          {/* Header with time and profile */}
-          <View style={styles.header}>
+        {/* Header with time and profile */}
+        <View style={styles.header}>
             <Text style={styles.welcome} numberOfLines={2}>
               Welcome to application, {firstName}
             </Text>
@@ -711,8 +711,8 @@ export default function FinalVerifyScreen() {
           </View>
           
           <View style={styles.contentWrapper}>
-            {/* Map section */}
-            <View style={styles.mapContainer}>
+          {/* Map section */}
+          <View style={styles.mapContainer}>
               <OSMMapView
                 ref={mapRef}
                 style={StyleSheet.absoluteFill}
@@ -745,25 +745,25 @@ export default function FinalVerifyScreen() {
                   <Text style={styles.addressText} numberOfLines={1}>
                     {locationLabel}
                   </Text>
-                </View>
+              </View>
               )}
-            </View>
-            
+          </View>
+          
             {/* Settings section */}
             <View style={styles.settingsSection}>
-              <TouchableOpacity style={styles.shareButton} onPress={handleShareLocation}>
+          <TouchableOpacity style={styles.shareButton} onPress={handleShareLocation}>
                 <Text style={styles.buttonText}>Share my location</Text>
-              </TouchableOpacity>
-              
-              {/* Location toggle */}
-              <View style={styles.switchContainer}>
-                <Text style={styles.switchLabel}>Turn on automatic location sharing</Text>
+          </TouchableOpacity>
+          
+          {/* Location toggle */}
+          <View style={styles.switchContainer}>
+            <Text style={styles.switchLabel}>Turn on automatic location sharing</Text>
                 <View style={{ flexShrink: 0 }}>
                   <CustomSwitch
                     value={automaticLocationSharing}
                     onValueChange={handleLocationToggleChange}
-                  />
-                </View>
+            />
+          </View>
               </View>
               
               {/* Last update time */}
@@ -774,14 +774,14 @@ export default function FinalVerifyScreen() {
                   </Text>
                 </View>
               )}
-              
-              {/* Status dropdown */}
+          
+          {/* Status dropdown */}
               <View style={styles.settingsWrap}>
                 <Text style={styles.settingsLabel}>Your status</Text>
                 <StatusSelect value={status} onChange={handleStatusChange} />
-              </View>
-              
-              {/* ZIP input */}
+          </View>
+          
+          {/* ZIP input */}
               <View style={styles.settingsWrap}>
                 <Text style={styles.settingsLabel}>ZIP</Text>
                 <TextInput
@@ -794,22 +794,22 @@ export default function FinalVerifyScreen() {
                   accessibilityLabel="ZIP code"
                   accessibilityHint="ZIP code is automatically filled from your location"
                 />
-              </View>
-              
-              {/* Date input */}
+          </View>
+          
+          {/* Date input */}
               <View style={styles.settingsWrap}>
                 <Text style={styles.settingsLabel}>Date</Text>
-                <View style={styles.input}>
+            <View style={styles.input}>
                   <Text style={styles.textInput}>{date}</Text>
-                </View>
-              </View>
+            </View>
+          </View>
               
               <View style={styles.settingsWrap}>
                 <Text style={styles.settingsLabel}></Text>
-                
-                <TouchableOpacity style={styles.updateButton} onPress={handleUpdateStatus}>
-                  <Text style={styles.updateButtonText}>Update status</Text>
-                </TouchableOpacity>
+          
+          <TouchableOpacity style={styles.updateButton} onPress={handleUpdateStatus}>
+            <Text style={styles.updateButtonText}>Update status</Text>
+          </TouchableOpacity>
               </View>
               
               {/* Success/Error message */}
@@ -829,7 +829,7 @@ export default function FinalVerifyScreen() {
   );
 }
 
- const styles = StyleSheet.create({
+const styles = StyleSheet.create({
    screenContent: {
      flex: 1,
      position: "relative"
@@ -913,7 +913,7 @@ export default function FinalVerifyScreen() {
     marginTop: -20,
   },
   welcome: {
-    fontSize: fp(24),
+    fontSize: fp(20),
     fontFamily: fonts["700"],
     lineHeight: fp(20),
     color: colors.neutral.white,
@@ -940,7 +940,7 @@ export default function FinalVerifyScreen() {
      paddingBottom: 80,
      marginTop: -20,
      zIndex: 50,
-   },
+  },
   mapPin: {
     position: 'absolute',
     left: '50%',

@@ -126,21 +126,22 @@ export default function ProfileScreen() {
   
   return (
     <View style={[styles.screenWrap, Platform.OS === 'android' && { paddingBottom: insets.bottom }]}>
-      <View style={{ height: insets.top, backgroundColor: colors.primary.violet }} />
-      
-      <View style={styles.container}>
-        {/* Header with time and profile */}
-        <View style={styles.header}>
-          <Text style={styles.screenTitle}>
-            Profile
-          </Text>
-          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout} accessibilityRole="button" accessibilityLabel="Logout">
-            <Text style={styles.logoutText}>Logout</Text>
-          </TouchableOpacity>
-          
-        </View>
+      <View style={styles.screenContent}>
+        <View style={{ height: insets.top, backgroundColor: colors.primary.violet }} />
         
-        <ScrollView style={styles.content}>
+        <View style={styles.container}>
+          {/* Header with time and profile */}
+          <View style={styles.header}>
+            <Text style={styles.screenTitle}>
+              Profile
+            </Text>
+            <TouchableOpacity style={styles.logoutButton} onPress={handleLogout} accessibilityRole="button" accessibilityLabel="Logout">
+              <Text style={styles.logoutText}>Logout</Text>
+            </TouchableOpacity>
+          
+          </View>
+          
+          <ScrollView style={styles.content}>
             <View style={styles.avatarWrap}>
               <View style={styles.avatar}>
                 {(pickedAvatar || profilePhoto) ? (
@@ -159,19 +160,19 @@ export default function ProfileScreen() {
                 )}
               </View>
             </View>
-          
+            
             <View style={styles.controlsWrap}>
-            {pickedAvatar ? (
-              <TouchableOpacity style={[styles.uploadButton, isUploading && styles.uploadButtonDisabled]} activeOpacity={0.8} onPress={handleSetAvatar} disabled={isUploading}>
-                <Text style={styles.uploadButtonText}>{isUploading ? 'Uploading...' : 'Set avatar'}</Text>
-              </TouchableOpacity>
-            ) : (
-               <TouchableOpacity style={[styles.uploadButton, isUploading && styles.uploadButtonDisabled]} activeOpacity={0.8} onPress={handlePickAvatar} disabled={isUploading}>
-                 <Text style={styles.uploadButtonText}>Upload avatar</Text>
-               </TouchableOpacity>
-             )}
-          </View>
-
+              {pickedAvatar ? (
+                <TouchableOpacity style={[styles.uploadButton, isUploading && styles.uploadButtonDisabled]} activeOpacity={0.8} onPress={handleSetAvatar} disabled={isUploading}>
+                  <Text style={styles.uploadButtonText}>{isUploading ? 'Uploading...' : 'Set avatar'}</Text>
+                </TouchableOpacity>
+              ) : (
+                 <TouchableOpacity style={[styles.uploadButton, isUploading && styles.uploadButtonDisabled]} activeOpacity={0.8} onPress={handlePickAvatar} disabled={isUploading}>
+                   <Text style={styles.uploadButtonText}>Upload avatar</Text>
+                 </TouchableOpacity>
+               )}
+            </View>
+            
             {/* Basic user info block */}
             <View style={styles.infoBlock}>
               {isLoadingUser ? (
@@ -356,7 +357,7 @@ export default function ProfileScreen() {
                           <Text style={styles.infoTitle}>Ramp</Text>
                         </View>
                       }
-                      
+                    
                     </View>
                   </View>
                   
@@ -415,16 +416,21 @@ export default function ProfileScreen() {
               ) : null}
             </View>
           
-        </ScrollView>
+          </ScrollView>
+        </View>
+        
+        {/* Bottom Navigation */}
+        <BottomNavigation />
       </View>
-      
-      {/* Bottom Navigation */}
-      <BottomNavigation />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  screenContent: {
+    flex: 1,
+    position: "relative"
+  },
   infoValue: {
     fontSize: fp(10),
     fontFamily: fonts["400"],

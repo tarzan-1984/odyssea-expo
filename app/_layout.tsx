@@ -48,7 +48,8 @@ function RootLayoutNav() {
     const handleNavigateToChat = (data: { chatRoomId: string }) => {
       if (authState.isAuthenticated && data.chatRoomId) {
         console.log('[RootLayoutNav] Navigating to chat from notification:', data.chatRoomId);
-        router.push(`/chat/${data.chatRoomId}` as any);
+        // Use replace instead of push to avoid back navigation issues
+        router.replace(`/chat/${data.chatRoomId}` as any);
       }
     };
     
@@ -57,6 +58,30 @@ function RootLayoutNav() {
       eventBus.off(AppEvents.NavigateToChat, handleNavigateToChat);
     };
   }, [authState.isAuthenticated, router]);
+
+  // Check for pending navigation from notification when app opens (if app was closed)
+  useEffect(() => {
+    if (!isReady || !authState.isAuthenticated) return;
+
+    const checkPendingNavigation = async () => {
+      try {
+        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+        const pendingChatId = await AsyncStorage.getItem('@pending_chat_navigation');
+        
+        if (pendingChatId) {
+          console.log('[RootLayoutNav] Found pending chat navigation:', pendingChatId);
+          // Clear the pending navigation
+          await AsyncStorage.removeItem('@pending_chat_navigation');
+          // Navigate to chat
+          router.replace(`/chat/${pendingChatId}` as any);
+        }
+      } catch (error) {
+        console.error('[RootLayoutNav] Failed to check pending navigation:', error);
+      }
+    };
+
+    checkPendingNavigation();
+  }, [isReady, authState.isAuthenticated, router]);
 
   // Load stored auth and check permissions on mount (first load)
   useEffect(() => {

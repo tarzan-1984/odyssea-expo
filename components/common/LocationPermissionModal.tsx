@@ -30,13 +30,14 @@ export default function LocationPermissionModal({
             <Text style={styles.modalTitle}>Location Services Disabled</Text>
             <Text style={styles.modalText}>
               Location services are currently disabled on your device.{'\n\n'}
+              To use this app, you need to enable location services on your device.{'\n\n'}
               {Platform.OS === 'ios' ? (
                 <>
                   Please enable location services in Settings → Privacy & Security → Location Services
                 </>
               ) : (
                 <>
-                  Please enable location services in Settings → Location
+                  Please enable location services in your device Settings → Location
                 </>
               )}
             </Text>
@@ -109,14 +110,14 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalTitle: {
-    fontSize: fp(20),
+    fontSize: fp(18),
     fontFamily: fonts["600"],
     color: colors.neutral.black,
     marginBottom: rem(16),
     textAlign: 'center',
   },
   modalText: {
-    fontSize: fp(15),
+    fontSize: fp(14),
     fontFamily: fonts["400"],
     color: colors.neutral.black,
     marginBottom: rem(24),
@@ -133,7 +134,7 @@ const styles = StyleSheet.create({
   },
   modalButtonText: {
     color: colors.neutral.white,
-    fontSize: fp(16),
+    fontSize: fp(14),
     fontFamily: fonts["600"],
   },
 });

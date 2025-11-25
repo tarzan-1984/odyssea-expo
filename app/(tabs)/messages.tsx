@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Platform } from 'react-native';
 import { colors, fonts, rem, fp, borderRadius } from '@/lib';
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import BottomNavigation from "../../components/navigation/BottomNavigation";
 import SearchIcon from '@/icons/SearchIcon';
 import ClearIcon from '@/icons/ClearIcon';
@@ -223,6 +223,28 @@ export default function MessagesScreen() {
     // Navigate to chat detail screen with chatRoomId
     router.push(`/chat/${chatRoom.id}` as any);
   };
+
+  // Refresh chat rooms when screen comes into focus
+  // This ensures unreadCount is updated after returning from a chat
+  useFocusEffect(
+    React.useCallback(() => {
+      // Only refresh if WebSocket is connected
+      // This prevents unnecessary API calls when offline
+      if (isConnected) {
+        // Refresh chat rooms when screen is focused and WebSocket is connected
+        // This will update unreadCount from the server
+        loadChatRooms(true).catch((error) => {
+          console.error('Failed to refresh chat rooms on focus:', error);
+        });
+      } else {
+        // If offline, just refresh from cache without forcing API call
+        // This prevents blocking the UI when offline
+        loadChatRooms(false).catch((error) => {
+          console.error('Failed to load chat rooms from cache on focus:', error);
+        });
+      }
+    }, [loadChatRooms, isConnected])
+  );
 
   // Close dropdown when clicking outside (simplified for mobile)
   React.useEffect(() => {

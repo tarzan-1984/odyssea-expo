@@ -5,7 +5,7 @@ import { colors, fonts, fp, rem } from '@/lib';
 import Home from '@/icons/Home';
 import ChatIcon from '@/icons/ChatIcon';
 import ProfileIcon from '@/icons/ProfileIcon';
-import SettingsIcon from '@/icons/SettingsIcon';
+// import SettingsIcon from '@/icons/SettingsIcon'; // Temporarily hidden
 import { useChatRooms } from '@/hooks/useChatRooms';
 const { width } = Dimensions.get('window');
 
@@ -83,15 +83,17 @@ export default function BottomNavigation({ currentRoute }: BottomNavigationProps
         label=""
         route="/profile"
         isActive={currentRoute === '/profile'}
+        isLast
       />
 
-      <NavItem
+      {/* Settings temporarily hidden */}
+      {/* <NavItem
         icon={<SettingsIcon width={20} height={20} color={currentRoute === '/settings' ? colors.primary.blue : '#8E8E93'} />}
         label=""
         route="/settings"
         isActive={currentRoute === '/settings'}
         isLast
-      />
+      /> */}
     </View>
   );
 }

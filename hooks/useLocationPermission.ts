@@ -160,17 +160,26 @@ export const useLocationPermission = () => {
   // Open device location settings (for when location services are disabled)
   const openLocationSettings = useCallback(() => {
     if (Platform.OS === 'ios') {
-      // iOS: Try to open general location settings (this might not work on newer iOS versions)
-      // Falls back to app settings if the specific path doesn't work
+      // iOS: Try multiple methods to open location settings
+      // Method 1: Try App-Prefs (may not work on iOS 10+)
       Linking.openURL('App-Prefs:root=Privacy&path=LOCATION').catch(() => {
-        // Fallback: Open app settings where user can also access location
-        Linking.openURL('app-settings:').catch(() => {});
+        // Method 2: Try prefs: (alternative format, may not work)
+        Linking.openURL('prefs:root=Privacy&path=LOCATION').catch(() => {
+          // Method 3: Fallback to app settings
+          // User will need to navigate to Settings → Privacy & Security → Location Services manually
+          Linking.openURL('app-settings:').catch(() => {
+            console.error('❌ [useLocationPermission] Failed to open iOS location settings');
+          });
+        });
       });
     } else {
-      // Android: Open general settings (Linking.openSettings opens app settings on Android)
-      // For location settings, we'll open general settings and user navigates to Location
-      Linking.openSettings().catch(() => {
-        console.error('❌ [useLocationPermission] Failed to open Android settings');
+      // Android: Open system location settings directly
+      // Use Android Intent to open location source settings
+      Linking.openURL('android.settings.LOCATION_SOURCE_SETTINGS').catch(() => {
+        // Fallback: Try to open general settings
+        Linking.openSettings().catch(() => {
+          console.error('❌ [useLocationPermission] Failed to open Android location settings');
+        });
       });
     }
   }, []);

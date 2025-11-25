@@ -274,13 +274,17 @@ export function addNotificationListeners() {
 			if (chatRoomId) {
 				console.log('[NotificationsService] Notification tapped, navigating to chat:', chatRoomId);
 				
-				// Import router dynamically to avoid circular dependencies
-				const { useRouter } = await import('expo-router');
-				// Note: We can't use hooks here, so we'll use a different approach
-				// The navigation will be handled by the app's navigation system
-				// For now, we'll just log - actual navigation should be handled in app component
+				// Save chatRoomId to AsyncStorage for navigation after app loads (if app was closed)
+				try {
+					const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+					await AsyncStorage.setItem('@pending_chat_navigation', chatRoomId);
+					console.log('[NotificationsService] Saved pending chat navigation:', chatRoomId);
+				} catch (storageError) {
+					console.warn('[NotificationsService] Failed to save pending navigation:', storageError);
+				}
 				
 				// Emit event that can be listened to by navigation components
+				// This works if app is already running
 				const { eventBus, AppEvents } = await import('@/services/EventBus');
 				eventBus.emit(AppEvents.NavigateToChat, { chatRoomId });
 			}

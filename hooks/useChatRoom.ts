@@ -732,6 +732,72 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
     }
   }, [chatRoom, chatRoomId, getAvailableArchiveDays]);
 
+  // Handle bulk messages marked as read (when markChatRoomAsRead is called)
+  // This matches Next.js behavior - unreadCount is updated only when server confirms
+  const handleMessagesMarkedAsRead = useCallback((data: { chatRoomId: string; messageIds: string[]; userId: string }) => {
+    if (data.chatRoomId !== chatRoomId) return;
+
+    const currentUserId = authState.user?.id;
+
+    // Update all messages in state
+    setMessages(prev => {
+      const updatedMessages = prev.map(msg => {
+        if (data.messageIds.includes(msg.id)) {
+          const currentReadBy = msg.readBy || [];
+          const updatedReadBy = currentReadBy.includes(data.userId) 
+            ? currentReadBy 
+            : [...currentReadBy, data.userId];
+
+          // Determine isRead based on chat type
+          // For DIRECT chats: isRead becomes true when any participant reads
+          // For GROUP/LOAD chats: isRead becomes true when at least one participant reads
+          // This is needed for displaying the read status icon in the chat
+          // The readBy array tracks who specifically read the message
+          const updatedIsRead = updatedReadBy.length > 0 ? true : false;
+
+          return {
+            ...msg,
+            isRead: updatedIsRead,
+            readBy: updatedReadBy,
+          };
+        }
+        return msg;
+      });
+
+      // Save to cache asynchronously
+      // Sort messages by date to ensure correct order
+      const sortedMessages = updatedMessages.sort(
+        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      );
+
+      messagesCacheService.saveMessages(chatRoomId, sortedMessages).catch((error) => {
+        console.error('Failed to save messages read status to cache:', error);
+      });
+
+      return sortedMessages;
+    });
+
+    // Update unreadCount only if this is for the current user
+    // This matches Next.js behavior - unreadCount decreases only when current user reads messages
+    // For group chats, each user has their own unreadCount based on their readBy status
+    if (currentUserId && data.userId === currentUserId) {
+      // Calculate how many messages were marked as read
+      const readCount = data.messageIds.length;
+      
+      console.log(`📉 [useChatRoom] Decreasing unreadCount by ${readCount} for chat room ${chatRoomId} (user ${currentUserId})`);
+      
+      // Update chat room's unreadCount through eventBus
+      // This matches Next.js behavior in WebSocketContext.messagesMarkedAsRead
+      eventBus.emit(AppEvents.ChatRoomUpdated, {
+        chatRoomId,
+        updates: {
+          // Decrement unreadCount by the number of messages marked as read
+          unreadCountDecrement: readCount,
+        },
+      });
+    }
+  }, [chatRoomId, authState.user?.id]);
+
   // Listen for messageRead events via eventBus (real-time read status updates)
   // This listens to events emitted by WebSocketContext when messageRead event is received
   useEffect(() => {
@@ -836,77 +902,19 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
       });
     };
 
-    // Handle bulk messages marked as read (when markChatRoomAsRead is called)
-    // This matches Next.js behavior - unreadCount is updated only when server confirms
-    const handleMessagesMarkedAsRead = (data: { chatRoomId: string; messageIds: string[]; userId: string }) => {
-      if (data.chatRoomId !== chatRoomId) return;
-
-      const currentUserId = authState.user?.id;
-
-      // Update all messages in state
-      setMessages(prev => {
-        const updatedMessages = prev.map(msg => {
-          if (data.messageIds.includes(msg.id)) {
-            const currentReadBy = msg.readBy || [];
-            const updatedReadBy = currentReadBy.includes(data.userId) 
-              ? currentReadBy 
-              : [...currentReadBy, data.userId];
-
-            // Determine isRead based on chat type
-            // For DIRECT chats: isRead becomes true when any participant reads
-            // For GROUP/LOAD chats: isRead becomes true when at least one participant reads
-            // This is needed for displaying the read status icon in the chat
-            // The readBy array tracks who specifically read the message
-            const updatedIsRead = updatedReadBy.length > 0 ? true : false;
-
-            return {
-              ...msg,
-              isRead: updatedIsRead,
-              readBy: updatedReadBy,
-            };
-          }
-          return msg;
-        });
-
-        // Save to cache asynchronously
-        // Sort messages by date to ensure correct order
-        const sortedMessages = updatedMessages.sort(
-          (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-        );
-
-        messagesCacheService.saveMessages(chatRoomId, sortedMessages).catch((error) => {
-          console.error('Failed to save messages read status to cache:', error);
-        });
-
-        return sortedMessages;
-      });
-
-      // Update unreadCount only if this is for the current user
-      // This matches Next.js behavior - unreadCount decreases only when current user reads messages
-      // For group chats, each user has their own unreadCount based on their readBy status
-      if (currentUserId && data.userId === currentUserId) {
-        // Calculate how many messages were marked as read
-        const readCount = data.messageIds.length;
-        
-        console.log(`📉 [useChatRoom] Decreasing unreadCount by ${readCount} for chat room ${chatRoomId} (user ${currentUserId})`);
-        
-        // Update chat room's unreadCount through eventBus
-        // This matches Next.js behavior in WebSocketContext.messagesMarkedAsRead
-        eventBus.emit(AppEvents.ChatRoomUpdated, {
-          chatRoomId,
-          updates: {
-            // Decrement unreadCount by the number of messages marked as read
-            unreadCountDecrement: readCount,
-          },
-        });
-      }
-    };
-
+    // Subscribe to messagesMarkedAsRead events via eventBus (emitted by WebSocketContext)
+    // This handles bulk marking of messages as read when user enters a chat room
+    const offMessagesMarkedAsRead = eventBus.on(AppEvents.MessagesMarkedAsRead, handleMessagesMarkedAsRead);
+    
     // Subscribe to messageRead events via eventBus (emitted by WebSocketContext)
-    // Migration complete — EventBus/Socket subscriptions for read are no longer needed;
-    // updates come to store from WebSocketContext
-    return () => {};
-  }, [socket, chatRoomId, chatRoom?.type, authState.user?.id]);
+    // This handles individual message read status updates
+    const offMessageRead = eventBus.on(AppEvents.MessageRead, handleMessageRead);
+    
+    return () => {
+      offMessagesMarkedAsRead();
+      offMessageRead();
+    };
+  }, [socket, chatRoomId, chatRoom?.type, authState.user?.id, handleMessagesMarkedAsRead]);
 
   // Reset flags when app starts (comes to foreground after being closed)
   useEffect(() => {
