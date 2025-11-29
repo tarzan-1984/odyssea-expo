@@ -124,15 +124,37 @@ export async function sendLocationUpdateToTMS(
       body: JSON.stringify(requestData),
     });
 
-    const responseData = await response.json();
+    let responseData: any;
+    try {
+      responseData = await response.json();
+    } catch (parseError) {
+      // If response is not JSON (e.g., HTML error page), read as text
+      const textData = await response.text();
+      responseData = { error: 'Invalid JSON response', raw: textData.substring(0, 200) };
+    }
+    
     console.log('[locationApi] TMS API Response status:', response.status);
-    console.log('[locationApi] TMS API Response data:', responseData);
-
+    
     if (response.ok) {
       console.log('[locationApi] ✅ Location update sent successfully');
+      if (responseData?.success) {
+        console.log('[locationApi] TMS API confirmed success');
+      }
       return true;
     } else {
-      console.error('[locationApi] ❌ Failed to send location update:', response.status, responseData);
+      // Log error details without overwhelming the console
+      const errorMessage = responseData?.message || responseData?.error || 'Unknown error';
+      const errorCode = responseData?.code || 'unknown';
+      console.error(`[locationApi] ❌ Failed to send location update: ${response.status} (${errorCode})`);
+      console.error(`[locationApi] Error message: ${errorMessage}`);
+      
+      // Only log full response data for non-500 errors or if it's small
+      if (response.status !== 500 && responseData && Object.keys(responseData).length < 10) {
+        console.warn('[locationApi] Response data:', responseData);
+      } else if (response.status === 500) {
+        console.warn('[locationApi] Server error (500) - this is a backend issue, not a client issue');
+      }
+      
       return false;
     }
   } catch (error) {

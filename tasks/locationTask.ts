@@ -4,8 +4,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { secureStorage } from '@/utils/secureStorage';
 
 const LOCATION_TASK_NAME = 'background-location-task';
-const LOCATION_UPDATE_INTERVAL = 10 * 60 * 1000; // 10 minutes in milliseconds
-const LAST_UPDATE_KEY = '@last_location_update_timestamp';
+const LOCATION_UPDATE_INTERVAL = 5 * 60 * 1000; // 5 minutes in milliseconds (temporarily reduced for testing)
+const USER_LOCATION_KEY = '@user_location';
 
 interface LocationUpdateData {
   locations: Location.LocationObject[];
@@ -51,14 +51,26 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }: any) => {
     if (locations && locations.length > 0) {
       const location = locations[locations.length - 1];
       const { latitude, longitude } = location.coords;
+      const timestamp = new Date().toISOString();
+      
+      console.log(`📍 [LocationTask] New location received at ${new Date().toLocaleTimeString()}:`, {
+        latitude: latitude.toFixed(6),
+        longitude: longitude.toFixed(6),
+        accuracy: location.coords.accuracy,
+        timestamp
+      });
 
       try {
         // Reverse geocode to get ZIP code
+        console.log(`🔄 [LocationTask] Starting reverse geocoding...`);
         const reverseGeocode = await Location.reverseGeocodeAsync({ latitude, longitude });
         let postalCode = '';
         
         if (reverseGeocode && reverseGeocode.length > 0) {
           postalCode = reverseGeocode[0].postalCode || '';
+          console.log(`✅ [LocationTask] Reverse geocoding completed. ZIP code: ${postalCode || 'not found'}`);
+        } else {
+          console.warn(`⚠️ [LocationTask] Reverse geocoding returned no results`);
         }
 
         // Check if automatic location sharing is still enabled
@@ -72,64 +84,86 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }: any) => {
             // - Android 8.0+: Limits background location updates to a few times per hour
             // - Both platforms may send updates more frequently than requested
             // SOLUTION: Manual filtering in JavaScript ensures consistent 10-minute interval on both platforms
-            const lastUpdateStr = await AsyncStorage.getItem(LAST_UPDATE_KEY);
+            console.log(`⏱️ [LocationTask] Checking update interval...`);
+            const existingLocationJson = await AsyncStorage.getItem(USER_LOCATION_KEY);
             const now = Date.now();
             
-            if (lastUpdateStr) {
-              const lastUpdate = parseInt(lastUpdateStr, 10);
-              const timeSinceLastUpdate = now - lastUpdate;
-              
-              // Only process if enough time has passed (within 30 seconds of target interval)
-              // This ensures consistent behavior on both iOS and Android
-              const minInterval = LOCATION_UPDATE_INTERVAL - 30000; // 30 seconds before target
-              if (timeSinceLastUpdate < minInterval) {
-                const minutesPassed = Math.floor(timeSinceLastUpdate / (60 * 1000));
-                const minutesNeeded = Math.floor(LOCATION_UPDATE_INTERVAL / (60 * 1000));
-                console.log(`⏭️ [LocationTask] Skipping update - only ${minutesPassed} minutes passed, need ${minutesNeeded} minutes`);
-                return; // Skip this update
+            if (existingLocationJson) {
+              try {
+                const existingLocation = JSON.parse(existingLocationJson);
+                if (existingLocation.lastUpdate) {
+                  const lastUpdate = new Date(existingLocation.lastUpdate).getTime();
+                  const timeSinceLastUpdate = now - lastUpdate;
+                  const minutesSinceUpdate = Math.floor(timeSinceLastUpdate / 60000);
+                  const secondsSinceUpdate = Math.floor((timeSinceLastUpdate % 60000) / 1000);
+                  
+                  console.log(`⏱️ [LocationTask] Last update was ${minutesSinceUpdate}m ${secondsSinceUpdate}s ago`);
+                  
+                  // Only process if enough time has passed (within 30 seconds of target interval)
+                  // This ensures consistent behavior on both iOS and Android
+                  const minInterval = LOCATION_UPDATE_INTERVAL - 30000; // 30 seconds before target
+                  if (timeSinceLastUpdate < minInterval) {
+                    const remainingMinutes = Math.floor((minInterval - timeSinceLastUpdate) / 60000);
+                    const remainingSeconds = Math.floor(((minInterval - timeSinceLastUpdate) % 60000) / 1000);
+                    console.log(`⏸️ [LocationTask] Update skipped - need to wait ${remainingMinutes}m ${remainingSeconds}s more`);
+                    return; // Skip this update
+                  }
+                } else {
+                  console.log(`ℹ️ [LocationTask] No previous update timestamp found, proceeding with update`);
+                }
+              } catch (parseError) {
+                console.warn(`⚠️ [LocationTask] Failed to parse existing location data:`, parseError);
+                // If parsing fails, continue with update
               }
+            } else {
+              console.log(`ℹ️ [LocationTask] No existing location data found, proceeding with first update`);
             }
             
-            // Save this update
-            const timestamp = Date.now();
-            const updateData = {
-              latitude,
-              longitude,
-              zipCode: postalCode,
-              timestamp,
-            };
-            
-            const timeMinutes = new Date(timestamp).toLocaleTimeString();
-            console.log(`📍 [LocationTask] Background update accepted at ${timeMinutes}`);
+            const timeMinutes = new Date().toLocaleTimeString();
+            console.log(`✅ [LocationTask] Background update accepted at ${timeMinutes} - proceeding with API call`);
             
             // Try to send location update to API directly from background task
             // This ensures updates are sent even when app is closed
             // Works on both iOS and Android
+            console.log(`🌐 [LocationTask] Preparing to send location update to API...`);
             try {
               // Get user data from secure storage (works on both iOS and Android)
+              console.log(`🔍 [LocationTask] Retrieving user data from secure storage...`);
               const userJson = await secureStorage.getItemAsync('user');
               if (userJson) {
                 const user = JSON.parse(userJson);
                 const externalId = user?.externalId;
+                console.log(`✅ [LocationTask] User data retrieved. External ID: ${externalId || 'not found'}`);
                 
                 // Get status from AsyncStorage
                 const savedStatus = await AsyncStorage.getItem('@user_status');
                 const statusValue = savedStatus || 'available'; // Default to 'available' if not set
+                console.log(`📋 [LocationTask] User status: ${statusValue}`);
                 
                 if (externalId && postalCode) {
                   // Dynamically import location API function to avoid issues in background task
                   // This works on both iOS and Android
                   let sendLocationUpdateToTMS;
                   try {
+                    console.log(`📦 [LocationTask] Importing location API module...`);
                     // Use require for background task compatibility (works on both platforms)
                     const locationApiModule = require('@/utils/locationApi');
                     sendLocationUpdateToTMS = locationApiModule.sendLocationUpdateToTMS;
+                    console.log(`✅ [LocationTask] Location API module imported successfully`);
                   } catch (importError) {
                     console.error('❌ [LocationTask] Failed to import locationApi:', importError);
                     throw importError;
                   }
                   
-                  console.log(`📤 [LocationTask] Sending location update to API from background task (iOS/Android)...`);
+                  console.log(`📤 [LocationTask] Sending location update to TMS API...`, {
+                    externalId,
+                    latitude: latitude.toFixed(6),
+                    longitude: longitude.toFixed(6),
+                    postalCode,
+                    status: statusValue
+                  });
+                  
+                  const apiStartTime = Date.now();
                   const success = await sendLocationUpdateToTMS(
                     externalId,
                     latitude,
@@ -138,12 +172,16 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }: any) => {
                     statusValue as any,
                     '' // Empty string - function will use current date/time
                   );
+                  const apiDuration = Date.now() - apiStartTime;
                   
                   if (success) {
-                    console.log(`✅ [LocationTask] Location update sent successfully from background task`);
-                    // Update lastLocationUpdate in AsyncStorage (not SecureStorage)
-                    // SecureStorage requires user interaction and doesn't work in background tasks
-                    // AsyncStorage works in background on both iOS and Android
+                    console.log(`✅ [LocationTask] API call successful (took ${apiDuration}ms)`);
+                  } else {
+                    console.warn(`⚠️ [LocationTask] API call returned false (took ${apiDuration}ms)`);
+                  }
+                  
+                  // Save coordinates and time only after successful API call
+                  if (success) {
                     try {
                       const locationData = {
                         latitude,
@@ -151,14 +189,20 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }: any) => {
                         zipCode: postalCode,
                         lastUpdate: new Date().toISOString()
                       };
-                      // Save to AsyncStorage for background task compatibility
-                      await AsyncStorage.setItem('@user_location_background', JSON.stringify(locationData));
-                      console.log(`💾 [LocationTask] Location data saved to AsyncStorage for background update`);
+                      console.log(`💾 [LocationTask] Saving location data to AsyncStorage...`, {
+                        latitude: latitude.toFixed(6),
+                        longitude: longitude.toFixed(6),
+                        zipCode: postalCode,
+                        lastUpdate: locationData.lastUpdate
+                      });
+                      // Save to AsyncStorage (unified storage for both foreground and background)
+                      await AsyncStorage.setItem(USER_LOCATION_KEY, JSON.stringify(locationData));
+                      console.log(`✅ [LocationTask] Location data saved to AsyncStorage successfully`);
                     } catch (storageError) {
-                      console.warn(`⚠️ [LocationTask] Failed to save location data to AsyncStorage:`, storageError);
+                      console.error(`❌ [LocationTask] Failed to save location data to AsyncStorage:`, storageError);
                     }
                   } else {
-                    console.warn(`⚠️ [LocationTask] Failed to send location update from background task`);
+                    console.warn(`⚠️ [LocationTask] Skipping AsyncStorage save - API call was not successful`);
                   }
                 } else {
                   if (!externalId) {
@@ -172,24 +216,31 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }: any) => {
                 console.warn(`⚠️ [LocationTask] User data not found in secure storage`);
               }
             } catch (apiError) {
-              console.error('❌ [LocationTask] Error sending location update from background task:', apiError);
-              // Continue to save to AsyncStorage even if API call fails
-              // App will pick it up when opened (works on both iOS and Android)
+              // Handle different types of errors
+              if (apiError instanceof Error) {
+                console.error('❌ [LocationTask] Error sending location update from background task:', apiError.message);
+                // Log stack trace only in development
+                if (__DEV__) {
+                  console.error('❌ [LocationTask] Stack trace:', apiError.stack);
+                }
+              } else {
+                console.error('❌ [LocationTask] Unknown error sending location update:', apiError);
+              }
+              // Don't save coordinates if API call failed - wait for next successful update
             }
-            
-            // Store location data temporarily - will be picked up by app if API call failed
-            await AsyncStorage.setItem('@pending_location_update', JSON.stringify(updateData));
-            // Save timestamp for interval filtering
-            await AsyncStorage.setItem(LAST_UPDATE_KEY, timestamp.toString());
           } else {
+            console.log(`⏸️ [LocationTask] Automatic location sharing is disabled, stopping background tracking...`);
             await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
-            // Clear last update timestamp when sharing is disabled
-            await AsyncStorage.removeItem(LAST_UPDATE_KEY);
+            console.log(`✅ [LocationTask] Background tracking stopped`);
           }
+        } else {
+          console.warn(`⚠️ [LocationTask] App settings not found in AsyncStorage`);
         }
       } catch (err) {
         console.error('❌ [LocationTask] Failed to process location:', err);
       }
+    } else {
+      console.warn(`⚠️ [LocationTask] No locations in data payload`);
     }
   }
 });

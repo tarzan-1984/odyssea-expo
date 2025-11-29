@@ -117,7 +117,6 @@ export default function VerifyAccountCodeScreen() {
         // Show success message on screen
         const message = result.message || 'New OTP code has been sent to your email';
         setSuccessMessage(message);
-        console.log('✅ [VerifyCode] OTP resent successfully');
         
         // Auto-hide message after 5 seconds
         setTimeout(() => {

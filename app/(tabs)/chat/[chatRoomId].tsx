@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useEffect, useCallback, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, KeyboardAvoidingView, Platform, Keyboard, Animated, Easing } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { BlurView } from 'expo-blur';
 import { colors, fonts, fp, rem } from '@/lib';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChatRoom, Message } from '@/components/ChatListItem';
@@ -44,6 +45,7 @@ export default function ChatRoomScreen() {
     messages,
     isLoadingChatRoom,
     isLoadingMessages,
+    isLoadingOlderMessages,
     error,
     loadMoreMessages,
     sendMessage,
@@ -170,6 +172,10 @@ export default function ChatRoomScreen() {
   const isUserScrolledUpRef = useRef(false);
   const isInitialLoadRef = useRef(true);
   const hasScrolledToBottomRef = useRef(false);
+  const lastScrollYRef = useRef(0);
+  const loadMoreTriggeredRef = useRef(false);
+  const isReceivingNewMessageRef = useRef(false); // Track if we're receiving a new message via WebSocket
+  const isProgrammaticScrollRef = useRef(false); // Track if scroll is programmatic (automatic) vs user-initiated
 
   // Reset scroll flags when chat room changes
   useEffect(() => {
@@ -178,6 +184,7 @@ export default function ChatRoomScreen() {
       hasScrolledToBottomRef.current = false;
       isUserScrolledUpRef.current = false;
       previousMessagesLengthRef.current = 0;
+      isReceivingNewMessageRef.current = false; // Reset flag when switching chat rooms
     }
   }, [chatRoomId]);
 
@@ -197,6 +204,9 @@ export default function ChatRoomScreen() {
         setTimeout(() => {
           if (flatListRef.current && !hasScrolledToBottomRef.current) {
             hasScrolledToBottomRef.current = true;
+            // Mark as programmatic scroll to prevent loadMoreMessages from triggering
+            isProgrammaticScrollRef.current = true;
+            
             // In inverted FlatList:
             // - First element (index 0) is displayed at visual bottom (newest messages)
             // - Last element (index length-1) is displayed at visual top (oldest messages)
@@ -214,6 +224,11 @@ export default function ChatRoomScreen() {
                 console.warn('Failed to scroll to bottom:', err);
               }
             }
+            
+            // Reset programmatic scroll flag after scroll completes
+            setTimeout(() => {
+              isProgrammaticScrollRef.current = false;
+            }, 300);
           }
         }, 150);
       });
@@ -223,28 +238,57 @@ export default function ChatRoomScreen() {
   // Auto-scroll to bottom when new messages arrive (if user is at bottom)
   useEffect(() => {
     if (messages.length > previousMessagesLengthRef.current && !isInitialLoadRef.current) {
-      // New message(s) added
+      // New message(s) added via WebSocket
+      // Set flag to prevent onEndReached from triggering loadMoreMessages
+      isReceivingNewMessageRef.current = true;
+      
       if (!isUserScrolledUpRef.current) {
         // User is at bottom, scroll to show new message
-        // In inverted FlatList, index 0 means visual bottom (newest messages)
+        // Mark as programmatic scroll to prevent loadMoreMessages from triggering
+        isProgrammaticScrollRef.current = true;
+        
+        // In inverted FlatList, offset 0 = visual bottom (newest messages)
+        // We need to scroll to offset 0 to show newest message at bottom
         setTimeout(() => {
-          if (flatListData.length > 0) {
+          if (flatListRef.current && flatListData.length > 0) {
             try {
-              // Find first non-date item index (in case first item is a date separator)
-              const firstMessageIndex = flatListData.findIndex(item => item.type === 'message');
-              const scrollIndex = firstMessageIndex >= 0 ? firstMessageIndex : 0;
-              flatListRef.current?.scrollToIndex({ index: scrollIndex, animated: true, viewPosition: 0 });
+              // Scroll to offset 0 (bottom of inverted list = newest messages)
+              flatListRef.current.scrollToOffset({ offset: 0, animated: true });
+              // IMPORTANT: Update lastScrollYRef to 0 after scrolling
+              // This ensures scrollY is 0 and doesn't trigger loadMoreMessages
+              lastScrollYRef.current = 0;
             } catch (e) {
-              // Fallback: try scrollToOffset with 0
+              // Fallback: try scrollToIndex with index 0
               try {
-                flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+                const firstMessageIndex = flatListData.findIndex(item => item.type === 'message');
+                const scrollIndex = firstMessageIndex >= 0 ? firstMessageIndex : 0;
+                flatListRef.current?.scrollToIndex({ index: scrollIndex, animated: true, viewPosition: 0 });
+                // Update lastScrollYRef to 0
+                lastScrollYRef.current = 0;
               } catch (err) {
                 console.warn('Failed to scroll to new message:', err);
               }
             }
           }
+          // Reset flags after scroll animation completes
+          setTimeout(() => {
+            isReceivingNewMessageRef.current = false;
+            isProgrammaticScrollRef.current = false;
+            // Ensure scrollY is 0 after scroll completes
+            lastScrollYRef.current = 0;
+          }, 500);
+        }, 100);
+      } else {
+        // User is scrolled up, reset flags immediately (don't scroll)
+        setTimeout(() => {
+          isReceivingNewMessageRef.current = false;
+          isProgrammaticScrollRef.current = false;
         }, 100);
       }
+    } else {
+      // No new messages, reset flags
+      isReceivingNewMessageRef.current = false;
+      isProgrammaticScrollRef.current = false;
     }
     previousMessagesLengthRef.current = messages.length;
   }, [messages.length, flatListData.length, flatListData]);
@@ -410,19 +454,91 @@ export default function ChatRoomScreen() {
                 return (item.data as Message).id;
               }}
               onScroll={(event) => {
-                // Track if user has scrolled up (away from bottom)
+                const { 
+                  contentOffset, 
+                  contentSize, 
+                  layoutMeasurement 
+                } = event.nativeEvent;
+                
+                const currentScrollY = contentOffset.y;
+                const contentHeight = contentSize.height;
+                const viewportHeight = layoutMeasurement.height;
+                
                 // In inverted FlatList:
-                // - contentOffset.y === 0 means at visual bottom (newest messages)
-                // - contentOffset.y > 0 means scrolled up (older messages)
-                const { contentOffset } = event.nativeEvent;
-                // If user scrolled more than 100px from bottom, they're looking at older messages
-                isUserScrolledUpRef.current = contentOffset.y > 100;
-                // Mark that user has manually scrolled to bottom
-                if (contentOffset.y <= 10) { // Small threshold for "at bottom"
-                  hasScrolledToBottomRef.current = true;
+                // - contentOffset.y === 0 means at visual bottom (newest messages) - scroll position from TOP = 0
+                // - contentOffset.y > 0 means scrolled up (older messages) - scroll position from TOP = contentOffset.y
+                // - Maximum scroll position from top = contentHeight - viewportHeight (when at oldest messages)
+                
+                const scrollPositionFromTop = currentScrollY; // Distance from top in pixels
+                const maxScrollFromTop = Math.max(0, contentHeight - viewportHeight);
+                const scrollPercentageFromTop = maxScrollFromTop > 0 
+                  ? (scrollPositionFromTop / maxScrollFromTop) * 100 
+                  : 0;
+                
+                // Log scroll position details
+                console.log('📊 [ChatRoom] Scroll position:', {
+                  scrollY: currentScrollY.toFixed(2),
+                  scrollFromTop: scrollPositionFromTop.toFixed(2),
+                  maxScrollFromTop: maxScrollFromTop.toFixed(2),
+                  scrollPercentageFromTop: scrollPercentageFromTop.toFixed(2) + '%',
+                  contentHeight: contentHeight.toFixed(2),
+                  viewportHeight: viewportHeight.toFixed(2),
+                  isProgrammatic: isProgrammaticScrollRef.current,
+                  isReceivingNewMessage: isReceivingNewMessageRef.current,
+                  isUserScrolledUp: isUserScrolledUpRef.current,
+                });
+                
+                // IMPORTANT: Ignore scroll events during programmatic scrolling
+                // Programmatic scrolls (automatic scroll to new messages) should NOT trigger loadMoreMessages
+                if (isProgrammaticScrollRef.current) {
+                  // Still update lastScrollYRef to track position, but don't process for loading
+                  lastScrollYRef.current = currentScrollY;
+                  return;
                 }
+                
+                const scrollDelta = currentScrollY - lastScrollYRef.current;
+                
+                // Calculate distance from top of list (where oldest messages are)
+                // In inverted FlatList, maxScrollFromTop is the top position (oldest messages)
+                // When scrollY approaches maxScrollFromTop, we're near the top
+                const distanceFromTop = maxScrollFromTop - scrollPositionFromTop;
+                
+                // If user scrolled more than 100px from bottom, they're looking at older messages
+                isUserScrolledUpRef.current = currentScrollY > 100;
+                
+                // Mark that user has manually scrolled to bottom
+                if (currentScrollY <= 10) { // Small threshold for "at bottom"
+                  hasScrolledToBottomRef.current = true;
+                  loadMoreTriggeredRef.current = false; // Reset trigger when at bottom
+                }
+                
+                // IMPORTANT: Trigger loadMoreMessages when user is near the top of the list
+                // Load when distance from top is less than 100px
+                // This means scrollY is approaching maxScrollFromTop (we're near oldest messages)
+                if (
+                  distanceFromTop <= 100 && // Within 100px from top (oldest messages)
+                  scrollDelta >= 0 && // User is scrolling UP or staying at position (towards older messages)
+                  !isLoadingMessages &&
+                  !loadMoreTriggeredRef.current &&
+                  !isReceivingNewMessageRef.current
+                ) {
+                  loadMoreTriggeredRef.current = true;
+                  console.log('🔄 [ChatRoom] Near top of list - triggering loadMoreMessages', {
+                    distanceFromTop: distanceFromTop.toFixed(2),
+                    scrollY: currentScrollY.toFixed(2),
+                    maxScrollFromTop: maxScrollFromTop.toFixed(2),
+                  });
+                  loadMoreMessages().finally(() => {
+                    // Reset trigger after a delay to allow next load
+                    setTimeout(() => {
+                      loadMoreTriggeredRef.current = false;
+                    }, 1500);
+                  });
+                }
+                
+                lastScrollYRef.current = currentScrollY;
               }}
-              scrollEventThrottle={400}
+              scrollEventThrottle={100}
               onContentSizeChange={handleContentSizeChange}
               onScrollToIndexFailed={(info) => {
                 // If scrollToIndex fails, try scrollToOffset as fallback
@@ -468,24 +584,51 @@ export default function ChatRoomScreen() {
                 // Load more messages when scrolling to top (which is "end" in inverted list)
                 // Note: We call loadMoreMessages even when hasMoreMessages is false,
                 // because it will try to load from archive if database is exhausted
-                if (!isLoadingMessages) {
-                  loadMoreMessages();
+                
+                // IMPORTANT: Do NOT call loadMoreMessages if:
+                // 1. We're receiving a new message via WebSocket
+                // 2. It's a programmatic scroll (automatic scroll to new messages)
+                // 3. We're already loading
+                if (isReceivingNewMessageRef.current) {
+                  console.log('🚫 [ChatRoom] onEndReached blocked - receiving new message via WebSocket');
+                  return;
+                }
+                
+                if (isProgrammaticScrollRef.current) {
+                  console.log('🚫 [ChatRoom] onEndReached blocked - programmatic scroll');
+                  return;
+                }
+                
+                // Only load more if user manually scrolled to top
+                // Check if user is actually scrolled up (not at bottom)
+                // onEndReached fires when we reach the top, so we can safely load more
+                if (isUserScrolledUpRef.current && !isLoadingMessages && !loadMoreTriggeredRef.current) {
+                  console.log('🔄 [ChatRoom] onEndReached triggered - user reached top, calling loadMoreMessages');
+                  loadMoreTriggeredRef.current = true;
+                  loadMoreMessages().finally(() => {
+                    setTimeout(() => {
+                      loadMoreTriggeredRef.current = false;
+                    }, 1500);
+                  });
                 }
               }}
-              onEndReachedThreshold={0.5}
-              ListHeaderComponent={
-                // In inverted list, ListHeaderComponent appears at the top (where old messages load)
-                isLoadingMessages && messages.length > 0 ? (
-                  <View style={{ paddingVertical: rem(10) }}>
-                    <ActivityIndicator size="small" color={colors.primary.violet} />
-                  </View>
-                ) : null
-              }
+              onEndReachedThreshold={0.1}
               maintainVisibleContentPosition={{
                 minIndexForVisible: 0,
               }}
             />
           )}
+          
+        {/* Only show overlay when loading older messages (scroll up), not when receiving new messages via WebSocket */}
+        {isLoadingOlderMessages && messages.length > 0 && (
+          <View style={styles.loadingOverlay} pointerEvents="auto">
+            <BlurView intensity={20} tint="light" style={StyleSheet.absoluteFill} />
+            <View style={styles.loadingOverlayContent}>
+              <ActivityIndicator size="large" color={colors.primary.violet} />
+              <Text style={styles.loadingOverlayText}>Loading messages...</Text>
+            </View>
+          </View>
+        )}
         
         <ChatInputSection
           messageText={messageText}
@@ -621,8 +764,47 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: rem(12),
     fontSize: fp(14),
-    fontFamily: fonts['400'],
-    color: colors.neutral.darkGrey,
+  },
+  loadingMoreContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: rem(20),
+    paddingHorizontal: rem(16),
+    gap: rem(12),
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    borderBottomWidth: 1,
+    borderBottomColor: colors.neutral.lightGrey,
+  },
+  loadingMoreText: {
+    fontSize: fp(14),
+    fontFamily: fonts['500'],
+    color: colors.primary.violet,
+  },
+  loadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 1000,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(41, 41, 102, 0.8)',
+  },
+  loadingOverlayContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: rem(16),
+    padding: rem(24),
+    borderRadius: rem(12),
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+  },
+  loadingOverlayText: {
+    fontSize: fp(16),
+    fontFamily: fonts['600'],
+    color: colors.primary.violet,
+    marginTop: rem(8),
   },
   errorContainer: {
     flex: 1,

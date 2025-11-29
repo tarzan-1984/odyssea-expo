@@ -31,8 +31,7 @@ class ChatCacheService {
       // Save to AsyncStorage
       await AsyncStorage.setItem(CHAT_ROOMS_KEY, JSON.stringify(storedChatRooms));
       await AsyncStorage.setItem(CHAT_ROOMS_CACHE_TIMESTAMP_KEY, Date.now().toString());
-
-      console.log(`💾 [ChatCache] Saved ${chatRooms.length} chat rooms to cache`);
+      
     } catch (error) {
       console.error('❌ [ChatCache] Failed to save chat rooms:', error);
       throw error;
@@ -61,8 +60,7 @@ class ChatCacheService {
       const result: ChatRoom[] = storedChatRooms.map(
         ({ cachedAt, version, ...chatRoom }) => chatRoom
       );
-
-      console.log(`📖 [ChatCache] Loaded ${result.length} chat rooms from cache`);
+      
       return result;
     } catch (error) {
       console.error('❌ [ChatCache] Failed to get chat rooms from cache:', error);
@@ -139,9 +137,7 @@ class ChatCacheService {
       });
 
       await AsyncStorage.setItem(CHAT_ROOMS_KEY, JSON.stringify(updatedRooms));
-      console.log(`🔄 [ChatCache] Updated chat room ${chatRoomId} in cache`, {
-        unreadCount: updates.unreadCount,
-      });
+      
     } catch (error) {
       console.error('❌ [ChatCache] Failed to update chat room in cache:', error);
       throw error;
@@ -164,7 +160,6 @@ class ChatCacheService {
       );
 
       await AsyncStorage.setItem(CHAT_ROOMS_KEY, JSON.stringify(filteredRooms));
-      console.log(`🗑️ [ChatCache] Deleted chat room ${chatRoomId} from cache`);
     } catch (error) {
       console.error('❌ [ChatCache] Failed to delete chat room from cache:', error);
       throw error;
@@ -178,7 +173,6 @@ class ChatCacheService {
     try {
       await AsyncStorage.removeItem(CHAT_ROOMS_KEY);
       await AsyncStorage.removeItem(CHAT_ROOMS_CACHE_TIMESTAMP_KEY);
-      console.log('🗑️ [ChatCache] Cleared chat rooms cache');
     } catch (error) {
       console.error('❌ [ChatCache] Failed to clear cache:', error);
       throw error;

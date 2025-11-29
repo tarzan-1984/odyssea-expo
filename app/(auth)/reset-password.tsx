@@ -16,7 +16,6 @@ export default function ResetPasswordScreen() {
   const handleResetPassword = () => {
     if (email.trim()) {
       // TODO: Implement password reset
-      console.log('Reset password for:', email);
       // Return back after successful reset (as per design requirement)
       router.back();
     }

@@ -76,8 +76,7 @@ class MessagesCacheService {
       // Save to AsyncStorage
       await AsyncStorage.setItem(this.getMessagesKey(chatRoomId), JSON.stringify(allMessages));
       await AsyncStorage.setItem(this.getTimestampKey(chatRoomId), Date.now().toString());
-
-      console.log(`💾 [MessagesCache] Saved ${allMessages.length} messages (sorted) for chat room ${chatRoomId}`);
+      
     } catch (error) {
       console.error('❌ [MessagesCache] Failed to save messages:', error);
       throw error;
@@ -119,8 +118,7 @@ class MessagesCacheService {
       const result: Message[] = messages.map(
         ({ cachedAt, version, ...message }) => message
       );
-
-      console.log(`📖 [MessagesCache] Loaded ${result.length} messages from cache for chat room ${chatRoomId}`);
+      
       return result;
     } catch (error) {
       console.error('❌ [MessagesCache] Failed to get messages from cache:', error);
@@ -179,7 +177,6 @@ class MessagesCacheService {
       const maxAge = maxAgeMinutes * 60 * 1000; // Convert to milliseconds
 
       const isFresh = now - cachedAt < maxAge;
-      console.log(`🕐 [MessagesCache] Cache freshness check for ${chatRoomId}: ${isFresh ? 'fresh' : 'stale'} (age: ${Math.floor((now - cachedAt) / 60000)} minutes)`);
       return isFresh;
     } catch (error) {
       console.error('❌ [MessagesCache] Failed to check cache freshness:', error);
@@ -195,7 +192,6 @@ class MessagesCacheService {
       // We need to find which chat room this message belongs to
       // Since we don't have a direct way to find it, we'll need to iterate through all cached chat rooms
       // For now, this is a simplified version - in production you might want to store a message->chatRoomId mapping
-      console.log(`🔄 [MessagesCache] Update message ${messageId} (chat room lookup needed)`);
       // TODO: Implement message update if needed
     } catch (error) {
       console.error('❌ [MessagesCache] Failed to update message:', error);
@@ -210,7 +206,6 @@ class MessagesCacheService {
     try {
       await AsyncStorage.removeItem(this.getMessagesKey(chatRoomId));
       await AsyncStorage.removeItem(this.getTimestampKey(chatRoomId));
-      console.log(`🗑️ [MessagesCache] Cleared messages cache for chat room ${chatRoomId}`);
     } catch (error) {
       console.error('❌ [MessagesCache] Failed to clear messages cache:', error);
       throw error;

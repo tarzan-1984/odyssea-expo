@@ -86,7 +86,6 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     isConnectingRef.current = true;
     // Only connect if we have a current user
     if (!currentUser) {
-      console.log('⚠️ [WebSocket] No user, skipping connection');
       isConnectingRef.current = false;
       return;
     }
@@ -116,7 +115,6 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       return;
     }
 
-    console.log('🔌 [WebSocket] Connecting to:', WS_URL);
 
     // Create new socket connection with authentication
     const newSocket = io(WS_URL, {
@@ -136,7 +134,6 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
     // Connection event handlers
     newSocket.on('connect', () => {
-      console.log('✅ [WebSocket] Connected');
       const wasDisconnected = !isConnected;
       setIsConnected(true);
       reconnectAttempts.current = 0;
@@ -163,13 +160,11 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
     // Handle server's connected event (with user data)
     newSocket.on('connected', (data: any) => {
-      console.log('✅ [WebSocket] Server confirmed connection:', data);
       // Server automatically joins user to all their chat rooms
       // So we should receive userOnline events for other participants
     });
 
     newSocket.on('disconnect', (reason) => {
-      console.log('⚠️ [WebSocket] Disconnected:', reason);
       setIsConnected(false);
       isConnectingRef.current = false;
 
@@ -326,26 +321,103 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           }
         }
 
+        // Check if this chat is currently active (open)
+        const { getActiveChatRoomId } = await import('@/services/ActiveChatService');
+        const activeChatRoomId = getActiveChatRoomId();
+        const isChatActive = activeChatRoomId === messageData.chatRoomId;
+        const currentUserId = currentUser?.id || '';
+        const currentReadBy = messageData.message.readBy || [];
+        const shouldMarkAsRead = isChatActive && !isMessageFromCurrentUser && !currentReadBy.includes(currentUserId);
+        
+        // If chat is active and message is not from current user, mark it as read immediately
+        let messageToAdd = messageData.message;
+        if (shouldMarkAsRead) {
+          messageToAdd = {
+            ...messageData.message,
+            readBy: [...currentReadBy, currentUserId],
+            // For DIRECT chats: isRead becomes true when any participant reads
+            // For GROUP/LOAD chats: isRead might stay false, but readBy tracks who read
+            isRead: existingRoom?.type === 'DIRECT' ? true : messageData.message.isRead,
+          };
+          
+          console.log('✅ [WebSocket] Marking new message as read (chat is active):', messageToAdd.id);
+          
+          // Send messageRead event to server
+          if (newSocket && newSocket.connected) {
+            newSocket.emit('messageRead', {
+              messageId: messageToAdd.id,
+              chatRoomId: messageData.chatRoomId,
+            });
+          }
+        }
+        
         // Update Zustand store (same as in Next.js)
         try {
-          addMessage(messageData.chatRoomId, messageData.message);
+          addMessage(messageData.chatRoomId, messageToAdd);
         } catch {}
 
-        // Prepare updates for chat room
-        const updates: any = {
-          lastMessage: messageData.message,
-          updatedAt: messageData.message.createdAt,
-        };
+        // Save message to cache immediately (regardless of whether chat is open or not)
+        // This ensures message is available when user opens the chat
+        // IMPORTANT: Use messageToAdd (which may be marked as read if chat is active) instead of original message
+        try {
+          const { messagesByRoom } = useChatStore.getState();
+          const existingMessages = messagesByRoom[messageData.chatRoomId] || [];
+          
+          // Check if message already exists to avoid duplicates
+          const messageExists = existingMessages.some(msg => msg.id === messageToAdd.id);
+          if (!messageExists) {
+            // Add new message to existing messages and sort by date
+            // Use messageToAdd which may already be marked as read if chat is active
+            const updatedMessages = [...existingMessages, messageToAdd].sort(
+              (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+            );
+            
+            // Save to cache asynchronously with read status if chat is active
+            messagesCacheService.saveMessages(messageData.chatRoomId, updatedMessages).catch((error) => {
+              console.error('❌ [WebSocket] Failed to save new message to cache:', error);
+            });
+          } else if (shouldMarkAsRead) {
+            // Message already exists, but we need to update it as read in cache
+            messagesCacheService.updateMessage(messageToAdd.id, {
+              isRead: messageToAdd.isRead,
+              readBy: messageToAdd.readBy,
+            }).catch((error) => {
+              console.error('❌ [WebSocket] Failed to update message as read in cache:', error);
+            });
+          }
+        } catch (cacheError) {
+          console.error('❌ [WebSocket] Failed to save message to cache:', cacheError);
+        }
 
-        // Increment unreadCount only if:
-        // 1. The message is NOT from the current user
-        // 2. Currently there's no chat screen implementation, so we always increment for others' messages
-        // TODO: When chat screen is implemented, check if this is the current active chat
-        if (!isMessageFromCurrentUser) {
-          // We need to get current unreadCount from the chat room in the list
-          // For now, emit event with increment flag and let useChatRooms handle it
+        // Prepare updates for chat room
+        // IMPORTANT: Use messageToAdd (which may be marked as read if chat is active) instead of original message
+        // This ensures lastMessage in chat list shows correct read status
+        const updates: any = {
+          lastMessage: messageToAdd, // Use messageToAdd which may already be marked as read
+          updatedAt: messageToAdd.createdAt,
+        };
+        
+        // Log if message is marked as read for debugging
+        if (shouldMarkAsRead) {
+          console.log('✅ [WebSocket] Updating lastMessage with read status:', {
+            messageId: messageToAdd.id,
+            isRead: messageToAdd.isRead,
+            readBy: messageToAdd.readBy,
+            chatRoomId: messageData.chatRoomId,
+          });
+        }
+
+        // Update unreadCount based on whether chat is active:
+        // 1. If chat is active and message is marked as read immediately -> unreadCount doesn't change
+        //    (message never counts as unread)
+        // 2. If chat is NOT active and message is NOT from current user -> increment unreadCount
+        //    (message counts as unread)
+        if (!isMessageFromCurrentUser && !shouldMarkAsRead) {
+          // Chat is not active, message is not from current user -> increment unreadCount
           updates.unreadCountIncrement = 1;
         }
+        // If shouldMarkAsRead is true, we don't update unreadCount because message is immediately marked as read
+        // and never counts as unread
 
         // Update chat room in store (unreadCount increment if needed)
         try {
@@ -710,30 +782,42 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       try {
         const { markMessagesRead } = useChatStore.getState();
         markMessagesRead(data.chatRoomId, data.messageIds, data.userId);
+        
+        // Only update unreadCount if this is for the current user
+        // Compare userId from event with current user's ID
+        if (data.userId === currentUser?.id) {
+          try {
+            const { chatRooms, updateChatRoom } = useChatStore.getState();
+            const room = chatRooms.find((r: ChatRoom) => r.id === data.chatRoomId);
+            if (room) {
+              // Decrement unreadCount by the number of messages that were marked as read
+              const currentUnread = room.unreadCount || 0;
+              const readCount = data.messageIds.length; // Number of messages that were read
+              const nextUnread = Math.max(0, currentUnread - readCount);
+              
+              console.log(`📉 [WebSocket] Decreasing unreadCount for ${data.chatRoomId}: ${currentUnread} - ${readCount} = ${nextUnread}`);
+              
+              // Update unreadCount for this chat room
+              updateChatRoom(data.chatRoomId, { unreadCount: nextUnread });
+              
+              // Also update cache to ensure persistence
+              const { chatCacheService } = require('@/services/ChatCacheService');
+              chatCacheService.updateChatRoom(data.chatRoomId, { unreadCount: nextUnread }).catch(() => {});
+            }
+          } catch (error) {
+            console.error('❌ [WebSocket] Failed to update unreadCount:', error);
+          }
+        } else {
+          // userId doesn't match current user - this is for read receipts only
+          // Don't update unreadCount for current user
+          console.log(`ℹ️ [WebSocket] messagesMarkedAsRead for different user (${data.userId}), skipping unreadCount update`);
+        }
       } catch {}
 
       // Emit event through eventBus so useChatRoom can handle it
       // This ensures proper handling for GROUP and LOAD chats
       const { eventBus, AppEvents } = require('@/services/EventBus');
       eventBus.emit(AppEvents.MessagesMarkedAsRead, data);
-
-      // Only for current user, decrease unreadCount through store
-      if (data.userId === currentUser?.id) {
-        try {
-          const { chatRooms, updateChatRoom } = useChatStore.getState();
-          const room = chatRooms.find((r: ChatRoom) => r.id === data.chatRoomId);
-          if (room) {
-            const currentUnread = room.unreadCount || 0;
-            const nextUnread = Math.max(0, currentUnread - data.messageIds.length);
-            updateChatRoom(data.chatRoomId, { unreadCount: nextUnread });
-            
-            // Also update cache to ensure persistence
-            // Import chatCacheService dynamically to avoid circular dependencies
-            const { chatCacheService } = require('@/services/ChatCacheService');
-            chatCacheService.updateChatRoom(data.chatRoomId, { unreadCount: nextUnread }).catch(() => {});
-          }
-        } catch {}
-      }
     });
 
     newSocket.on('joinedChatRoom', (data: { chatRoomId: string }) => {
@@ -829,10 +913,28 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
   // Disconnect event via EventBus is no longer used; call disconnect directly where needed
 
+  // Track app state to detect when app was closed
+  const wasInBackgroundRef = useRef(false);
+
   // Handle app state changes (reconnect when app comes to foreground)
   useEffect(() => {
+    let appState = AppState.currentState;
+
     const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      // Track when app goes to background/inactive
+      if (appState.match(/active/) && nextAppState.match(/inactive|background/)) {
+        wasInBackgroundRef.current = true;
+        console.log('📱 [WebSocket] App went to background/inactive');
+      }
+
       if (nextAppState === 'active' && currentUser) {
+        const wasInBackground = wasInBackgroundRef.current;
+        
+        if (wasInBackground) {
+          console.log('📱 [WebSocket] App became active after being in background');
+          wasInBackgroundRef.current = false;
+        }
+
         if (!isConnected && !socket && !isConnectingRef.current) {
           // App came to foreground and we're disconnected, reset attempts and try to reconnect
           console.log('📱 [WebSocket] App became active, resetting reconnection attempts and attempting to reconnect...');
@@ -845,10 +947,16 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           }
           
           connect();
+        } else if (isConnected && wasInBackground) {
+          // App was in background and WebSocket is already connected
+          // Trigger sync event so useChatRooms can sync data
+          console.log('✅ [WebSocket] App became active, WebSocket already connected, sync should happen via useChatRooms');
         } else {
           console.log('✅ [WebSocket] App became active, already connected');
         }
       }
+
+      appState = nextAppState;
     });
 
     return () => {

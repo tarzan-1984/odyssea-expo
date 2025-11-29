@@ -224,26 +224,64 @@ export default function MessagesScreen() {
     router.push(`/chat/${chatRoom.id}` as any);
   };
 
+  // Track app state to force sync when app opens after being closed
+  const wasInBackgroundRef = React.useRef(false);
+  
+  React.useEffect(() => {
+    const { AppState } = require('react-native');
+    let appState = AppState.currentState;
+
+    const subscription = AppState.addEventListener('change', (nextAppState: any) => {
+      // Track when app goes to background/inactive
+      if (appState.match(/active/) && nextAppState.match(/inactive|background/)) {
+        wasInBackgroundRef.current = true;
+        console.log('📱 [MessagesScreen] App went to background/inactive');
+      }
+
+      // When app becomes active again
+      if (nextAppState === 'active' && wasInBackgroundRef.current) {
+        console.log('📱 [MessagesScreen] App became active after being in background');
+        // Don't reset here - let useFocusEffect handle it
+      }
+
+      appState = nextAppState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
+
   // Refresh chat rooms when screen comes into focus
-  // This ensures unreadCount is updated after returning from a chat
+  // Force sync if app was in background (to sync unreadCount and chat list)
   useFocusEffect(
     React.useCallback(() => {
-      // Only refresh if WebSocket is connected
-      // This prevents unnecessary API calls when offline
-      if (isConnected) {
-        // Refresh chat rooms when screen is focused and WebSocket is connected
-        // This will update unreadCount from the server
+      // If app was in background, force refresh to sync unreadCount
+      if (wasInBackgroundRef.current) {
+        console.log('📱 [MessagesScreen] Screen focused after app was in background, forcing sync...');
+        wasInBackgroundRef.current = false; // Reset flag after sync
         loadChatRooms(true).catch((error) => {
-          console.error('Failed to refresh chat rooms on focus:', error);
+          console.error('Failed to sync chat rooms on focus:', error);
         });
-      } else {
-        // If offline, just refresh from cache without forcing API call
-        // This prevents blocking the UI when offline
+        return;
+      }
+
+      // If WebSocket is connected and we have data in store, no need to load
+      // WebSocket provides real-time updates, so data is already up-to-date
+      if (isConnected && chatRooms.length > 0) {
+        // WebSocket is connected and we have data - no API call needed
+        // WebSocket events (messagesMarkedAsRead, newMessage, chatRoomCreated, etc.) update the store
+        return;
+      }
+
+      // Only load if WebSocket is disconnected or store is empty
+      // This ensures we sync with server when offline or on first load
+      if (!isConnected || chatRooms.length === 0) {
         loadChatRooms(false).catch((error) => {
-          console.error('Failed to load chat rooms from cache on focus:', error);
+          console.error('Failed to load chat rooms on focus:', error);
         });
       }
-    }, [loadChatRooms, isConnected])
+    }, [loadChatRooms, isConnected, chatRooms.length])
   );
 
   // Close dropdown when clicking outside (simplified for mobile)

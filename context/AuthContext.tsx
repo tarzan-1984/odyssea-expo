@@ -43,9 +43,8 @@ export interface AuthContextValue {
   clearError: () => void;
   resetAuthState: () => void;
   updateUserLocation: (latitude: number, longitude: number, zipCode: string) => Promise<void>;
-  setUserLocationWithoutTimestamp: (latitude: number, longitude: number, zipCode: string) => Promise<void>; // Save location without updating lastLocationUpdate
   clearUserLocation: () => Promise<void>;
-  clearLocationData: () => Promise<void>; // Clear location data but keep lastLocationUpdate
+  syncLocationFromAsyncStorage: () => Promise<void>;
   updateUserAvatar: (avatarUrl: string) => Promise<void>;
 }
 
@@ -113,11 +112,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       const result = await authApi.login(email, password);
       
-      // Log OTP response
-      if (result.success) {
-        console.log('✅ [AuthContext] OTP Response:', result.message || 'OTP code sent successfully');
-      }
-      
       setAuthState(prev => ({
         ...prev,
         isLoading: false,
@@ -145,7 +139,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   }, []);
 
   const verifyOtp = useCallback(async (email: string, otpCode: string): Promise<OtpVerificationResponse> => {
-    console.log('🔐 [AuthContext] Verifying OTP for email:', email);
     
     setAuthState(prev => ({
       ...prev,
@@ -156,16 +149,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       const result = await authApi.verifyOtp(email, otpCode);
       
-      // Log full response for debugging
-      console.log('📦 [AuthContext] Full OTP Verification Response:', JSON.stringify(result, null, 2));
-      
       if (result.success && result.data?.data) {
         const { accessToken, refreshToken, user } = result.data.data;
-        
-        console.log('✅ [AuthContext] OTP verified successfully!');
-        console.log('👤 [AuthContext] User data:', JSON.stringify(user, null, 2));
-        console.log('🔑 [AuthContext] Access token received:', accessToken ? `${accessToken.substring(0, 20)}...` : 'null');
-        console.log('🔄 [AuthContext] Refresh token received:', refreshToken ? `${refreshToken.substring(0, 20)}...` : 'null');
         
         // Save tokens to secure storage
         try {
@@ -278,15 +263,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const accessToken = await secureStorage.getItemAsync('accessToken');
       const refreshToken = await secureStorage.getItemAsync('refreshToken');
       const userJson = await secureStorage.getItemAsync('user');
-      const locationJson = await secureStorage.getItemAsync('userLocation');
       
       let userLocation = null;
       let userZipCode = null;
       let lastLocationUpdate = null;
       
-      // Load location data if available
-      if (locationJson) {
-        try {
+      // Load location data from AsyncStorage (works in both foreground and background)
+      try {
+        const locationJson = await AsyncStorage.getItem('@user_location');
+        if (locationJson) {
           const locationData = JSON.parse(locationJson);
           userLocation = { latitude: locationData.latitude, longitude: locationData.longitude };
           userZipCode = locationData.zipCode || null;
@@ -296,43 +281,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             lastLocationUpdate = new Date(locationData.lastUpdate);
           }
           
-          console.log('📍 [AuthContext] Found stored location data');
-        } catch (locError) {
-          console.warn('⚠️ [AuthContext] Failed to parse location data:', locError);
+          console.log('📍 [AuthContext] Found stored location data in AsyncStorage');
         }
-      }
-      
-      // Check AsyncStorage for background location updates (when app was closed)
-      // This is needed because SecureStorage doesn't work in background tasks
-      try {
-        const backgroundLocationJson = await AsyncStorage.getItem('@user_location_background');
-        if (backgroundLocationJson) {
-          const backgroundLocationData = JSON.parse(backgroundLocationJson);
-          const backgroundLastUpdate = backgroundLocationData.lastUpdate 
-            ? new Date(backgroundLocationData.lastUpdate) 
-            : null;
-          
-          // Use background update if it's newer than secure storage update
-          if (!lastLocationUpdate || (backgroundLastUpdate && backgroundLastUpdate > lastLocationUpdate)) {
-            console.log('📥 [AuthContext] Found newer location update from background task');
-            userLocation = {
-              latitude: backgroundLocationData.latitude,
-              longitude: backgroundLocationData.longitude,
-            };
-            userZipCode = backgroundLocationData.zipCode || null;
-            lastLocationUpdate = backgroundLastUpdate;
-            
-            // Sync to SecureStorage now that app is open (user interaction allowed)
-            try {
-              await secureStorage.setItemAsync('userLocation', backgroundLocationJson);
-              console.log('💾 [AuthContext] Synced background location update to SecureStorage');
-            } catch (syncError) {
-              console.warn('⚠️ [AuthContext] Failed to sync background location to SecureStorage:', syncError);
-            }
-          }
-        }
-      } catch (bgError) {
-        console.warn('⚠️ [AuthContext] Failed to load background location data:', bgError);
+      } catch (locError) {
+        console.warn('⚠️ [AuthContext] Failed to load location data:', locError);
       }
       
       if (accessToken && refreshToken && userJson) {
@@ -376,10 +328,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       lastUpdate: now.toISOString() // Save as ISO string for JSON serialization
     };
     
-    // Save to secure storage
+    // Save to AsyncStorage (works in both foreground and background)
     try {
-      await secureStorage.setItemAsync('userLocation', JSON.stringify(locationData));
-      console.log('💾 [AuthContext] Location saved to storage');
+      await AsyncStorage.setItem('@user_location', JSON.stringify(locationData));
+      console.log('💾 [AuthContext] Location saved to AsyncStorage');
     } catch (error) {
       console.error('❌ [AuthContext] Failed to save location:', error);
     }
@@ -393,59 +345,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }));
   }, []);
 
-  const setUserLocationWithoutTimestamp = useCallback(async (latitude: number, longitude: number, zipCode: string) => {
-    console.log('📍 [AuthContext] Setting user location without timestamp:', { latitude, longitude, zipCode });
-    
-    // Get existing lastUpdate from storage if available, otherwise use current time
-    let lastUpdate: Date | null = null;
-    try {
-      const existingData = await secureStorage.getItemAsync('userLocation');
-      if (existingData) {
-        const parsed = JSON.parse(existingData);
-        if (parsed.lastUpdate) {
-          lastUpdate = new Date(parsed.lastUpdate);
-        }
-      }
-    } catch (error) {
-      console.warn('⚠️ [AuthContext] Could not read existing location data:', error);
-    }
-
-    // If no existing timestamp, use current time (shouldn't happen, but fallback)
-    if (!lastUpdate) {
-      lastUpdate = new Date();
-    }
-
-    const locationData = { 
-      latitude, 
-      longitude, 
-      zipCode,
-      lastUpdate: lastUpdate.toISOString() // Keep existing timestamp
-    };
-    
-    // Save to secure storage
-    try {
-      await secureStorage.setItemAsync('userLocation', JSON.stringify(locationData));
-      console.log('💾 [AuthContext] Location saved to storage (timestamp preserved)');
-    } catch (error) {
-      console.error('❌ [AuthContext] Failed to save location:', error);
-    }
-    
-    // Update state without changing timestamp
-    setAuthState(prev => ({
-      ...prev,
-      userLocation: { latitude, longitude },
-      userZipCode: zipCode,
-      // lastLocationUpdate remains unchanged
-    }));
-  }, []);
-
   const clearUserLocation = useCallback(async () => {
     console.log('🗑️ [AuthContext] Clearing user location');
     
-    // Clear from secure storage
+    // Clear from AsyncStorage
     try {
-      await secureStorage.deleteItemAsync('userLocation');
-      console.log('💾 [AuthContext] Location cleared from storage');
+      await AsyncStorage.removeItem('@user_location');
+      console.log('💾 [AuthContext] Location cleared from AsyncStorage');
     } catch (error) {
       console.error('❌ [AuthContext] Failed to clear location:', error);
     }
@@ -459,24 +365,39 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }));
   }, []);
 
-  const clearLocationData = useCallback(async () => {
-    console.log('🗑️ [AuthContext] Clearing location data (keeping lastLocationUpdate)');
-    
-    // Clear from secure storage
+  const syncLocationFromAsyncStorage = useCallback(async () => {
     try {
-      await secureStorage.deleteItemAsync('userLocation');
-      console.log('💾 [AuthContext] Location data cleared from storage');
+      const locationJson = await AsyncStorage.getItem('@user_location');
+      if (locationJson) {
+        const locationData = JSON.parse(locationJson);
+        const { latitude, longitude, zipCode, lastUpdate } = locationData;
+        
+        if (lastUpdate) {
+          const lastUpdateDate = new Date(lastUpdate);
+          // Only update if the timestamp is newer than current
+          setAuthState(prev => {
+            const currentTimestamp = prev.lastLocationUpdate?.getTime() || 0;
+            const newTimestamp = lastUpdateDate.getTime();
+            
+            if (newTimestamp > currentTimestamp) {
+              console.log('🔄 [AuthContext] Syncing lastLocationUpdate from AsyncStorage:', lastUpdateDate);
+              return {
+                ...prev,
+                lastLocationUpdate: lastUpdateDate,
+                // Also update coordinates if they exist
+                ...(latitude && longitude ? {
+                  userLocation: { latitude, longitude },
+                  userZipCode: zipCode || prev.userZipCode,
+                } : {}),
+              };
+            }
+            return prev;
+          });
+        }
+      }
     } catch (error) {
-      console.error('❌ [AuthContext] Failed to clear location data:', error);
+      console.warn('⚠️ [AuthContext] Failed to sync location from AsyncStorage:', error);
     }
-    
-    // Update state - clear location data but keep lastLocationUpdate
-    setAuthState(prev => ({
-      ...prev,
-      userLocation: null,
-      userZipCode: null,
-      // lastLocationUpdate is preserved
-    }));
   }, []);
 
   const updateUserAvatar = useCallback(async (avatarUrl: string) => {
@@ -523,12 +444,44 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       useChatStore.getState().reset();
       console.log('💾 [AuthContext] Cleared chat store (in-memory state)');
       
-      // Clear app settings and pending location updates
+      // Clear all AsyncStorage data
       const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+      
+      // Clear app settings
       await AsyncStorage.removeItem('@odyssea_app_settings');
+      
+      // Clear location data
+      await AsyncStorage.removeItem('@user_location');
       await AsyncStorage.removeItem('@pending_location_update');
       await AsyncStorage.removeItem('@location_last_update');
-      console.log('💾 [AuthContext] Cleared app settings and pending location updates');
+      
+      // Clear user profile data (status, zip, date)
+      await AsyncStorage.removeItem('@user_status');
+      await AsyncStorage.removeItem('@user_zip');
+      await AsyncStorage.removeItem('@user_date');
+      
+      // Clear navigation data
+      await AsyncStorage.removeItem('@pending_chat_navigation');
+      
+      console.log('💾 [AuthContext] Cleared all AsyncStorage data (settings, location, user profile, navigation)');
+      
+      // Stop background location tracking
+      try {
+        const { LOCATION_TASK_NAME } = await import('@/tasks/locationTask');
+        const Location = await import('expo-location');
+        const TaskManager = await import('expo-task-manager');
+        
+        const isRegistered = await TaskManager.default.isTaskRegisteredAsync(LOCATION_TASK_NAME);
+        if (isRegistered) {
+          const isRunning = await Location.default.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
+          if (isRunning) {
+            await Location.default.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+            console.log('🛑 [AuthContext] Stopped background location tracking');
+          }
+        }
+      } catch (locationError) {
+        console.warn('⚠️ [AuthContext] Failed to stop background location tracking:', locationError);
+      }
       
       // Disconnect WebSocket if connected
       const { eventBus, AppEvents } = await import('@/services/EventBus');
@@ -567,9 +520,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     clearError,
     resetAuthState,
     updateUserLocation,
-    setUserLocationWithoutTimestamp,
     clearUserLocation,
-    clearLocationData,
+    syncLocationFromAsyncStorage,
     updateUserAvatar,
   };
 

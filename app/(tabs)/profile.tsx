@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image, ScrollView, ActivityIndicator, Platform } from 'react-native';
+import { BlurView } from 'expo-blur';
 import { colors, fonts, rem, fp, borderRadius } from '@/lib';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import BottomNavigation from "../../components/navigation/BottomNavigation";
@@ -29,6 +30,7 @@ export default function ProfileScreen() {
   const [isLoadingUser, setIsLoadingUser] = useState(false);
   const [userDetails, setUserDetails] = useState<any | null>(null);
   const [userError, setUserError] = useState<string | null>(null);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   // Load user info from backend on mount
   React.useEffect(() => {
@@ -49,8 +51,15 @@ export default function ProfileScreen() {
   }, [authState.user?.id]);
 
   const handleLogout = useCallback(async () => {
-    await resetAuthState();
-    router.replace('/(auth)');
+    try {
+      setIsLoggingOut(true);
+      await resetAuthState();
+      router.replace('/(auth)');
+    } catch (error) {
+      console.error('Logout error:', error);
+    } finally {
+      setIsLoggingOut(false);
+    }
   }, [resetAuthState, router]);
 
   const handlePickAvatar = useCallback(async () => {
@@ -422,6 +431,18 @@ export default function ProfileScreen() {
         {/* Bottom Navigation */}
         <BottomNavigation />
       </View>
+      
+      {/* Full-screen logout overlay with blur */}
+      {isLoggingOut && (
+        <View style={styles.logoutOverlay} pointerEvents="auto">
+          <View style={styles.logoutOverlayBackground} />
+          <BlurView intensity={20} tint="light" style={StyleSheet.absoluteFill} />
+          <View style={styles.logoutOverlayContent}>
+            <ActivityIndicator size="large" color={colors.neutral.white} />
+            <Text style={styles.logoutOverlayText}>Logout process</Text>
+          </View>
+        </View>
+      )}
     </View>
   );
 }
@@ -567,6 +588,30 @@ const styles = StyleSheet.create({
   logoutText: {
     color: colors.neutral.white,
     fontFamily: fonts["700"],
-    fontSize: fp(14),
+    fontSize: fp(12),
+  },
+  logoutOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 1000,
+  },
+  logoutOverlayBackground: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(41, 41, 102, 0.8)',
+  },
+  logoutOverlayContent: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: rem(16),
+  },
+  logoutOverlayText: {
+    fontSize: fp(16),
+    fontFamily: fonts['600'],
+    color: colors.neutral.white,
+    marginTop: rem(8),
   },
 });

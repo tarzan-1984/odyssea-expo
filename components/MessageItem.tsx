@@ -67,7 +67,6 @@ export default function MessageItem({ message, isSender, onReplyPress }: Props) 
 							onReplyPress={onReplyPress}
 							onMarkUnreadPress={(messageId) => {
 								// TODO: Implement mark as unread functionality
-								console.log('Mark as unread pressed for message:', messageId);
 							}}
 						/>
 					</View>

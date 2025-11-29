@@ -51,7 +51,6 @@ class AuthApiService {
       throw new Error('API_BASE_URL is not defined in environment variables');
     }
     this.baseUrl = API_BASE_URL;
-    console.log('AuthApiService initialized with baseUrl:', this.baseUrl);
   }
 
   /**
@@ -95,8 +94,6 @@ class AuthApiService {
    */
   async login(email: string, password: string): Promise<LoginResponse> {
     try {
-      console.log('🔐 [AuthAPI] Logging in with email:', email);
-      
       const response = await fetch(`${this.baseUrl}/v1/auth/login_password`, {
         method: 'POST',
         headers: {
@@ -138,8 +135,6 @@ class AuthApiService {
    */
   async verifyOtp(email: string, otpCode: string): Promise<OtpVerificationResponse> {
     try {
-      console.log('🔐 [AuthAPI] Verifying OTP for email:', email);
-      console.log('🔢 [AuthAPI] OTP code:', otpCode);
       
       const response = await fetch(`${this.baseUrl}/v1/auth/verify-otp`, {
         method: 'POST',
@@ -150,7 +145,6 @@ class AuthApiService {
       });
 
       const data = await response.json();
-      console.log('📦 [AuthAPI] Raw response status:', response.status);
 
       if (!response.ok) {
         return {

@@ -18,11 +18,9 @@ export const secureStorage = {
       if (isWeb) {
         // Web: use AsyncStorage (localStorage)
         await AsyncStorage.setItem(key, value);
-        console.log(`💾 [SecureStorage] Saved to AsyncStorage (Web): ${key}`);
       } else {
         // iOS/Android: use SecureStore
         await SecureStore.setItemAsync(key, value);
-        console.log(`💾 [SecureStorage] Saved to SecureStore (Native): ${key}`);
       }
     } catch (error) {
       console.error(`❌ [SecureStorage] Failed to save ${key}:`, error);
@@ -38,12 +36,10 @@ export const secureStorage = {
       if (isWeb) {
         // Web: use AsyncStorage (localStorage)
         const value = await AsyncStorage.getItem(key);
-        console.log(`📖 [SecureStorage] Read from AsyncStorage (Web): ${key} = ${value ? 'found' : 'null'}`);
         return value;
       } else {
         // iOS/Android: use SecureStore
         const value = await SecureStore.getItemAsync(key);
-        console.log(`📖 [SecureStorage] Read from SecureStore (Native): ${key} = ${value ? 'found' : 'null'}`);
         return value;
       }
     } catch (error) {
@@ -60,11 +56,9 @@ export const secureStorage = {
       if (isWeb) {
         // Web: use AsyncStorage (localStorage)
         await AsyncStorage.removeItem(key);
-        console.log(`🗑️ [SecureStorage] Deleted from AsyncStorage (Web): ${key}`);
       } else {
         // iOS/Android: use SecureStore
         await SecureStore.deleteItemAsync(key);
-        console.log(`🗑️ [SecureStorage] Deleted from SecureStore (Native): ${key}`);
       }
     } catch (error) {
       console.error(`❌ [SecureStorage] Failed to delete ${key}:`, error);

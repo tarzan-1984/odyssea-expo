@@ -17,6 +17,7 @@ interface UseChatRoomReturn {
   messages: Message[];
   isLoadingChatRoom: boolean;
   isLoadingMessages: boolean;
+  isLoadingOlderMessages: boolean; // Separate flag for loading older messages (scroll up)
   error: string | null;
   hasMoreMessages: boolean;
   currentPage: number;
@@ -38,12 +39,14 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoadingChatRoom, setIsLoadingChatRoom] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false); // Separate flag for loading older messages (scroll up)
   const [error, setError] = useState<string | null>(null);
   const [hasMoreMessages, setHasMoreMessages] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const currentRoomRef = useRef<string | null>(null);
   const hasLoadedMessagesOnceRef = useRef<Record<string, boolean>>({});
+  const isLoadingMoreRef = useRef(false); // Prevent multiple simultaneous loadMoreMessages calls
   
   // Archive-related state
   const [availableArchives, setAvailableArchives] = useState<ArchiveDay[]>([]);
@@ -134,6 +137,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
 
       return filteredArchives;
     } catch (error) {
+      console.error(`❌ [useChatRoom] Failed to load available archive days:`, error);
       setIsLoadingAvailableArchives(false);
       return [];
     }
@@ -141,6 +145,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
 
   /**
    * Get next available archive from the list
+   * Uses the archive data loaded when chat room was opened
    */
   const getNextAvailableArchive = useCallback((): ArchiveDay | null => {
     if (currentArchiveIndex >= availableArchives.length) {
@@ -158,6 +163,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
   /**
    * Load archived messages for a specific day
    * Mirrors Next.js loadArchivedMessages
+   * This is called when PostgreSQL is exhausted and user scrolls up
    */
   const loadArchivedMessages = useCallback(async (
     year: number,
@@ -173,23 +179,40 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
     // Check if already cached
     if (archivedMessagesCacheRef.current.has(key)) {
       const cachedMessages = archivedMessagesCacheRef.current.get(key)!;
+      let sortedMessages: Message[] = [];
       setMessages(prev => {
         const existingMessageIds = new Set(prev.map(msg => msg.id));
         const newMessages = cachedMessages.filter(msg => !existingMessageIds.has(msg.id));
 
         if (newMessages.length > 0) {
           const updatedMessages = [...newMessages, ...prev];
-          return updatedMessages.sort(
+          sortedMessages = updatedMessages.sort(
             (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
           );
+          return sortedMessages;
         }
         return prev;
       });
+      
+      // Update store (defer to avoid updating during render)
+      if (sortedMessages.length > 0) {
+        setTimeout(() => {
+          try {
+            useChatStore.getState().setMessages(chatRoomId, sortedMessages);
+          } catch {}
+        }, 0);
+      }
       return;
     }
 
     try {
+      console.log('🔄 [useChatRoom] loadArchivedMessages called - setting isLoadingOlderMessages to true');
+      console.log('🔄 [useChatRoom] loadArchivedMessages called - setting isLoadingOlderMessages to true');
+      console.trace('📍 [useChatRoom] Stack trace for loadArchivedMessages');
       setIsLoadingArchivedMessages(true);
+      // Also set isLoadingMessages and isLoadingOlderMessages to show loader in UI
+      setIsLoadingMessages(true);
+      setIsLoadingOlderMessages(true); // Set flag for loading older messages from archive
 
       const archiveFile = await chatApi.loadArchivedMessages(chatRoomId, year, month, day);
 
@@ -213,28 +236,42 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
         // Add to cache
         archivedMessagesCacheRef.current.set(key, convertedMessages);
 
+        let sortedMessages: Message[] = [];
         setMessages(prev => {
           const existingMessageIds = new Set(prev.map(msg => msg.id));
           const newMessages = convertedMessages.filter(msg => !existingMessageIds.has(msg.id));
 
           if (newMessages.length > 0) {
             const updatedMessages = [...newMessages, ...prev];
-            return updatedMessages.sort(
+            sortedMessages = updatedMessages.sort(
               (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
             );
+            return sortedMessages;
           }
           return prev;
         });
+        
+        // Update store (defer to avoid updating during render)
+        if (sortedMessages.length > 0) {
+          setTimeout(() => {
+            try {
+              useChatStore.getState().setMessages(chatRoomId, sortedMessages);
+            } catch {}
+          }, 0);
+        }
       }
     } catch (error) {
       setError('Failed to load archived messages');
     } finally {
       setIsLoadingArchivedMessages(false);
+      setIsLoadingMessages(false);
+      setIsLoadingOlderMessages(false);
     }
   }, [chatRoomId]);
 
   /**
    * Load chat room data
+   * This is called immediately when chat room is opened
    */
   const loadChatRoom = useCallback(async () => {
     if (!chatRoomId) {
@@ -253,8 +290,8 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
       // This mirrors Next.js behavior in chatStore.setCurrentChatRoom
       // Note: getUserJoinDate depends on chatRoom, so we need to wait for it to be set
       // We'll load archives in a separate useEffect that depends on chatRoom
+      // The archive data will be used for pagination when user scrolls up
     } catch (err) {
-      console.error('Failed to load chat room:', err);
       setError('Failed to load chat room');
     } finally {
       setIsLoadingChatRoom(false);
@@ -285,8 +322,6 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
       
       return !isReadByCurrentUser;
     }).length;
-
-    console.log(`📊 [useChatRoom] Recalculated unreadCount: ${unreadCount} unread messages in chat ${chatRoomId} (total messages: ${messagesToCheck.length}, current user: ${currentUserId})`);
     
     // Update unreadCount through eventBus with absolute value
     // This ensures unreadCount matches the actual number of unread messages
@@ -313,103 +348,150 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
         setIsLoadingMessages(true);
         setError(null);
 
-        // On first load for this chat room, always force refresh to get latest data
-        // This ensures we get messages that arrived while app was closed
         const isFirstLoadForThisRoom = !hasLoadedMessagesOnceRef.current[chatRoomId];
         if (isFirstLoadForThisRoom) {
           hasLoadedMessagesOnceRef.current[chatRoomId] = true;
-          forceRefresh = true; // Force refresh on first load
         }
 
-        // Check if we have cached messages first
-        const hasCachedMessages = await messagesCacheService.hasMessages(chatRoomId);
+        // Priority 1: Check store first (WebSocket updates are the source of truth)
+        const { messagesByRoom } = useChatStore.getState();
+        const storeMessages = messagesByRoom[chatRoomId] || [];
+        
+        if (storeMessages.length > 0) {
+          // Use messages from store (already synced via WebSocket)
+          const sortedStoreMessages = [...storeMessages].sort(
+            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          );
+          
+          setMessages(sortedStoreMessages);
+          setIsLoadingMessages(false);
+          
+          // Recalculate unreadCount based on store messages
+          recalculateUnreadCount(sortedStoreMessages);
+          
+          // Set pagination state
+          setCurrentPage(page);
+          setHasMoreMessages(sortedStoreMessages.length >= limit);
+          
+          // If WebSocket is not connected, update from API in background to ensure data is fresh
+          if (!isConnected) {
+            // Use setTimeout to avoid updating store during render
+            setTimeout(async () => {
+              try {
+                const response = await chatApi.getMessages(chatRoomId, page, limit);
+                const sortedApiMessages = [...response.messages].sort(
+                  (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+                );
+                
+                // Merge API messages with store messages, removing duplicates
+                const apiMessageIds = new Set(sortedApiMessages.map(msg => msg.id));
+                const uniqueStoreMessages = sortedStoreMessages.filter(msg => !apiMessageIds.has(msg.id));
+                const mergedMessages = [...uniqueStoreMessages, ...sortedApiMessages].sort(
+                  (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+                );
+                
+                // Update store and cache with merged messages
+                setMessages(mergedMessages);
+                try {
+                  useChatStore.getState().setMessages(chatRoomId, mergedMessages);
+                } catch {}
+                await messagesCacheService.saveMessages(chatRoomId, mergedMessages);
+                
+                setCurrentPage(page);
+                setHasMoreMessages(response.hasMore);
+                recalculateUnreadCount(mergedMessages);
+              } catch (apiError) {
+                console.warn('Background API update failed (WebSocket disconnected):', apiError);
+              }
+            }, 0);
+          }
+          
+          return;
+        }
 
+        // Priority 2: Check cache if store is empty
+        const hasCachedMessages = await messagesCacheService.hasMessages(chatRoomId);
+        
         if (hasCachedMessages) {
-          // Load from cache for immediate display
           const cachedMessages = await messagesCacheService.getMessages(
             chatRoomId,
             limit,
             (page - 1) * limit
           );
+          
           if (cachedMessages.length > 0) {
-            // Messages from cache are already sorted by MessagesCacheService
-            // Use them directly without additional sorting
+            // Load from cache for immediate display
             setMessages(cachedMessages);
-            // Keep global store in sync so later addMessage appends to a full list
-            try {
-              useChatStore.getState().setMessages(chatRoomId, cachedMessages);
-            } catch {}
             setIsLoadingMessages(false);
+            
+            // Sync store with cache (defer to avoid updating during render)
+            setTimeout(() => {
+              try {
+                useChatStore.getState().setMessages(chatRoomId, cachedMessages);
+              } catch {}
+            }, 0);
             
             // Recalculate unreadCount based on cached messages
             recalculateUnreadCount(cachedMessages);
             
-            // Set initial pagination state for cached messages
+            // Set pagination state
             setCurrentPage(page);
-            setHasMoreMessages(cachedMessages.length >= limit); // Assume there might be more if we got full page
-
-            // Check if cache is fresh for this specific chat room (less than 5 minutes old for messages)
-            const isCacheFresh = await messagesCacheService.isMessagesCacheFresh(
-              chatRoomId,
-              5
-            );
-
-            // Only update from API if cache is not fresh or force refresh is requested
-            if (!isCacheFresh || forceRefresh) {
-              // Keep loading state true while updating from API to prevent flicker
-              setIsLoadingMessages(true);
-              try {
-                const response = await chatApi.getMessages(chatRoomId, page, limit);
-                
-                // Sort messages by date (oldest first) to ensure correct order
-                const sortedApiMessages = [...response.messages].sort(
-                  (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-                );
-                
-                // Merge API messages with cached messages, removing duplicates
-                const apiMessageIds = new Set(sortedApiMessages.map(msg => msg.id));
-                // cachedMessages are already sorted from getMessages
-                const uniqueCachedMessages = cachedMessages.filter(msg => !apiMessageIds.has(msg.id));
-                const mergedMessages = [...uniqueCachedMessages, ...sortedApiMessages].sort(
-                  (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-                );
-                
-                // Update with merged messages
-                // saveMessages will sort them again before saving to cache
-                setMessages(mergedMessages);
+            setHasMoreMessages(cachedMessages.length >= limit);
+            
+            // If WebSocket is not connected, update from API to ensure data is fresh
+            if (!isConnected) {
+              // Use setTimeout to avoid updating store during render
+              setTimeout(async () => {
                 try {
-                  useChatStore.getState().setMessages(chatRoomId, mergedMessages);
-                } catch {}
-                setCurrentPage(page);
-                setHasMoreMessages(response.hasMore);
-                await messagesCacheService.saveMessages(chatRoomId, mergedMessages);
-                
-                // Recalculate unreadCount based on merged messages (from API)
-                recalculateUnreadCount(mergedMessages);
-              } catch (apiError) {
-                console.warn('Background API update failed:', apiError);
-              } finally {
-                setIsLoadingMessages(false);
-              }
+                  const response = await chatApi.getMessages(chatRoomId, page, limit);
+                  const sortedApiMessages = [...response.messages].sort(
+                    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+                  );
+                  
+                  // Merge API messages with cached messages, removing duplicates
+                  const apiMessageIds = new Set(sortedApiMessages.map(msg => msg.id));
+                  const uniqueCachedMessages = cachedMessages.filter(msg => !apiMessageIds.has(msg.id));
+                  const mergedMessages = [...uniqueCachedMessages, ...sortedApiMessages].sort(
+                    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+                  );
+                  
+                  // Update store and cache with merged messages
+                  setMessages(mergedMessages);
+                  try {
+                    useChatStore.getState().setMessages(chatRoomId, mergedMessages);
+                  } catch {}
+                  await messagesCacheService.saveMessages(chatRoomId, mergedMessages);
+                  
+                  setCurrentPage(page);
+                  setHasMoreMessages(response.hasMore);
+                  recalculateUnreadCount(mergedMessages);
+                } catch (apiError) {
+                  console.warn('Background API update failed (WebSocket disconnected):', apiError);
+                }
+              }, 0);
             }
-
-            // Messages loaded successfully
+            
             return;
           }
         }
 
-        // If no cached data, load from API
+        // Priority 3: Load from API only if store and cache are both empty
+        // This happens on first app launch or after data was cleared
         try {
           const response = await chatApi.getMessages(chatRoomId, page, limit);
-          // Sort messages by date (oldest first) to ensure correct order
           const sortedMessages = [...response.messages].sort(
             (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
           );
+          
           setMessages(sortedMessages);
-          try {
-            useChatStore.getState().setMessages(chatRoomId, sortedMessages);
-          } catch {}
-          await messagesCacheService.saveMessages(chatRoomId, sortedMessages);
+          
+          // Update store and cache (defer to avoid updating during render)
+          setTimeout(async () => {
+            try {
+              useChatStore.getState().setMessages(chatRoomId, sortedMessages);
+            } catch {}
+            await messagesCacheService.saveMessages(chatRoomId, sortedMessages);
+          }, 0);
           
           // Recalculate unreadCount based on loaded messages
           recalculateUnreadCount(sortedMessages);
@@ -421,9 +503,12 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
           console.warn('API unavailable, no cached data available:', apiError);
           setError('Failed to load messages');
           setMessages([]);
-          try {
-            useChatStore.getState().setMessages(chatRoomId, []);
-          } catch {}
+          // Update store (defer to avoid updating during render)
+          setTimeout(() => {
+            try {
+              useChatStore.getState().setMessages(chatRoomId, []);
+            } catch {}
+          }, 0);
         }
 
         // Messages loaded successfully
@@ -434,27 +519,46 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
         setIsLoadingMessages(false);
       }
     },
-    [chatRoomId, recalculateUnreadCount]
+    [chatRoomId, recalculateUnreadCount, isConnected]
   );
 
   /**
    * Load more messages (pagination)
    * Mirrors Next.js ChatBox.handleScroll logic
+   * IMPORTANT: This should ONLY be called when user scrolls up to load older messages
+   * It should NOT be called when receiving new messages via WebSocket
    */
   const loadMoreMessages = useCallback(async () => {
-    if (!chatRoomId || isLoadingMessages) {
+    if (!chatRoomId) {
+      return;
+    }
+    
+    if (isLoadingMessages) {
+      return;
+    }
+    
+    if (isLoadingMoreRef.current) {
       return;
     }
 
-    // First try to load from PostgreSQL
-    if (hasMoreMessages) {
-      try {
-        setIsLoadingMessages(true);
+    // Set loading flag immediately to prevent multiple calls
+    // IMPORTANT: Only set isLoadingOlderMessages when explicitly loading older messages (scroll up)
+    // Do NOT set it when receiving new messages via WebSocket
+    console.log('🔄 [useChatRoom] loadMoreMessages called - setting isLoadingOlderMessages to true');
+    console.trace('📍 [useChatRoom] Stack trace for loadMoreMessages');
+    isLoadingMoreRef.current = true;
+    setIsLoadingMessages(true);
+    setIsLoadingOlderMessages(true); // Set flag for loading older messages (scroll up only)
+
+    try {
+      // First try to load from PostgreSQL
+      if (hasMoreMessages) {
         const nextPage = currentPage + 1;
         const response = await chatApi.getMessages(chatRoomId, nextPage, 50);
 
         // Prepend new messages to existing ones (older messages at the top)
         // Mirrors Next.js logic: prepend older messages to beginning
+        let sortedMessages: Message[] = [];
         setMessages(prev => {
           // Remove duplicates by creating a Map of message IDs
           const existingMessageIds = new Set(prev.map(msg => msg.id));
@@ -464,35 +568,92 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
           const updatedMessages = [...newMessages, ...prev];
           
           // Sort by date to ensure correct order (oldest first)
-          const sorted = updatedMessages.sort(
+          sortedMessages = updatedMessages.sort(
             (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
           );
-          try {
-            useChatStore.getState().setMessages(chatRoomId, sorted);
-          } catch {}
-          return sorted;
+          
+          return sortedMessages;
         });
 
+        // Update store (defer to avoid updating during render)
+        setTimeout(() => {
+          try {
+            useChatStore.getState().setMessages(chatRoomId, sortedMessages);
+          } catch {}
+        }, 0);
+
         setCurrentPage(nextPage);
+        const wasHasMore = hasMoreMessages;
         setHasMoreMessages(response.hasMore);
-      } catch (error) {
-        console.error('Failed to load more messages:', error);
-        setError('Failed to load more messages');
-      } finally {
-        setIsLoadingMessages(false);
-      }
+        
+        // If we just exhausted PostgreSQL (hasMore changed from true to false),
+        // immediately try to load from archive if available
+        if (wasHasMore && !response.hasMore) {
+          // PostgreSQL is now exhausted, try to load from archive
+          if (isLoadingAvailableArchives) {
+            // Archives are still loading, set pending flag
+            setPendingArchiveLoad(true);
+            setIsLoadingMessages(false);
+            setIsLoadingOlderMessages(false);
+            isLoadingMoreRef.current = false;
+          } else {
+            const nextArchive = getNextAvailableArchive();
+            if (nextArchive) {
+              // Keep loading state to show loader while loading archived messages
+              // loadArchivedMessages will manage isLoadingMessages state
+              try {
+                await loadArchivedMessages(nextArchive.year, nextArchive.month, nextArchive.day);
+              } catch (error) {
+                setIsLoadingMessages(false);
+                setIsLoadingOlderMessages(false);
+                isLoadingMoreRef.current = false;
+              }
+            } else {
+              // No more archives, stop loading
+              setIsLoadingMessages(false);
+              setIsLoadingOlderMessages(false);
+              isLoadingMoreRef.current = false;
+            }
+          }
+        } else {
+          // Normal case: still have more messages in PostgreSQL, stop loading
+          setIsLoadingMessages(false);
+          setIsLoadingOlderMessages(false);
+          isLoadingMoreRef.current = false;
+        }
       } else {
         // PostgreSQL is exhausted, try to load from archive
         if (isLoadingAvailableArchives) {
           // Archives are still loading, set pending flag
           setPendingArchiveLoad(true);
+          setIsLoadingMessages(false);
+          setIsLoadingOlderMessages(false);
+          isLoadingMoreRef.current = false;
         } else {
           const nextArchive = getNextAvailableArchive();
           if (nextArchive) {
-            await loadArchivedMessages(nextArchive.year, nextArchive.month, nextArchive.day);
+            // loadArchivedMessages will manage isLoadingMessages state
+            try {
+              await loadArchivedMessages(nextArchive.year, nextArchive.month, nextArchive.day);
+            } catch (error) {
+              setIsLoadingMessages(false);
+              setIsLoadingOlderMessages(false);
+              isLoadingMoreRef.current = false;
+            }
+          } else {
+            // No more archives available
+            setIsLoadingMessages(false);
+            setIsLoadingOlderMessages(false);
+            isLoadingMoreRef.current = false;
           }
         }
       }
+    } catch (error) {
+      setError('Failed to load more messages');
+      setIsLoadingMessages(false);
+      setIsLoadingOlderMessages(false);
+      isLoadingMoreRef.current = false;
+    }
   }, [
     chatRoomId,
     isLoadingMessages,
@@ -596,6 +757,18 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
       }
 
       if (messageData.chatRoomId === chatRoomId) {
+        // IMPORTANT: Do NOT set isLoadingMessages or isLoadingOlderMessages here
+        // New messages via WebSocket should NOT trigger loading indicators
+        // They should be added directly to the messages array without showing a loader
+        // Also ensure isLoadingOlderMessages is false when receiving new messages
+        console.log('📨 [useChatRoom] handleNewMessage - received new message');
+        console.log('📨 [useChatRoom] handleNewMessage - current isLoadingOlderMessages:', isLoadingOlderMessages);
+        console.log('📨 [useChatRoom] handleNewMessage - current isLoadingMoreRef.current:', isLoadingMoreRef.current);
+        if (isLoadingOlderMessages) {
+          console.warn('⚠️ [useChatRoom] isLoadingOlderMessages is true when receiving new message via WebSocket - resetting it');
+          console.trace('📍 [useChatRoom] Stack trace showing where isLoadingOlderMessages was set to true');
+          setIsLoadingOlderMessages(false);
+        }
         const newMessage = messageData.message;
         const isMessageFromCurrentUser = newMessage.senderId === authState.user?.id;
         const currentUserId = authState.user?.id || '';
@@ -670,6 +843,16 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
               chatRoomId: chatRoomId,
             });
           }
+          
+          // Also call markChatRoomAsRead to ensure unreadCount is updated on server
+          // This ensures that when user exits and re-enters the chat, unreadCount is correct
+          // markChatRoomAsRead will mark all unread messages in the chat as read, including this new one
+          if (chatRoomId) {
+            // Use setTimeout to avoid calling during render
+            setTimeout(() => {
+              markChatRoomAsRead(chatRoomId);
+            }, 0);
+          }
         }
       }
     };
@@ -686,7 +869,6 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
   useEffect(() => {
     const off = eventBus.on(AppEvents.WebSocketReconnected, () => {
       if (chatRoomId) {
-        console.log(`🔄 [useChatRoom] WebSocket reconnected after offline, refreshing messages for chat ${chatRoomId} from API...`);
         // Reset flag to force refresh from API
         // This ensures we get messages that arrived while device was offline
         delete hasLoadedMessagesOnceRef.current[chatRoomId];
@@ -724,6 +906,8 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
 
   // Load available archives when chat room is loaded
   // This mirrors Next.js behavior in chatStore.setCurrentChatRoom
+  // This is called immediately when chat room is opened to prepare archive data
+  // for subsequent pagination requests when user scrolls up
   useEffect(() => {
     if (chatRoom && chatRoomId) {
       getAvailableArchiveDays().catch(() => {
@@ -739,7 +923,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
 
     const currentUserId = authState.user?.id;
 
-    // Update all messages in state
+    // Update all messages in state and recalculate unreadCount based on updated messages
     setMessages(prev => {
       const updatedMessages = prev.map(msg => {
         if (data.messageIds.includes(msg.id)) {
@@ -774,29 +958,35 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
         console.error('Failed to save messages read status to cache:', error);
       });
 
+      // Update unreadCount only if this is for the current user
+      // Compare userId from event with current user's ID
+      if (currentUserId && data.userId === currentUserId) {
+        // Decrement unreadCount by the number of messages that were marked as read
+        const readCount = data.messageIds.length; // Number of messages that were read
+        const currentUnread = chatRoom?.unreadCount || 0;
+        const nextUnread = Math.max(0, currentUnread - readCount);
+        
+        console.log(`📉 [useChatRoom] Decreasing unreadCount for ${chatRoomId}: ${currentUnread} - ${readCount} = ${nextUnread}`);
+        
+        // Update chat room's unreadCount through eventBus
+        // Use setTimeout to ensure state is updated before emitting event
+        setTimeout(() => {
+          eventBus.emit(AppEvents.ChatRoomUpdated, {
+            chatRoomId,
+            updates: {
+              unreadCount: nextUnread, // Decrement by readCount
+            },
+          });
+        }, 0);
+      } else {
+        // userId doesn't match current user - this is for read receipts only
+        // Don't update unreadCount for current user
+        console.log(`ℹ️ [useChatRoom] messagesMarkedAsRead for different user (${data.userId}), skipping unreadCount update`);
+      }
+
       return sortedMessages;
     });
-
-    // Update unreadCount only if this is for the current user
-    // This matches Next.js behavior - unreadCount decreases only when current user reads messages
-    // For group chats, each user has their own unreadCount based on their readBy status
-    if (currentUserId && data.userId === currentUserId) {
-      // Calculate how many messages were marked as read
-      const readCount = data.messageIds.length;
-      
-      console.log(`📉 [useChatRoom] Decreasing unreadCount by ${readCount} for chat room ${chatRoomId} (user ${currentUserId})`);
-      
-      // Update chat room's unreadCount through eventBus
-      // This matches Next.js behavior in WebSocketContext.messagesMarkedAsRead
-      eventBus.emit(AppEvents.ChatRoomUpdated, {
-        chatRoomId,
-        updates: {
-          // Decrement unreadCount by the number of messages marked as read
-          unreadCountDecrement: readCount,
-        },
-      });
-    }
-  }, [chatRoomId, authState.user?.id]);
+  }, [chatRoomId, authState.user?.id, chatRoom?.unreadCount]);
 
   // Listen for messageRead events via eventBus (real-time read status updates)
   // This listens to events emitted by WebSocketContext when messageRead event is received
@@ -932,10 +1122,14 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
   }, []);
 
   // Load chat room and messages on mount
+  // Load chat room and messages immediately when chat room is opened
+  // This is the entry point when user navigates to a chat room
   useEffect(() => {
     if (chatRoomId) {
-      loadChatRoom();
-      loadMessages();
+      loadChatRoom(); // Loads chat room data (participants, name, etc.)
+      loadMessages(); // Loads initial messages from database/cache
+      // Note: Available archive days will be loaded automatically after chatRoom is set
+      // (see useEffect below that depends on chatRoom)
     }
   }, [chatRoomId, loadChatRoom, loadMessages]);
 
@@ -944,6 +1138,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
     messages,
     isLoadingChatRoom,
     isLoadingMessages,
+    isLoadingOlderMessages,
     error,
     hasMoreMessages,
     currentPage,

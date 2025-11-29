@@ -26,7 +26,7 @@ import { sendLocationUpdateToTMS } from '@/utils/locationApi';
 export default function FinalVerifyScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { authState, updateUserLocation, setUserLocationWithoutTimestamp, clearUserLocation, clearLocationData } = useAuth();
+  const { authState, updateUserLocation, clearUserLocation, syncLocationFromAsyncStorage } = useAuth();
   const { automaticLocationSharing, setAutomaticLocationSharing } = useAppSettings();
   const user = authState.user;
   const firstName = user?.firstName || 'User';
@@ -42,7 +42,6 @@ export default function FinalVerifyScreen() {
     // Save ZIP to AsyncStorage when set programmatically
     try {
       await AsyncStorage.setItem('@user_zip', newZip);
-      console.log('[FinalVerify] Saved ZIP to AsyncStorage:', newZip);
     } catch (error) {
       console.error('[FinalVerify] Failed to save ZIP to AsyncStorage:', error);
     }
@@ -64,7 +63,6 @@ export default function FinalVerifyScreen() {
           const validStatuses: StatusValue[] = ['available', 'available_on', 'available_off', 'loaded_enroute'];
           if (validStatuses.includes(parsedStatus)) {
             setStatus(parsedStatus);
-            console.log('[FinalVerify] Loaded saved status from AsyncStorage:', parsedStatus);
           } else {
             console.warn('[FinalVerify] Invalid saved status, using default:', savedStatus);
           }
@@ -74,14 +72,12 @@ export default function FinalVerifyScreen() {
         const savedZip = await AsyncStorage.getItem('@user_zip');
         if (savedZip) {
           setZip(savedZip);
-          console.log('[FinalVerify] Loaded saved ZIP from AsyncStorage:', savedZip);
         }
         
         // Load date
         const savedDate = await AsyncStorage.getItem('@user_date');
         if (savedDate) {
           setDate(savedDate);
-          console.log('[FinalVerify] Loaded saved date from AsyncStorage:', savedDate);
         }
       } catch (error) {
         console.error('[FinalVerify] Failed to load saved data:', error);
@@ -176,7 +172,6 @@ export default function FinalVerifyScreen() {
       if (isRegistered) {
         const isRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
         if (isRunning) {
-          console.log('🔄 [BackgroundTracking] Task already running, FORCE stopping...');
           try {
             await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
             // Wait longer to ensure task fully stops
@@ -197,8 +192,6 @@ export default function FinalVerifyScreen() {
       
       // Start location updates with current interval setting
       const intervalInMinutes = LOCATION_UPDATE_INTERVAL / (60 * 1000);
-      console.log(`📍 [BackgroundTracking] Starting with interval: ${intervalInMinutes} minutes (${LOCATION_UPDATE_INTERVAL}ms)`);
-      console.log(`⏰ [BackgroundTracking] Current time: ${new Date().toLocaleTimeString()}`);
       
       await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
         accuracy: Location.Accuracy.Balanced,
@@ -220,9 +213,7 @@ export default function FinalVerifyScreen() {
       
       // Verify the task started
       const verification = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
-      console.log(`✅ [BackgroundTracking] Task started: ${verification ? 'YES' : 'NO'}`);
       if (verification) {
-        console.log(`✅ [BackgroundTracking] Interval set to: ${intervalInMinutes} minutes`);
       }
     } catch (error) {
       console.error('❌ [LocationTask] Failed to start background tracking:', error);
@@ -236,42 +227,32 @@ export default function FinalVerifyScreen() {
       if (isRegistered) {
         const isRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
         if (isRunning) {
-          console.log('🛑 [BackgroundTracking] Stopping task...');
           await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
-          // Clear all location update related data
-          await AsyncStorage.removeItem('@last_location_update_timestamp');
-          await AsyncStorage.removeItem('@pending_location_update');
           // Wait to ensure task is fully stopped
           await new Promise(resolve => setTimeout(resolve, 1000));
-          console.log('✅ [BackgroundTracking] Task stopped and all update data cleared');
-        } else {
-          // Even if task is not running, clear pending updates
-          await AsyncStorage.removeItem('@pending_location_update');
-          await AsyncStorage.removeItem('@last_location_update_timestamp');
         }
-      } else {
-        // Clear pending updates even if task is not registered
-        await AsyncStorage.removeItem('@pending_location_update');
-        await AsyncStorage.removeItem('@last_location_update_timestamp');
       }
     } catch (error) {
       console.error('❌ [BackgroundTracking] Error stopping task:', error);
-      // Still try to clear pending updates even if stopping fails
-      try {
-        await AsyncStorage.removeItem('@pending_location_update');
-        await AsyncStorage.removeItem('@last_location_update_timestamp');
-      } catch (clearError) {
-        console.error('❌ [BackgroundTracking] Error clearing update data:', clearError);
-      }
     }
   }, []);
 
   // Load saved location data on mount
   useEffect(() => {
-    if (authState.userLocation && authState.userZipCode && !userLocation) {
+    // Always load coordinates if they exist in authState, even if userLocation is already set
+    // This ensures coordinates are displayed on map after app restart
+    if (authState.userLocation) {
       const { latitude, longitude } = authState.userLocation;
-      setUserLocation({ latitude, longitude });
-      setZip(authState.userZipCode);
+      
+      // Update local state if not already set or if coordinates changed
+      if (!userLocation || userLocation.latitude !== latitude || userLocation.longitude !== longitude) {
+        setUserLocation({ latitude, longitude });
+      }
+      
+      // Update ZIP if available
+      if (authState.userZipCode && authState.userZipCode !== zip) {
+        setZip(authState.userZipCode);
+      }
       
       // Center map on saved location
       const savedRegion: Region = {
@@ -287,12 +268,8 @@ export default function FinalVerifyScreen() {
         setIsLocationReady(true);
       }, 500);
 
-      // Start background tracking if automatic sharing is enabled
-      // Always restart to ensure correct interval is applied
-      if (automaticLocationSharing) {
-        console.log('🔄 [BackgroundTracking] Restarting task on mount to apply current interval');
-        startBackgroundLocationTracking();
-      }
+      // Don't auto-start tracking here - tracking should only start when user clicks "Share my location"
+      // with automatic sharing enabled
 
       // Prepare address label for saved location
       (async () => {
@@ -306,105 +283,63 @@ export default function FinalVerifyScreen() {
     }
   }, [authState.userLocation, authState.userZipCode, automaticLocationSharing, startBackgroundLocationTracking]); // Run when location data is available
 
-  // Check for background location updates
+  // Check for location updates from AsyncStorage (when app opens after background updates)
+  // Also periodically sync to catch updates from background task
   useEffect(() => {
-    // Don't check for updates if automatic location sharing is disabled
-    if (!automaticLocationSharing) {
-      return;
-    }
-
     const checkForLocationUpdates = async () => {
       try {
-        // Double-check that automatic sharing is still enabled before processing
-        if (!automaticLocationSharing) {
-          return;
-        }
-
-        const pendingUpdate = await AsyncStorage.getItem('@pending_location_update');
-        if (pendingUpdate) {
-          const updateData = JSON.parse(pendingUpdate);
-          const { latitude, longitude, zipCode, timestamp } = updateData;
-
-          // Check if this is a NEW update (not an old one being processed again)
-          const updateTime = new Date(timestamp);
-          const now = Date.now();
-          const timeDiff = now - timestamp;
-          const timeDiffMinutes = Math.floor(timeDiff / (60 * 1000));
+        // Sync lastLocationUpdate from AsyncStorage to AuthContext
+        await syncLocationFromAsyncStorage();
+        
+        // Load location from AsyncStorage (updated by background task or manual updates)
+        const locationJson = await AsyncStorage.getItem('@user_location');
+        if (locationJson) {
+          const locationData = JSON.parse(locationJson);
+          const { latitude, longitude, zipCode } = locationData;
           
-          console.log(`📥 [LocationUpdate] Found pending update from ${timeDiffMinutes} minutes ago`);
-
-          // Update location in AuthContext if automatic sharing is enabled
-          if (automaticLocationSharing) {
-            // Save location without updating timestamp (timestamp will be updated after successful API call)
-            await setUserLocationWithoutTimestamp(latitude, longitude, zipCode || '');
-            console.log(`✅ [LocationUpdate] Location saved at ${new Date().toLocaleTimeString()}`);
-            
-            // Send location update to TMS API (automatic update every 10 minutes)
-            // Get current status and zip from state/AsyncStorage
-            // For automatic updates, use current date/time (not the date field)
-            const currentStatus = status;
-            const currentZip = zipCode || zip;
-            
-            if (currentStatus && currentZip) {
-              console.log('[FinalVerify] Sending automatic location update to TMS API...');
-              // For automatic updates, we pass empty string for date - sendLocationUpdate will use current date/time
-              const success = await sendLocationUpdate(
-                latitude,
-                longitude,
-                currentZip,
-                currentStatus,
-                '' // Empty string - function will use current date/time
-              );
-              
-              if (success) {
-                // Update lastLocationUpdate in AuthContext only after successful API call
-                await updateUserLocation(latitude, longitude, currentZip);
-              }
-            } else {
-              console.warn('[FinalVerify] Skipping automatic location update - missing required fields:', {
-                status: currentStatus,
-                zip: currentZip,
-              });
+          // Update local state and map if coordinates exist
+          if (latitude && longitude) {
+            setUserLocation({ latitude, longitude });
+            if (zipCode) {
+              setZip(zipCode);
             }
             
-            // Update map and state
+            // Update map
             const updateRegion: Region = {
               latitude,
               longitude,
               latitudeDelta: 0.008,
               longitudeDelta: 0.008,
             };
-
-            setUserLocation({ latitude, longitude });
-            if (zipCode) {
-              setZip(zipCode);
-            }
-
-            // Update address label from reverse geocode
+            
+            mapRef.current?.animateToRegion(updateRegion, 1000);
+            
+            // Update address label
             try {
               const [geo] = await Location.reverseGeocodeAsync({ latitude, longitude });
               if (geo) {
                 setLocationLabel(formatAddressLabel(geo));
               }
             } catch {}
-
-            mapRef.current?.animateToRegion(updateRegion, 1000);
           }
-
-          // Clear pending update
-          await AsyncStorage.removeItem('@pending_location_update');
         }
       } catch (error) {
-        console.error('❌ [FinalVerify] Failed to process location update:', error);
+        console.error('❌ [FinalVerify] Failed to check location updates:', error);
       }
     };
 
-    // Check every 15 seconds for updates
-    const interval = setInterval(checkForLocationUpdates, 15000);
-    checkForLocationUpdates(); // Check immediately
-
-    return () => clearInterval(interval);
-  }, [automaticLocationSharing, updateUserLocation, sendLocationUpdate, status, zip, date]);
+    // Check on mount and when automatic sharing is enabled
+    if (automaticLocationSharing) {
+      checkForLocationUpdates();
+      
+      // Set up periodic sync every 30 seconds to catch background updates
+      const syncInterval = setInterval(() => {
+        checkForLocationUpdates();
+      }, 30000); // Check every 30 seconds
+      
+      return () => clearInterval(syncInterval);
+    }
+  }, [automaticLocationSharing, syncLocationFromAsyncStorage]);
 
   // Stop background tracking when automatic sharing is disabled
   useEffect(() => {
@@ -524,17 +459,8 @@ export default function FinalVerifyScreen() {
       }
       
       // Save location and ZIP to AuthContext only if automatic location sharing is enabled
-      // If disabled, only update local state for map display, without saving time
       if (automaticLocationSharing) {
         const finalZipCode = postalCode || zip;
-        
-        // Save location without updating timestamp (timestamp will be updated after successful API call)
-        if (finalZipCode) {
-          await setUserLocationWithoutTimestamp(latitude, longitude, finalZipCode);
-        } else {
-          // Save location even if ZIP code is not available
-          await setUserLocationWithoutTimestamp(latitude, longitude, '');
-        }
         
         // Send location update to TMS API
         if (status && finalZipCode) {
@@ -547,13 +473,9 @@ export default function FinalVerifyScreen() {
             '' // Empty string - function will use current date/time
           );
           
+          // Save coordinates and time only after successful API call
           if (success) {
-            // Update lastLocationUpdate timestamp only after successful API call
-            if (finalZipCode) {
-              await updateUserLocation(latitude, longitude, finalZipCode);
-            } else {
-              await updateUserLocation(latitude, longitude, '');
-            }
+            await updateUserLocation(latitude, longitude, finalZipCode);
           }
         }
         
@@ -590,9 +512,9 @@ export default function FinalVerifyScreen() {
     
     if (!value) {
       // Stop background tracking and clear saved location data
-      // Keep lastLocationUpdate to show when the last update was performed
+      // Stop background tracking when automatic sharing is disabled
       await stopBackgroundLocationTracking();
-      await clearLocationData(); // Clears userLocation and userZipCode, but keeps lastLocationUpdate
+      // Note: We keep coordinates and lastLocationUpdate in AsyncStorage to display on map
     } else {
       // When enabling automatic location sharing:
       // 1. Get current location if not available
@@ -654,9 +576,6 @@ export default function FinalVerifyScreen() {
         currentLongitude = userLocation.longitude;
       }
       
-      // Save location without updating timestamp (timestamp will be updated after successful API call)
-      await setUserLocationWithoutTimestamp(currentLatitude, currentLongitude, currentZipCode);
-      
       // Send location update to TMS API
       if (status && currentZipCode) {
         console.log('[FinalVerify] Sending location update to TMS API after enabling auto-sharing...');
@@ -668,8 +587,8 @@ export default function FinalVerifyScreen() {
           '' // Empty string - function will use current date/time
         );
         
+        // Save coordinates and time only after successful API call
         if (success) {
-          // Update lastLocationUpdate timestamp only after successful API call
           await updateUserLocation(currentLatitude, currentLongitude, currentZipCode);
         }
       }
@@ -937,7 +856,7 @@ const styles = StyleSheet.create({
      borderTopRightRadius: rem(20),
      borderTopLeftRadius: rem(20),
      position: "relative",
-     paddingBottom: 80,
+     paddingBottom: rem(60),
      marginTop: -20,
      zIndex: 50,
   },
@@ -1038,12 +957,12 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   lastUpdateContainer: {
-    marginTop: rem(-16),
-    marginBottom: rem(20),
+    marginTop: rem(-20),
+    marginBottom: rem(15),
     paddingLeft: rem(4),
   },
   lastUpdateText: {
-    fontSize: fp(13),
+    fontSize: fp(12),
     color: '#8E8E93',
     fontFamily: fonts["400"],
   },

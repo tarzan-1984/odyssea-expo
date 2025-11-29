@@ -20,6 +20,19 @@ import PushTokenRegistrar from '@/components/notifications/PushTokenRegistrar';
 // Prevent the splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
 
+// Suppress non-critical errors from expo-keep-awake in development
+if (__DEV__) {
+  const originalError = console.error;
+  console.error = (...args: any[]) => {
+    const errorMessage = args[0]?.toString() || '';
+    // Ignore "Unable to activate keep awake" errors - they're non-critical
+    if (errorMessage.includes('Unable to activate keep awake')) {
+      return; // Silently ignore this error
+    }
+    originalError.apply(console, args);
+  };
+}
+
 /**
  * Navigation Component
  * Handles auth-based navigation and protected routes
@@ -47,7 +60,6 @@ function RootLayoutNav() {
     const { eventBus, AppEvents } = require('@/services/EventBus');
     const handleNavigateToChat = (data: { chatRoomId: string }) => {
       if (authState.isAuthenticated && data.chatRoomId) {
-        console.log('[RootLayoutNav] Navigating to chat from notification:', data.chatRoomId);
         // Use replace instead of push to avoid back navigation issues
         router.replace(`/chat/${data.chatRoomId}` as any);
       }
@@ -69,7 +81,6 @@ function RootLayoutNav() {
         const pendingChatId = await AsyncStorage.getItem('@pending_chat_navigation');
         
         if (pendingChatId) {
-          console.log('[RootLayoutNav] Found pending chat navigation:', pendingChatId);
           // Clear the pending navigation
           await AsyncStorage.removeItem('@pending_chat_navigation');
           // Navigate to chat
@@ -121,12 +132,10 @@ function RootLayoutNav() {
       // User is authenticated
       if (inAuthGroup && currentPath !== '(auth)/final-verify') {
         // Authenticated but on auth screens (except final-verify) → redirect to final-verify
-        console.log('🔄 [Navigation] User authenticated, redirecting to final-verify');
         router.replace('/final-verify');
       }
     } else if (!authState.isAuthenticated && (inTabsGroup || currentPath === '(auth)/final-verify')) {
       // User is not signed in but viewing protected screens → redirect to auth
-      console.log('🔄 [Navigation] User not authenticated, redirecting to auth');
       router.replace('/(auth)');
     }
   }, [authState.isAuthenticated, segments, isReady, router]);
@@ -147,7 +156,6 @@ function RootLayoutNav() {
           // If permission was never requested (status is 'undetermined'), request it now
           // This will show the system dialog and create the entry in app settings
           if (foregroundStatus.status === 'undetermined') {
-            console.log('📍 [RootLayoutNav] Requesting location permission for the first time...');
             hasRequestedPermissionRef.current = true;
             await requestForegroundPermission();
             await requestBackgroundPermission();
@@ -228,6 +236,7 @@ export default function RootLayout() {
     'Mulish-Medium': require('@/assets/fonts/Mulish-Medium.ttf'),
     'Mulish-Light': require('@/assets/fonts/Mulish-Light.ttf'),
   });
+
 
   useEffect(() => {
     if (error) {

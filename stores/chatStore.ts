@@ -105,7 +105,6 @@ const storeCreator: StateCreator<ChatState> = (set, get) => ({
       chatRooms: updatedRooms,
       messagesByRoom: updatedMessages,
     });
-    console.log('🗑️ [ChatStore] Removed chat room:', chatRoomId);
   },
 
   reset: () => {
@@ -113,7 +112,6 @@ const storeCreator: StateCreator<ChatState> = (set, get) => ({
       chatRooms: [],
       messagesByRoom: {},
     });
-    console.log('🗑️ [ChatStore] Reset chat store (cleared all chat rooms and messages)');
   },
 });
 

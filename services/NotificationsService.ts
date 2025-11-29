@@ -149,7 +149,7 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 			console.log('[NotificationsService] Permission granted, getting device push token...');
 			// Use getDevicePushTokenAsync() for FCM device token
 			const { data: devicePushToken } = await Notifications.getDevicePushTokenAsync();
-			console.log('[NotificationsService++++++++] FCM device token:', devicePushToken);
+			
 			token = devicePushToken;
 			if (token) {
 				console.log('[NotificationsService] ✅ FCM device push token obtained:', token.substring(0, 20) + '...');
