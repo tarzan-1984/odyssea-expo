@@ -271,7 +271,7 @@ export const useChatRooms = (): UseChatRoomsReturn => {
         }
       }
 
-      // If no cached data, load from API
+      // If no cached data, or forceRefresh is true, load from API
       try {
         const apiRooms = await chatApi.getChatRooms();
         const normalizedApiRooms = apiRooms.map(room => ({
@@ -279,25 +279,48 @@ export const useChatRooms = (): UseChatRoomsReturn => {
           participants: normalizeParticipants(room.participants || []),
         }));
 
-        // Merge API data with current state to preserve real-time updates
-        // IMPORTANT: When forceRefresh is true (e.g., when returning from chat),
-        // prioritize API unreadCount to ensure accuracy after reading messages
+        // Merge API data with current state to preserve real-time updates.
+        // В обычном режиме (forceRefresh === false) мы считаем store (WebSocket) источником истины
+        // по unreadCount и lastMessage. Но при forceRefresh (например, после возврата из background,
+        // когда WebSocket был отключён и пропустил сообщения) нужно доверять API/бэкенду, иначе
+        // мы затрём новые значения unreadCount нулями из стора.
         storeSetChatRooms((() => {
           const mergedRooms = normalizedApiRooms.map(apiRoom => {
             const storeRoom = chatRooms.find(storeRoom => storeRoom.id === apiRoom.id);
             if (storeRoom) {
-              // Priority: store (WebSocket) > API for unreadCount
-              // WebSocket updates are the source of truth for real-time data
-              // Only use API unreadCount if store doesn't have it
-              const finalUnreadCount = storeRoom.unreadCount !== undefined && storeRoom.unreadCount !== null
-                ? storeRoom.unreadCount
-                : (apiRoom.unreadCount !== undefined && apiRoom.unreadCount !== null ? apiRoom.unreadCount : 0);
+              let finalUnreadCount = 0;
+
+              if (!forceRefresh && storeRoom.unreadCount !== undefined && storeRoom.unreadCount !== null) {
+                // Обычный режим: приоритет у значения из стора (обновлённого через WebSocket).
+                finalUnreadCount = storeRoom.unreadCount;
+              } else if (apiRoom.unreadCount !== undefined && apiRoom.unreadCount !== null) {
+                // При forceRefresh (или если в сторе нет значения) — доверяем API.
+                finalUnreadCount = apiRoom.unreadCount;
+              } else if (storeRoom.unreadCount !== undefined && storeRoom.unreadCount !== null) {
+                // Запасной вариант: если API не вернул счётчик, но в сторе он есть — используем его.
+                finalUnreadCount = storeRoom.unreadCount;
+              }
+
+              // Для lastMessage и updatedAt логика аналогичная:
+              // - в обычном режиме используем значения из стора, чтобы сохранить
+              //   обновления по WebSocket;
+              // - при forceRefresh (возврат из background, WebSocket мог пропустить сообщения)
+              //   доверяем API и полностью синхронизируем lastMessage/updatedAt с бэкендом.
+              const finalLastMessage =
+                !forceRefresh && storeRoom.lastMessage
+                  ? storeRoom.lastMessage
+                  : apiRoom.lastMessage;
+
+              const finalUpdatedAt =
+                !forceRefresh && storeRoom.updatedAt
+                  ? storeRoom.updatedAt
+                  : apiRoom.updatedAt;
               
               return {
                 ...apiRoom,
                 unreadCount: finalUnreadCount,
-                lastMessage: storeRoom.lastMessage || apiRoom.lastMessage,
-                updatedAt: storeRoom.updatedAt || apiRoom.updatedAt,
+                lastMessage: finalLastMessage,
+                updatedAt: finalUpdatedAt,
               } as ChatRoom;
             }
             return apiRoom;
@@ -418,7 +441,10 @@ export const useChatRooms = (): UseChatRoomsReturn => {
   // Realtime chat addition now comes from WebSocketContext directly to store
   useEffect(() => {}, [addChatRoom]);
 
-  // Track app state to force sync when app opens after being closed
+  // Track app state to force sync when app opens after being closed or returns from background.
+  // On transition from inactive/background -> active:
+  // - Force refresh chat rooms from API
+  // - Log refreshed chat rooms and total unread count to console
   useEffect(() => {
     let appState = AppState.currentState;
     let wasInBackground = false;
@@ -433,14 +459,36 @@ export const useChatRooms = (): UseChatRoomsReturn => {
       // When app becomes active again
       if (nextAppState === 'active') {
         if (wasInBackground) {
-          console.log('📱 [useChatRooms] App became active after being in background, forcing sync...');
+          console.log('📱 [useChatRooms] App became active after being in background, forcing chat rooms sync from API...');
           wasInBackground = false;
-          
-          // Force refresh from API to sync unreadCount and chat list
-          // This ensures we have the latest data after app was closed
-          loadChatRooms(true).catch((error) => {
-            console.error('❌ [useChatRooms] Failed to sync on app open:', error);
-          });
+
+          // Force refresh from API to sync unreadCount and chat list.
+          // After sync, log resulting chat rooms and total unread count.
+          (async () => {
+            try {
+              await loadChatRooms(true);
+
+              // Read the latest chat rooms from store after loadChatRooms finishes
+              const latestRooms = useChatStore.getState().chatRooms;
+              const totalUnread = latestRooms.reduce((total, room) => {
+                return total + (room.unreadCount || 0);
+              }, 0);
+
+              console.log('✅ [useChatRooms] Chat rooms synced on app active. Summary:', {
+                totalChats: latestRooms.length,
+                totalUnread,
+                chats: latestRooms.map((room) => ({
+                  id: room.id,
+                  name: room.name,
+                  unreadCount: room.unreadCount || 0,
+                  lastMessageId: room.lastMessage?.id,
+                  lastMessageCreatedAt: room.lastMessage?.createdAt,
+                })),
+              });
+            } catch (error) {
+              console.error('❌ [useChatRooms] Failed to sync on app open:', error);
+            }
+          })();
         } else {
           // App was already active (just switching between screens)
           // Only reset flags if WebSocket is not connected

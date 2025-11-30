@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Platform, Keyboard, AppState, AppStateStatus } from 'react-native';
+import type { TextInput as RNTextInput } from 'react-native';
 import { colors, fonts, rem, fp, borderRadius } from '@/lib';
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -47,6 +48,9 @@ export default function MessagesScreen() {
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [isContactsOpen, setIsContactsOpen] = useState(false);
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
+  const appStateRef = React.useRef<AppStateStatus>(AppState.currentState);
+  const searchInputRef = React.useRef<RNTextInput | null>(null);
+  const preventNextSearchFocusRef = React.useRef<boolean>(false);
   
   // Function to close all dropdowns
   const closeAllDropdowns = () => {
@@ -224,48 +228,12 @@ export default function MessagesScreen() {
     router.push(`/chat/${chatRoom.id}` as any);
   };
 
-  // Track app state to force sync when app opens after being closed
-  const wasInBackgroundRef = React.useRef(false);
-  
-  React.useEffect(() => {
-    const { AppState } = require('react-native');
-    let appState = AppState.currentState;
-
-    const subscription = AppState.addEventListener('change', (nextAppState: any) => {
-      // Track when app goes to background/inactive
-      if (appState.match(/active/) && nextAppState.match(/inactive|background/)) {
-        wasInBackgroundRef.current = true;
-        console.log('📱 [MessagesScreen] App went to background/inactive');
-      }
-
-      // When app becomes active again
-      if (nextAppState === 'active' && wasInBackgroundRef.current) {
-        console.log('📱 [MessagesScreen] App became active after being in background');
-        // Don't reset here - let useFocusEffect handle it
-      }
-
-      appState = nextAppState;
-    });
-
-    return () => {
-      subscription.remove();
-    };
-  }, []);
-
   // Refresh chat rooms when screen comes into focus
-  // Force sync if app was in background (to sync unreadCount and chat list)
+  // Основная синхронизация при выходе из background теперь живёт в useChatRooms (AppState эффект).
+  // Здесь лишь гарантируем, что при первом показе экрана или когда WebSocket не подключён,
+  // список чатов будет загружен.
   useFocusEffect(
     React.useCallback(() => {
-      // If app was in background, force refresh to sync unreadCount
-      if (wasInBackgroundRef.current) {
-        console.log('📱 [MessagesScreen] Screen focused after app was in background, forcing sync...');
-        wasInBackgroundRef.current = false; // Reset flag after sync
-        loadChatRooms(true).catch((error) => {
-          console.error('Failed to sync chat rooms on focus:', error);
-        });
-        return;
-      }
-
       // If WebSocket is connected and we have data in store, no need to load
       // WebSocket provides real-time updates, so data is already up-to-date
       if (isConnected && chatRooms.length > 0) {
@@ -283,6 +251,28 @@ export default function MessagesScreen() {
       }
     }, [loadChatRooms, isConnected, chatRooms.length])
   );
+
+  // При возврате приложения из неактивного состояния убираем фокус с поля поиска
+  // и закрываем клавиатуру, чтобы она не всплывала сама по себе.
+  React.useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      const prevState = appStateRef.current;
+
+      // Переход из inactive/background в active
+      if (prevState.match(/inactive|background/) && nextAppState === 'active') {
+        console.log('📱 [MessagesScreen] App became active, dismissing keyboard');
+        Keyboard.dismiss();
+        // Помечаем, что следующий фокус на поле поиска нужно подавить
+        preventNextSearchFocusRef.current = true;
+      }
+
+      appStateRef.current = nextAppState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, []);
 
   // Close dropdown when clicking outside (simplified for mobile)
   React.useEffect(() => {
@@ -327,11 +317,23 @@ export default function MessagesScreen() {
               </View>
               
               <TextInput
+                ref={searchInputRef}
                 style={styles.searchInput}
                 placeholder="Search chats"
                 placeholderTextColor={colors.neutral.darkGrey}
                 value={searchQuery}
                 onChangeText={setSearchQuery}
+                onFocus={() => {
+                  // Если приложение только что вернулось из background и система
+                  // автоматически фокусирует прошлое поле ввода — сразу снимаем фокус.
+                  if (preventNextSearchFocusRef.current) {
+                    preventNextSearchFocusRef.current = false;
+                    Keyboard.dismiss();
+                    if (searchInputRef.current) {
+                      searchInputRef.current.blur();
+                    }
+                  }
+                }}
               />
               
               {searchQuery.length > 0 && (

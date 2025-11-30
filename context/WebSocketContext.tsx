@@ -67,6 +67,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 5;
   const isConnectingRef = useRef(false);
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
   // Get authentication token from secure storage
   const getAuthToken = useCallback(async (): Promise<string | null> => {
@@ -267,13 +268,22 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       newSocket.onAny((event: string, payload: any) => {
         try {
           const rid = payload?.chatRoomId || payload?.message?.chatRoomId || payload?.[0]?.chatRoomId;
-          console.log(`🛰️ [WebSocket] onAny '${event}'`, rid ? `room=${rid}` : '', payload);
+         // console.log(`🛰️ [WebSocket] onAny '${event}'`, rid ? `room=${rid}` : '', payload);
         } catch {}
       });
     }
 
     // Handle new message from server
     newSocket.on('newMessage', async (data: any) => {
+      // Если приложение не активно (background/inactive), не трогаем стор/кеш.
+      // Все такие сообщения будут синхронизированы через API при возврате в active.
+      if (!appStateRef.current.match(/active/)) {
+        console.log('[WebSocket] newMessage received while app is not active, ignoring', {
+          appState: appStateRef.current,
+        });
+        return;
+      }
+
       // Handle case where data comes as array (from onAny handler)
       const messageData = Array.isArray(data) ? data[0] : data;
 
@@ -918,11 +928,11 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
   // Handle app state changes (reconnect when app comes to foreground)
   useEffect(() => {
-    let appState = AppState.currentState;
-
     const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      appStateRef.current = nextAppState;
+
       // Track when app goes to background/inactive
-      if (appState.match(/active/) && nextAppState.match(/inactive|background/)) {
+      if (appStateRef.current.match(/active/) && nextAppState.match(/inactive|background/)) {
         wasInBackgroundRef.current = true;
         console.log('📱 [WebSocket] App went to background/inactive');
       }
@@ -956,7 +966,6 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         }
       }
 
-      appState = nextAppState;
     });
 
     return () => {

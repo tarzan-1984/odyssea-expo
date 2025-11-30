@@ -128,7 +128,10 @@ class ChatApiClient {
   async getMessages(
     chatRoomId: string,
     page: number = 1,
-    limit: number = 50
+    limit: number = 50,
+    options?: {
+      afterCreatedAt?: string;
+    }
   ): Promise<{
     messages: Message[];
     hasMore: boolean;
@@ -138,6 +141,10 @@ class ChatApiClient {
       page: page.toString(),
       limit: limit.toString(),
     });
+
+    if (options?.afterCreatedAt) {
+      params.append('afterCreatedAt', options.afterCreatedAt);
+    }
 
     const response = await this.request<{
       messages: Message[];

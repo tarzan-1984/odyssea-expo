@@ -406,9 +406,14 @@ export default function ChatRoomScreen() {
                 <ArrowLeft width={rem(10.46)} height={rem(19)} color={colors.neutral.white} />
               </TouchableOpacity>
               
-              {isLoadingChatRoom ? (
+              {/* 
+                Показываем лоадер в заголовке ТОЛЬКО если у нас вообще нет данных о чате.
+                Если chatRoom уже есть (например, из списка чатов), сразу показываем название,
+                даже если в фоне ещё идёт обновление по API.
+              */}
+              {!chatRoom && isLoadingChatRoom ? (
                 <ActivityIndicator size="small" color={colors.neutral.white} />
-              ) : error ? (
+              ) : error && !chatRoom ? (
                 <Text style={styles.screenTitle}>Error</Text>
               ) : (
                 <Text style={styles.screenTitle}>
@@ -474,19 +479,6 @@ export default function ChatRoomScreen() {
                 const scrollPercentageFromTop = maxScrollFromTop > 0 
                   ? (scrollPositionFromTop / maxScrollFromTop) * 100 
                   : 0;
-                
-                // Log scroll position details
-                console.log('📊 [ChatRoom] Scroll position:', {
-                  scrollY: currentScrollY.toFixed(2),
-                  scrollFromTop: scrollPositionFromTop.toFixed(2),
-                  maxScrollFromTop: maxScrollFromTop.toFixed(2),
-                  scrollPercentageFromTop: scrollPercentageFromTop.toFixed(2) + '%',
-                  contentHeight: contentHeight.toFixed(2),
-                  viewportHeight: viewportHeight.toFixed(2),
-                  isProgrammatic: isProgrammaticScrollRef.current,
-                  isReceivingNewMessage: isReceivingNewMessageRef.current,
-                  isUserScrolledUp: isUserScrolledUpRef.current,
-                });
                 
                 // IMPORTANT: Ignore scroll events during programmatic scrolling
                 // Programmatic scrolls (automatic scroll to new messages) should NOT trigger loadMoreMessages
