@@ -283,7 +283,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
       setIsLoadingChatRoom(true);
       setError(null);
 
-      // 1. Пытаемся взять данные о чате из глобального стора (они уже загружены на странице списка чатов)
+      // 1. Try to take chat data from the global store (already loaded on chat list screen)
       const { chatRooms } = useChatStore.getState();
       const roomFromStore = chatRooms.find((r) => r.id === chatRoomId) ?? null;
 
@@ -291,23 +291,23 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
         setChatRoom(roomFromStore);
       }
 
-      // 2. Фоновый запрос к API только как подстраховка (если данных в сторе нет
-      //    или если нам нужны самые свежие участники/полные данные).
+      // 2. Background API request as a fallback (when store has no data
+      //    or when we need the freshest participants/full data).
       try {
         const roomFromApi = await chatApi.getChatRoom(chatRoomId);
         setChatRoom((prev) => {
-          // Если в сторе уже был чат, можно мержить, но чтобы не усложнять —
-          // просто доверяем API как источнику истины.
+          // If the store already had chat we could merge, but to keep it simple
+          // just trust API as the source of truth.
           return roomFromApi as ChatRoom;
         });
       } catch (apiErr) {
-        // Если API упал, а из стора мы уже поставили чат — не перетираем ошибкой UI.
+        // If API fails but we already set chat from store — do not overwrite UI with error.
         if (!roomFromStore) {
           setError('Failed to load chat room');
         }
       }
 
-      // Архивы как и раньше грузим в отдельном эффекте, зависящем от chatRoom
+      // Archives are still loaded in a separate effect that depends on chatRoom
     } catch (err) {
       setError('Failed to load chat room');
     } finally {
@@ -351,15 +351,14 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
   }, [chatRoomId, authState.user?.id]);
 
   /**
-   * Smart sync логика: если у чата есть непрочитанные сообщения и локальный хвост
-   * сообщений отстаёт от lastMessage (из списка чатов), догружаем недостающие
-   * сообщения через API.
+   * Smart sync logic: if a chat has unread messages and local tail of messages
+   * lags behind lastMessage (from chat list), we load missing messages via API.
    *
-   * - Если unreadCount > 20 ИЛИ локальных сообщений нет → берём последние 50 сообщений (как при первом входе).
-   * - Если 0 < unreadCount ≤ 20 и есть последнее локальное сообщение → дотягиваем
-   *   сообщения, созданные ПОСЛЕ последнего локального createdAt (ориентир по дате).
+   * - If unreadCount > 20 OR there are no local messages → take last 50 messages (same as first entry).
+   * - If 0 < unreadCount ≤ 20 and there is a last local message → fetch
+   *   messages created AFTER last local createdAt (use date as reference).
    *
-   * Выполняется в фоне и не блокирует исходный вызов loadMessages.
+   * Runs in background and does not block the original loadMessages call.
    */
   const smartSyncMissingMessages = useCallback(
     async (currentMessages: Message[]) => {
@@ -371,7 +370,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
           currentMessagesCount: currentMessages.length,
         });
 
-        // Берём актуальные данные по чатам из стора (после синка /chat-rooms)
+        // Use the latest chat data from store (after /chat-rooms sync)
         const { chatRooms: roomsInStore } = useChatStore.getState();
         const room = roomsInStore.find((r) => r.id === chatRoomId);
         if (!room) {
@@ -400,8 +399,8 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
 
         const lastLocal = currentMessages[currentMessages.length - 1];
 
-        // Если последнее локальное сообщение совпадает с lastMessage из списка чатов,
-        // считаем, что хвост уже актуален (WebSocket всё дотянул).
+        // If last local message equals lastMessage from chat list,
+        // we assume tail is already up-to-date (WebSocket delivered everything).
         if (
           lastLocal &&
           lastLocal.id === lastRoomMessage.id &&
@@ -431,8 +430,8 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
           roomLastCreatedAt: lastRoomMessage.createdAt,
         });
 
-        // Ветка 1: много непрочитанных (>20) или нет локальных сообщений — берём последние 50
-        // сообщений с сервера и МЕРЖИМ их с уже существующими (не удаляя старые/архивные).
+        // Branch 1: many unread (>20) or no local messages — take last 50
+        // messages from server and MERGE them with existing ones (do not drop old/archived).
         if (unreadCount > 20 || !hasLocalAnchor) {
           try {
             console.log('[useChatRoom][smartSync] FULL sync (last 50 messages)', {
@@ -455,16 +454,36 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
               return;
             }
 
-            // Не затираем существующие сообщения (в том числе архивные),
-            // а аккуратно мержим хвост.
+            // Do not overwrite existing messages (including archived),
+            // but carefully merge the tail.
             const existingIds = new Set(currentMessages.map((m) => m.id));
             const newMessages = fetched.filter((m) => !existingIds.has(m.id));
 
-            const merged = [...currentMessages, ...newMessages].sort(
-              (a, b) =>
-                new Date(a.createdAt).getTime() -
-                new Date(b.createdAt).getTime()
-            );
+            // currentMessages are already sorted by createdAt (oldest -> newest),
+            // and afterCreatedAt guarantees all newMessages are strictly NEWER
+            // than last local message. So we can append them without resorting.
+            let merged: Message[];
+            if (currentMessages.length > 0) {
+              const lastTime = new Date(
+                currentMessages[currentMessages.length - 1].createdAt
+              ).getTime();
+              const allNewerOrEqual = newMessages.every(
+                (m) => new Date(m.createdAt).getTime() >= lastTime
+              );
+
+              if (allNewerOrEqual) {
+                merged = [...currentMessages, ...newMessages];
+              } else {
+                // Safe fallback for unexpected time desynchronization.
+                merged = [...currentMessages, ...newMessages].sort(
+                  (a, b) =>
+                    new Date(a.createdAt).getTime() -
+                    new Date(b.createdAt).getTime()
+                );
+              }
+            } else {
+              merged = [...newMessages];
+            }
 
             setMessages(merged);
 
@@ -476,7 +495,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
               mergedCount: merged.length,
             });
 
-            // Обновляем стор и кеш в фоне
+            // Update store and cache in background
             setTimeout(async () => {
               try {
                 useChatStore.getState().setMessages(chatRoomId, merged);
@@ -499,7 +518,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
           return;
         }
 
-        // Ветка 2: 0 < unreadCount ≤ 20 и есть локальный якорь — дотягиваем сообщения после createdAt последнего локального
+        // Branch 2: 0 < unreadCount ≤ 20 and there is a local anchor — fetch messages after createdAt of last local
         if (hasLocalAnchor && lastLocal) {
           const afterCreatedAt = lastLocal.createdAt;
 
@@ -613,9 +632,9 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
         });
         
         // If there are unread messages for this chat, but store has no messages yet
-        // (например, только что залогинились/вернулись из background и сообщения
-        // ещё ни разу не подгружались), делаем полноценный запрос последних 50
-        // сообщений, как при первой загрузке.
+        // (for example just logged in / returned from background and messages
+        // have never been loaded), perform full request for last 50 messages
+        // same as on initial load.
         if (storeMessages.length === 0) {
           const room = roomsInStore.find((r) => r.id === chatRoomId);
           const unreadCountFromRoom = room?.unreadCount || 0;
@@ -641,7 +660,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
 
               setMessages(sortedMessages);
 
-              // Обновляем стор и кеш в фоне
+              // Update store and cache in background
               setTimeout(async () => {
                 try {
                   useChatStore.getState().setMessages(chatRoomId, sortedMessages);
@@ -652,10 +671,10 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
                 );
               }, 0);
 
-              // Пересчитываем unreadCount на основе реальных сообщений
+              // Recalculate unreadCount based on actual messages
               recalculateUnreadCount(sortedMessages);
 
-              // Обновляем состояние пагинации
+              // Update pagination state
               setCurrentPage(1);
               setHasMoreMessages(response.hasMore);
 
@@ -672,7 +691,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
                 chatRoomId,
                 err
               );
-              // В случае ошибки продолжаем по обычной логике ниже
+              // In case of error continue with regular logic below
             }
           }
         }
@@ -726,8 +745,8 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
             }, 0);
           }
 
-          // Smart sync: если есть непрочитанные и хвост отстаёт от lastMessage,
-          // дотягиваем недостающие сообщения в фоне.
+          // Smart sync: if there are unread messages and tail lags behind lastMessage,
+          // fetch missing messages in background.
           smartSyncMissingMessages(sortedStoreMessages).catch(() => {});
           
           return;
@@ -795,7 +814,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
               }, 0);
             }
 
-            // Smart sync для случая, когда стартуем с кеша
+            // Smart sync for the case when we start from cache
             smartSyncMissingMessages(cachedMessages).catch(() => {});
             
             return;
@@ -1076,6 +1095,16 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
     if (!socket || !chatRoomId) return;
 
     const handleNewMessage = (data: { chatRoomId: string; message: Message }) => {
+      // Do not process/mark messages as read when app is not active.
+      // In minimized/inactive app state messages must not be considered read.
+      const currentAppState = AppState.currentState as AppStateStatus;
+      if (!String(currentAppState).match(/active/)) {
+        console.log(
+          '📨 [useChatRoom] handleNewMessage ignored because app is not active',
+          { appState: currentAppState },
+        );
+        return;
+      }
       // Handle case where data comes as array (from onAny handler)
       const messageData = Array.isArray(data) ? data[0] : data;
       
@@ -1136,10 +1165,30 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
             });
           }
           
-          // Add new message and sort by date
-          const updatedMessages = [...prev, messageToAdd].sort(
-            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-          );
+          // Add new message to the end.
+          // By backend/WebSocket contract these are always the NEWEST messages,
+          // i.e. createdAt >= last message in the list.
+          // Therefore we can append them to the end without full resort.
+          let updatedMessages: Message[];
+          if (prev.length > 0) {
+            const last = prev[prev.length - 1];
+            const lastTime = new Date(last.createdAt).getTime();
+            const newTime = new Date(messageToAdd.createdAt).getTime();
+
+            if (newTime >= lastTime) {
+              updatedMessages = [...prev, messageToAdd];
+            } else {
+              // Non-standard situation (e.g. time desync) —
+              // as a safety net resort to preserve correct order.
+              updatedMessages = [...prev, messageToAdd].sort(
+                (a, b) =>
+                  new Date(a.createdAt).getTime() -
+                  new Date(b.createdAt).getTime()
+              );
+            }
+          } else {
+            updatedMessages = [messageToAdd];
+          }
           
           // Save to cache asynchronously
           messagesCacheService.saveMessages(chatRoomId, updatedMessages).catch((error) => {

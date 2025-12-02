@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, Image, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, TextInput, Image, Platform, AppState, ActivityIndicator } from 'react-native';
 import OSMMapView, { Region, MarkerData } from '@/components/maps/OSMMapView';
 import { BlurView } from 'expo-blur';
 import * as Location from 'expo-location';
@@ -17,6 +17,7 @@ import { useAppSettings } from '@/hooks/useAppSettings';
 import { LOCATION_TASK_NAME, LOCATION_UPDATE_INTERVAL } from '@/tasks/locationTask';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { sendLocationUpdateToTMS } from '@/utils/locationApi';
+import PermissionsAssistant from '@/components/PermissionsAssistant';
 
 /**
  * FinalVerifyScreen - Final verification/profile screen
@@ -50,11 +51,19 @@ export default function FinalVerifyScreen() {
   const formatDate = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
   const [date, setDate] = useState(formatDate(new Date()));
   const [locationLabel, setLocationLabel] = useState<string | null>(null);
+  const [showPermissionsAssistant, setShowPermissionsAssistant] = useState(false);
+  const [isSharingLocation, setIsSharingLocation] = useState(false);
   
   // Load saved status, zip, and date from AsyncStorage on mount
   useEffect(() => {
     const loadSavedData = async () => {
       try {
+        // Check if permissions assistant was already completed
+        const permissionsCompleted = await AsyncStorage.getItem('@permissions_onboarding_completed');
+        if (permissionsCompleted !== 'true') {
+          setShowPermissionsAssistant(true);
+        }
+
         // Load status
         const savedStatus = await AsyncStorage.getItem('@user_status');
         if (savedStatus) {
@@ -149,6 +158,13 @@ export default function FinalVerifyScreen() {
   // Start background location tracking
   const startBackgroundLocationTracking = useCallback(async () => {
     try {
+      const appState = AppState.currentState;
+      if (appState !== 'active') {
+        console.log('📍 [BackgroundTracking] Skip start — app is not active:', appState);
+        return;
+      }
+
+      console.log('📍 [BackgroundTracking] Starting background tracking...');
       // Check current permission status first
       const foregroundStatus = await Location.getForegroundPermissionsAsync();
       
@@ -167,7 +183,14 @@ export default function FinalVerifyScreen() {
         return;
       }
 
-      // ALWAYS stop task first to ensure clean restart with new interval
+      // If task is already running, do not restart it again to avoid duplicate work
+      const alreadyRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
+      if (alreadyRunning) {
+        console.log('📍 [BackgroundTracking] Task already running, skipping restart');
+        return;
+      }
+
+      // ALWAYS stop task first to ensure clean restart with new interval (defensive)
       const isRegistered = await TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME);
       if (isRegistered) {
         const isRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
@@ -213,8 +236,7 @@ export default function FinalVerifyScreen() {
       
       // Verify the task started
       const verification = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
-      if (verification) {
-      }
+      console.log('📍 [BackgroundTracking] hasStartedLocationUpdatesAsync =', verification, 'interval(min)=', intervalInMinutes);
     } catch (error) {
       console.error('❌ [LocationTask] Failed to start background tracking:', error);
     }
@@ -223,6 +245,7 @@ export default function FinalVerifyScreen() {
   // Stop background location tracking
   const stopBackgroundLocationTracking = useCallback(async () => {
     try {
+      console.log('📍 [BackgroundTracking] Stopping background tracking...');
       const isRegistered = await TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME);
       if (isRegistered) {
         const isRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
@@ -232,6 +255,7 @@ export default function FinalVerifyScreen() {
           await new Promise(resolve => setTimeout(resolve, 1000));
         }
       }
+      console.log('📍 [BackgroundTracking] Stop request completed');
     } catch (error) {
       console.error('❌ [BackgroundTracking] Error stopping task:', error);
     }
@@ -354,6 +378,19 @@ export default function FinalVerifyScreen() {
     };
   }, [automaticLocationSharing, stopBackgroundLocationTracking]);
 
+  // Ensure background tracking is running when app starts and automatic sharing is enabled.
+  // This covers the case when user previously enabled automatic sharing, fully closed the app,
+  // and then opened it again.
+  useEffect(() => {
+    if (!automaticLocationSharing) {
+      return;
+    }
+
+    // Fire and forget: startBackgroundLocationTracking internally checks if task is already running
+    // and will skip duplicate starts.
+    startBackgroundLocationTracking();
+  }, [automaticLocationSharing, startBackgroundLocationTracking]);
+
   const handleUpdateStatus = async () => {
     try {
       // Validate that all fields are filled
@@ -423,6 +460,11 @@ export default function FinalVerifyScreen() {
   };
 
   const handleShareLocation = async () => {
+    if (isSharingLocation) {
+      return;
+    }
+
+    setIsSharingLocation(true);
     try {
       if (hasLocationPermission === null) {
         const { status } = await Location.requestForegroundPermissionsAsync();
@@ -494,6 +536,8 @@ export default function FinalVerifyScreen() {
       setIsLocationReady(true);
     } catch (e) {
       console.error('Failed to get location:', e);
+    } finally {
+      setIsSharingLocation(false);
     }
   };
 
@@ -598,6 +642,23 @@ export default function FinalVerifyScreen() {
     }
   };
 
+  if (showPermissionsAssistant) {
+    return (
+      <View style={styles.screenWrap}>
+        <PermissionsAssistant
+          onComplete={async () => {
+            try {
+              await AsyncStorage.setItem('@permissions_onboarding_completed', 'true');
+            } catch (e) {
+              console.warn('[FinalVerify] Failed to save permissions onboarding flag', e);
+            }
+            setShowPermissionsAssistant(false);
+          }}
+        />
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.screenWrap, Platform.OS === 'android' && { paddingBottom: insets.bottom }]}>
       <View style={styles.screenContent}>
@@ -670,8 +731,16 @@ export default function FinalVerifyScreen() {
           
             {/* Settings section */}
             <View style={styles.settingsSection}>
-          <TouchableOpacity style={styles.shareButton} onPress={handleShareLocation}>
-                <Text style={styles.buttonText}>Share my location</Text>
+          <TouchableOpacity
+            style={[styles.shareButton, isSharingLocation && styles.shareButtonDisabled]}
+            onPress={handleShareLocation}
+            disabled={isSharingLocation}
+          >
+            {isSharingLocation ? (
+              <ActivityIndicator color={colors.neutral.white} size="small" />
+            ) : (
+              <Text style={styles.buttonText}>Share my location</Text>
+            )}
           </TouchableOpacity>
           
           {/* Location toggle */}
@@ -773,6 +842,9 @@ const styles = StyleSheet.create({
      marginTop: -27,
      marginBottom: rem(20),
    },
+  shareButtonDisabled: {
+    opacity: 0.7,
+  },
    buttonText: {
      ...typography.button,
    },

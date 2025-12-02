@@ -81,6 +81,11 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   }, []);
 
   const connect = useCallback(async () => {
+    // Do not connect when app is not active; keep WebSocket connection only in active app state.
+    if (!String(appStateRef.current).match(/active/)) {
+      return;
+    }
+
     if (socket || isConnectingRef.current) {
       return;
     }
@@ -275,8 +280,8 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
     // Handle new message from server
     newSocket.on('newMessage', async (data: any) => {
-      // Если приложение не активно (background/inactive), не трогаем стор/кеш.
-      // Все такие сообщения будут синхронизированы через API при возврате в active.
+      // If the app is not active (background/inactive), do not touch store/cache.
+      // All such messages will be synchronized via API when returning to active state.
       if (!appStateRef.current.match(/active/)) {
         console.log('[WebSocket] newMessage received while app is not active, ignoring', {
           appState: appStateRef.current,
@@ -903,7 +908,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   }, [socket, isConnected]);
 
   const markChatRoomAsRead = useCallback((chatRoomId: string) => {
-    if (socket && isConnected) {
+    if (socket && isConnected && String(appStateRef.current).match(/active/)) {
       socket.emit('markChatRoomAsRead', { chatRoomId });
     }
   }, [socket, isConnected]);
@@ -963,6 +968,18 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           console.log('✅ [WebSocket] App became active, WebSocket already connected, sync should happen via useChatRooms');
         } else {
           console.log('✅ [WebSocket] App became active, already connected');
+        }
+      }
+
+      // When app goes to background/inactive, explicitly close WebSocket
+      // to prevent messages from being auto-marked as read in the background.
+      if (nextAppState.match(/inactive|background/)) {
+        if (socket) {
+          console.log('📱 [WebSocket] App moved to background, disconnecting socket');
+          socket.disconnect();
+          setSocket(null);
+          setIsConnected(false);
+          joinedRoomsRef.current.clear();
         }
       }
 

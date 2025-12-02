@@ -10,6 +10,7 @@ import { getUserById } from '@/app-api/users';
 import { secureStorage } from '@/utils/secureStorage';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**
  * ProfileScreen - Profile screen of the application
@@ -53,6 +54,12 @@ export default function ProfileScreen() {
   const handleLogout = useCallback(async () => {
     try {
       setIsLoggingOut(true);
+      // Clear permissions onboarding flag so assistant shows again for next login
+      try {
+        await AsyncStorage.removeItem('@permissions_onboarding_completed');
+      } catch (e) {
+        console.warn('[Profile] Failed to clear permissions onboarding flag on logout', e);
+      }
       await resetAuthState();
       router.replace('/(auth)');
     } catch (error) {

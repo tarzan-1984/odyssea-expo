@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
-import { View, StyleSheet, StyleProp, ViewStyle } from 'react-native';
+import { View, StyleSheet, StyleProp, ViewStyle, Linking } from 'react-native';
 import { WebView } from 'react-native-webview';
 
 export interface Region {
@@ -215,6 +215,21 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
           domStorageEnabled={true}
           startInLoadingState={true}
           scalesPageToFit={true}
+          // Prevent navigation to external sites (Leaflet / OpenStreetMap links)
+          // so that the map is not replaced by a web page or open a browser
+          // when tapping on attribution or logos inside the map.
+          onShouldStartLoadWithRequest={(request) => {
+            const url = request?.url || '';
+
+            // Allow loading of embedded HTML (about:blank, data:, etc.)
+            if (!url.startsWith('http://') && !url.startsWith('https://')) {
+              return true;
+            }
+
+            // Block any external http/https navigation completely.
+            // We no longer open external browser windows from the map.
+            return false;
+          }}
           onMessage={(event) => {
             try {
               const data = JSON.parse(event.nativeEvent.data);

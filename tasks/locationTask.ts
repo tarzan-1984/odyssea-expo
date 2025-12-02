@@ -4,7 +4,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { secureStorage } from '@/utils/secureStorage';
 
 const LOCATION_TASK_NAME = 'background-location-task';
-const LOCATION_UPDATE_INTERVAL = 5 * 60 * 1000; // 5 minutes in milliseconds (temporarily reduced for testing)
+// Interval for desired background location updates.
+// Temporarily set to 1 minute for testing.
+const LOCATION_UPDATE_INTERVAL = 1 * 60 * 1000; // 1 minute in milliseconds
 const USER_LOCATION_KEY = '@user_location';
 
 interface LocationUpdateData {
@@ -12,6 +14,8 @@ interface LocationUpdateData {
 }
 
 // Background task definition
+console.log('📍 [LocationTask] Task definition registered:', LOCATION_TASK_NAME);
+
 TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }: any) => {
   if (error) {
     // Handle different error codes from CoreLocation (iOS) / LocationManager (Android)

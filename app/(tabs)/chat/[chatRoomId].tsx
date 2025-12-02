@@ -131,15 +131,13 @@ export default function ChatRoomScreen() {
 
   // Group messages with date separators
   const messagesWithSeparators = useMemo(() => {
-    // Ensure messages are sorted by date (oldest first) before processing
-    const sortedMessages = [...messages].sort(
-      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-    );
-    
+    // Entire useChatRoom hook keeps messages ordered by
+    // createdAt ascending (from oldest to newest), so
+    // additional sorting here is not necessary.
     const result: Array<{ type: 'message' | 'date'; data: Message | string }> = [];
     
-    sortedMessages.forEach((message, index) => {
-      const previousMessage = index > 0 ? sortedMessages[index - 1] : undefined;
+    messages.forEach((message, index) => {
+      const previousMessage = index > 0 ? messages[index - 1] : undefined;
       
       if (shouldShowDateSeparator(message, previousMessage)) {
         result.push({
@@ -155,6 +153,17 @@ export default function ChatRoomScreen() {
     });
     
     return result;
+  }, [messages]);
+
+  // Lightweight key for re-rendering FlatList; it changes when
+  // message count or main read-status fields change, but does not build
+  // long strings with join over readBy.
+  const messagesRenderVersion = useMemo(() => {
+    return messages.reduce((acc, m) => {
+      const readFlag = m.isRead ? 1 : 0;
+      const readByCount = m.readBy ? m.readBy.length : 0;
+      return acc + readFlag + readByCount;
+    }, messages.length);
   }, [messages]);
 
   // Prepare data for FlatList (inverted list needs reversed order)
@@ -407,9 +416,9 @@ export default function ChatRoomScreen() {
               </TouchableOpacity>
               
               {/* 
-                Показываем лоадер в заголовке ТОЛЬКО если у нас вообще нет данных о чате.
-                Если chatRoom уже есть (например, из списка чатов), сразу показываем название,
-                даже если в фоне ещё идёт обновление по API.
+                Show header loader ONLY if we have no chat data at all.
+                If chatRoom already exists (for example from chat list), show the title immediately
+                even if background API update is still in progress.
               */}
               {!chatRoom && isLoadingChatRoom ? (
                 <ActivityIndicator size="small" color={colors.neutral.white} />
@@ -451,7 +460,7 @@ export default function ChatRoomScreen() {
               inverted
               style={styles.content}
               contentContainerStyle={styles.messagesContainer}
-              extraData={messages.map(msg => `${msg.id}-${msg.isRead ? 'read' : 'unread'}-${(msg.readBy || []).join(',')}`).join('|')}
+              extraData={messagesRenderVersion}
               keyExtractor={(item, index) => {
                 if (item.type === 'date') {
                   return `date-${index}`;

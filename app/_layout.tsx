@@ -5,7 +5,6 @@ import * as SplashScreen from 'expo-splash-screen';
 import { View, StyleSheet } from 'react-native';
 import { BlurView } from 'expo-blur';
 import * as Location from 'expo-location';
-import { fonts } from '@/lib';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { WebSocketProvider } from '@/context/WebSocketContext';
 import { OnlineStatusProvider } from '@/context/OnlineStatusContext';
@@ -54,7 +53,9 @@ function RootLayoutNav() {
   } = useLocationPermission();
   const lastCheckedSegment = useRef<string>('');
   const hasRequestedPermissionRef = useRef(false);
-  
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const ENABLE_PERMISSIONS_ONBOARDING = false; // temporary disable permissions onboarding modal
+
   // Handle navigation from push notifications
   useEffect(() => {
     const { eventBus, AppEvents } = require('@/services/EventBus');
@@ -101,11 +102,12 @@ function RootLayoutNav() {
       // Initial checks for location services and background permission
       await checkLocationEnabled();
       await checkBackgroundPermission();
+
       setIsReady(true);
     };
     
     initAuth();
-  }, [loadStoredAuth, checkLocationEnabled, checkBackgroundPermission]);
+  }, [loadStoredAuth, checkLocationEnabled, checkBackgroundPermission, authState.isAuthenticated]);
 
   // Check permissions when navigating between screens (only when segment actually changes)
   useEffect(() => {
@@ -198,13 +200,9 @@ function RootLayoutNav() {
         <Stack.Screen name="(tabs)" />
       </Stack>
       
-      {/**
-       * TEMP DISABLED FOR SIMULATOR
-       * Location Permission Modal is disabled to allow development in iOS Simulator.
-       * IMPORTANT: Re-enable this block before shipping or testing on real devices.
-       */}
+      {/* Legacy location permission modal - shows if critical permissions missing */}
       <LocationPermissionModal 
-        visible={showPermissionModal} 
+        visible={ENABLE_PERMISSIONS_ONBOARDING && showPermissionModal && !showOnboarding} 
         isLocationEnabled={isLocationEnabled}
         onOpenAppSettings={openAppSettings}
         onOpenLocationSettings={openLocationSettings}
@@ -215,7 +213,7 @@ function RootLayoutNav() {
        * UI blocking overlay is disabled to allow development without background permission.
        * IMPORTANT: Re-enable this block before shipping or testing on real devices.
        */}
-      {(isLocationEnabled === false || !backgroundPermissionGranted) && (
+      {ENABLE_PERMISSIONS_ONBOARDING && (isLocationEnabled === false || !backgroundPermissionGranted) && !showOnboarding && (
         <View style={styles.blockingOverlay} pointerEvents="auto">
           <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
         </View>

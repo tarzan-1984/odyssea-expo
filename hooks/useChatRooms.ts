@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
+import * as Notifications from 'expo-notifications';
 import { chatApi } from '@/app-api/chatApi';
 import { chatCacheService } from '@/services/ChatCacheService';
 import { ChatRoom } from '@/components/ChatListItem';
@@ -280,10 +281,10 @@ export const useChatRooms = (): UseChatRoomsReturn => {
         }));
 
         // Merge API data with current state to preserve real-time updates.
-        // В обычном режиме (forceRefresh === false) мы считаем store (WebSocket) источником истины
-        // по unreadCount и lastMessage. Но при forceRefresh (например, после возврата из background,
-        // когда WebSocket был отключён и пропустил сообщения) нужно доверять API/бэкенду, иначе
-        // мы затрём новые значения unreadCount нулями из стора.
+        // In normal mode (forceRefresh === false) we treat the store (WebSocket) as source of truth
+        // for unreadCount and lastMessage. But when forceRefresh is true (for example after returning
+        // from background when WebSocket was disconnected and missed messages), we must trust API/backend,
+        // otherwise we may overwrite new unreadCount values with zeros from the store.
         storeSetChatRooms((() => {
           const mergedRooms = normalizedApiRooms.map(apiRoom => {
             const storeRoom = chatRooms.find(storeRoom => storeRoom.id === apiRoom.id);
@@ -291,21 +292,20 @@ export const useChatRooms = (): UseChatRoomsReturn => {
               let finalUnreadCount = 0;
 
               if (!forceRefresh && storeRoom.unreadCount !== undefined && storeRoom.unreadCount !== null) {
-                // Обычный режим: приоритет у значения из стора (обновлённого через WebSocket).
+                // Normal mode: prioritize value from the store (updated via WebSocket).
                 finalUnreadCount = storeRoom.unreadCount;
               } else if (apiRoom.unreadCount !== undefined && apiRoom.unreadCount !== null) {
-                // При forceRefresh (или если в сторе нет значения) — доверяем API.
+                // When forceRefresh is true (or there is no value in store) — trust API.
                 finalUnreadCount = apiRoom.unreadCount;
               } else if (storeRoom.unreadCount !== undefined && storeRoom.unreadCount !== null) {
-                // Запасной вариант: если API не вернул счётчик, но в сторе он есть — используем его.
+                // Fallback: if API did not return a counter but the store has one — use the store value.
                 finalUnreadCount = storeRoom.unreadCount;
               }
 
-              // Для lastMessage и updatedAt логика аналогичная:
-              // - в обычном режиме используем значения из стора, чтобы сохранить
-              //   обновления по WebSocket;
-              // - при forceRefresh (возврат из background, WebSocket мог пропустить сообщения)
-              //   доверяем API и полностью синхронизируем lastMessage/updatedAt с бэкендом.
+              // For lastMessage and updatedAt logic is similar:
+              // - in normal mode use values from the store to preserve WebSocket updates;
+              // - when forceRefresh is true (returning from background where WebSocket might miss messages)
+              //   trust API and fully synchronize lastMessage/updatedAt with backend.
               const finalLastMessage =
                 !forceRefresh && storeRoom.lastMessage
                   ? storeRoom.lastMessage
@@ -485,6 +485,15 @@ export const useChatRooms = (): UseChatRoomsReturn => {
                   lastMessageCreatedAt: room.lastMessage?.createdAt,
                 })),
               });
+
+              // Try to align OS badge counter with real unread messages count.
+              // Note: On Android badge support depends on launcher, but where supported
+              // this will set the unread messages count on the app icon.
+              try {
+                await Notifications.setBadgeCountAsync(totalUnread);
+              } catch (e) {
+                console.warn('[useChatRooms] Failed to set badge count:', e);
+              }
             } catch (error) {
               console.error('❌ [useChatRooms] Failed to sync on app open:', error);
             }

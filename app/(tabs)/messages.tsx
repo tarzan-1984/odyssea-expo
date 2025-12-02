@@ -229,9 +229,9 @@ export default function MessagesScreen() {
   };
 
   // Refresh chat rooms when screen comes into focus
-  // Основная синхронизация при выходе из background теперь живёт в useChatRooms (AppState эффект).
-  // Здесь лишь гарантируем, что при первом показе экрана или когда WebSocket не подключён,
-  // список чатов будет загружен.
+  // Main synchronization when returning from background now lives inside useChatRooms (AppState effect).
+  // Here we only ensure that on first screen appearance or when WebSocket is disconnected
+  // the chat list will be loaded.
   useFocusEffect(
     React.useCallback(() => {
       // If WebSocket is connected and we have data in store, no need to load
@@ -252,17 +252,17 @@ export default function MessagesScreen() {
     }, [loadChatRooms, isConnected, chatRooms.length])
   );
 
-  // При возврате приложения из неактивного состояния убираем фокус с поля поиска
-  // и закрываем клавиатуру, чтобы она не всплывала сама по себе.
+  // When app returns from inactive state, remove focus from search input
+  // and dismiss the keyboard so it does not appear automatically.
   React.useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
       const prevState = appStateRef.current;
 
-      // Переход из inactive/background в active
+      // Transition from inactive/background to active
       if (prevState.match(/inactive|background/) && nextAppState === 'active') {
         console.log('📱 [MessagesScreen] App became active, dismissing keyboard');
         Keyboard.dismiss();
-        // Помечаем, что следующий фокус на поле поиска нужно подавить
+        // Mark that the next automatic focus on search input should be suppressed
         preventNextSearchFocusRef.current = true;
       }
 
@@ -324,8 +324,8 @@ export default function MessagesScreen() {
                 value={searchQuery}
                 onChangeText={setSearchQuery}
                 onFocus={() => {
-                  // Если приложение только что вернулось из background и система
-                  // автоматически фокусирует прошлое поле ввода — сразу снимаем фокус.
+                  // If the app has just returned from background and the system
+                  // automatically focuses the previous input — immediately blur it.
                   if (preventNextSearchFocusRef.current) {
                     preventNextSearchFocusRef.current = false;
                     Keyboard.dismiss();

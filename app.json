@@ -10,13 +10,18 @@
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/images/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "resizeMode": "cover",
+      "backgroundColor": "#292966"
     },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.odyssea.app",
       "icon": "./assets/app-icon.png",
+      "splash": {
+        "image": "./assets/images/splash-icon.png",
+        "resizeMode": "cover",
+        "backgroundColor": "#292966"
+      },
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "This app uses location to share your current location and update it automatically.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "This app uses location to share your current location and update it automatically in the background.",
@@ -46,8 +51,13 @@
         "READ_MEDIA_IMAGES",
         "READ_EXTERNAL_STORAGE",
         "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION"
-      ]
+        "android.permission.ACCESS_FINE_LOCATION",
+      ],
+      "splash": {
+        "image": "./assets/images/splash-icon.png",
+        "resizeMode": "cover",
+        "backgroundColor": "#292966"
+      }
     },
     "web": {
       "bundler": "metro",
