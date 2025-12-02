@@ -234,22 +234,21 @@ export default function MessagesScreen() {
   // the chat list will be loaded.
   useFocusEffect(
     React.useCallback(() => {
-      // If WebSocket is connected and we have data in store, no need to load
-      // WebSocket provides real-time updates, so data is already up-to-date
-      if (isConnected && chatRooms.length > 0) {
-        // WebSocket is connected and we have data - no API call needed
-        // WebSocket events (messagesMarkedAsRead, newMessage, chatRoomCreated, etc.) update the store
+      // If we already have chat rooms in the store, do not trigger additional loads,
+      // regardless of WebSocket connection status.
+      if (chatRooms.length > 0) {
         return;
       }
 
-      // Only load if WebSocket is disconnected or store is empty
-      // This ensures we sync with server when offline or on first load
-      if (!isConnected || chatRooms.length === 0) {
+      // Only load when store is empty (first load or after reset).
+      // When offline, this will still try once, but won't keep reloading
+      // on every focus while there is data in the store.
+      if (chatRooms.length === 0) {
         loadChatRooms(false).catch((error) => {
           console.error('Failed to load chat rooms on focus:', error);
         });
       }
-    }, [loadChatRooms, isConnected, chatRooms.length])
+    }, [loadChatRooms, chatRooms.length])
   );
 
   // When app returns from inactive state, remove focus from search input

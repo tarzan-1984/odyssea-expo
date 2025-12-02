@@ -462,6 +462,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       // Clear navigation data
       await AsyncStorage.removeItem('@pending_chat_navigation');
+      // Clear per-session chat state (opened chat rooms list)
+      await AsyncStorage.removeItem('@chat_opened_rooms');
       
       console.log('💾 [AuthContext] Cleared all AsyncStorage data (settings, location, user profile, navigation)');
       

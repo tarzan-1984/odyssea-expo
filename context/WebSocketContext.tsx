@@ -122,6 +122,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     }
 
 
+    console.log('🔌 [WebSocket] Creating socket connection to:', WS_URL);
     // Create new socket connection with authentication
     const newSocket = io(WS_URL, {
       auth: {
@@ -144,6 +145,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       setIsConnected(true);
       reconnectAttempts.current = 0;
       isConnectingRef.current = false;
+      console.log('✅ [WebSocket] Connected, socket id:', newSocket.id);
 
       // Clear any pending reconnection attempts
       if (reconnectTimeoutRef.current) {
@@ -173,6 +175,8 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     newSocket.on('disconnect', (reason) => {
       setIsConnected(false);
       isConnectingRef.current = false;
+
+      console.log('🔌 [WebSocket] Disconnected, reason:', reason);
 
       // Attempt to reconnect if disconnected unexpectedly
       // Handle various disconnect reasons:
@@ -265,7 +269,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
     // Handle server's connected event
     newSocket.on('connected', (data: any) => {
-      console.log('✅ [WebSocket] Server confirmed connection');
+      console.log('✅ [WebSocket] Server confirmed connection', data);
     });
 
     // DEV: Log every incoming event to verify names/payloads
@@ -273,8 +277,10 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       newSocket.onAny((event: string, payload: any) => {
         try {
           const rid = payload?.chatRoomId || payload?.message?.chatRoomId || payload?.[0]?.chatRoomId;
-         // console.log(`🛰️ [WebSocket] onAny '${event}'`, rid ? `room=${rid}` : '', payload);
-        } catch {}
+          console.log(`🛰️ [WebSocket] onAny '${event}'`, rid ? `room=${rid}` : '', !!payload ? '(payload received)' : '(no payload)');
+        } catch (e) {
+          console.warn('🛰️ [WebSocket] onAny log error:', e);
+        }
       });
     }
 
@@ -928,18 +934,22 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
   // Disconnect event via EventBus is no longer used; call disconnect directly where needed
 
-  // Track app state to detect when app was closed
+  // Track app state to detect when app was in background
   const wasInBackgroundRef = useRef(false);
 
   // Handle app state changes (reconnect when app comes to foreground)
   useEffect(() => {
+    let prevState: AppStateStatus = AppState.currentState;
+
     const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      const previous = prevState;
+      prevState = nextAppState;
       appStateRef.current = nextAppState;
 
-      // Track when app goes to background/inactive
-      if (appStateRef.current.match(/active/) && nextAppState.match(/inactive|background/)) {
+      // Track when app really goes to background (ignore transient "inactive" states)
+      if (previous === 'active' && nextAppState === 'background') {
         wasInBackgroundRef.current = true;
-        console.log('📱 [WebSocket] App went to background/inactive');
+        console.log('📱 [WebSocket] App went to background');
       }
 
       if (nextAppState === 'active' && currentUser) {
@@ -950,10 +960,10 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           wasInBackgroundRef.current = false;
         }
 
+        // If we are truly disconnected, try to reconnect
         if (!isConnected && !socket && !isConnectingRef.current) {
-          // App came to foreground and we're disconnected, reset attempts and try to reconnect
           console.log('📱 [WebSocket] App became active, resetting reconnection attempts and attempting to reconnect...');
-          reconnectAttempts.current = 0; // Reset attempts when app comes to foreground
+          reconnectAttempts.current = 0;
           
           // Clear any existing timeout
           if (reconnectTimeoutRef.current) {
@@ -963,26 +973,9 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           
           connect();
         } else if (isConnected && wasInBackground) {
-          // App was in background and WebSocket is already connected
-          // Trigger sync event so useChatRooms can sync data
-          console.log('✅ [WebSocket] App became active, WebSocket already connected, sync should happen via useChatRooms');
-        } else {
-          console.log('✅ [WebSocket] App became active, already connected');
+          console.log('✅ [WebSocket] App became active, WebSocket already connected');
         }
       }
-
-      // When app goes to background/inactive, explicitly close WebSocket
-      // to prevent messages from being auto-marked as read in the background.
-      if (nextAppState.match(/inactive|background/)) {
-        if (socket) {
-          console.log('📱 [WebSocket] App moved to background, disconnecting socket');
-          socket.disconnect();
-          setSocket(null);
-          setIsConnected(false);
-          joinedRoomsRef.current.clear();
-        }
-      }
-
     });
 
     return () => {

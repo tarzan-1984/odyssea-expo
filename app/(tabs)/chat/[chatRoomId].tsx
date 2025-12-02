@@ -45,6 +45,7 @@ export default function ChatRoomScreen() {
     messages,
     isLoadingChatRoom,
     isLoadingMessages,
+    isInitialFullLoad,
     isLoadingOlderMessages,
     error,
     loadMoreMessages,
@@ -620,8 +621,11 @@ export default function ChatRoomScreen() {
             />
           )}
           
-        {/* Only show overlay when loading older messages (scroll up), not when receiving new messages via WebSocket */}
-        {isLoadingOlderMessages && messages.length > 0 && (
+        {/* Show overlay:
+            - when loading older messages (scroll up), OR
+            - when performing FIRST full load for a chat that has never been opened in this session.
+           In обоих случаях есть смысл блокировать UI и явно показывать загрузку. */}
+        {(isLoadingOlderMessages && messages.length > 0) || isInitialFullLoad ? (
           <View style={styles.loadingOverlay} pointerEvents="auto">
             <BlurView intensity={20} tint="light" style={StyleSheet.absoluteFill} />
             <View style={styles.loadingOverlayContent}>
@@ -629,7 +633,7 @@ export default function ChatRoomScreen() {
               <Text style={styles.loadingOverlayText}>Loading messages...</Text>
             </View>
           </View>
-        )}
+        ) : null}
         
         <ChatInputSection
           messageText={messageText}

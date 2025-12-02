@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { View, StyleSheet } from 'react-native';
+import { View, StyleSheet, LogBox } from 'react-native';
 import { BlurView } from 'expo-blur';
 import * as Location from 'expo-location';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
@@ -19,17 +19,10 @@ import PushTokenRegistrar from '@/components/notifications/PushTokenRegistrar';
 // Prevent the splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
 
-// Suppress non-critical errors from expo-keep-awake in development
+// Suppress non-critical "Unable to activate keep awake" redbox in development.
+// Это известная dev‑ошибка Expo, не влияющая на работу приложения.
 if (__DEV__) {
-  const originalError = console.error;
-  console.error = (...args: any[]) => {
-    const errorMessage = args[0]?.toString() || '';
-    // Ignore "Unable to activate keep awake" errors - they're non-critical
-    if (errorMessage.includes('Unable to activate keep awake')) {
-      return; // Silently ignore this error
-    }
-    originalError.apply(console, args);
-  };
+  LogBox.ignoreLogs(['Unable to activate keep awake']);
 }
 
 /**

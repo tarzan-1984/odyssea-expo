@@ -1,11 +1,41 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 import * as Notifications from 'expo-notifications';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { chatApi } from '@/app-api/chatApi';
 import { chatCacheService } from '@/services/ChatCacheService';
 import { ChatRoom } from '@/components/ChatListItem';
 import { useChatStore } from '@/stores/chatStore';
 import { useWebSocket } from '@/context/WebSocketContext';
+
+const OPENED_CHATS_KEY = '@chat_opened_rooms';
+
+// Keep opened chat room IDs in AsyncStorage in sync with existing chat rooms list.
+// This removes chats that were deleted / user left, so the "opened in this session"
+// information stays consistent.
+const syncOpenedChatsWithExistingRooms = async (rooms: ChatRoom[]) => {
+  try {
+    const stored = await AsyncStorage.getItem(OPENED_CHATS_KEY);
+    if (!stored) {
+      return;
+    }
+    const parsed = JSON.parse(stored);
+    if (!Array.isArray(parsed)) {
+      return;
+    }
+
+    const validIds = new Set(rooms.map((r) => r.id));
+    const filtered = parsed.filter(
+      (id: unknown) => typeof id === 'string' && validIds.has(id as string),
+    );
+
+    if (filtered.length !== parsed.length) {
+      await AsyncStorage.setItem(OPENED_CHATS_KEY, JSON.stringify(filtered));
+    }
+  } catch (e) {
+    console.warn('⚠️ [useChatRooms] Failed to sync opened chats list with existing rooms:', e);
+  }
+};
 
 /**
  * Sort chat rooms by pin status, mute status, and last message date
@@ -71,6 +101,8 @@ export const useChatRooms = (): UseChatRoomsReturn => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const hasLoadedOnceRef = useRef<boolean>(false);
+  const isConnectedRef = useRef<boolean>(isConnected);
+  const loadChatRoomsRef = useRef<typeof loadChatRooms | null>(null);
 
   // Sort chat rooms by pin status, mute status, and last message date
   const sortedChatRooms = useMemo(() => {
@@ -163,37 +195,39 @@ export const useChatRooms = (): UseChatRoomsReturn => {
         // Check if cache is fresh (less than 5 minutes old)
         const isCacheFresh = await chatCacheService.isCacheFresh(5);
 
-        if (isCacheFresh) {
-          // Load from cache for immediate display only if cache is fresh
-          const cachedRooms = await chatCacheService.getChatRooms();
-          if (cachedRooms.length > 0) {
-            // Merge cached data with current state to preserve real-time updates
-            // IMPORTANT: Prioritize store unreadCount (from WebSocket) over cached
-            // WebSocket updates are the source of truth for real-time data
-            const mergedCachedRooms = cachedRooms.map(cachedRoom => {
-              const storeRoom = currentRooms.find(storeRoom => storeRoom.id === cachedRoom.id);
-              if (storeRoom) {
-                // Prioritize store unreadCount (from WebSocket updates) over cached
-                // This ensures real-time updates are preserved when returning to screen
-                const finalUnreadCount = storeRoom.unreadCount !== undefined && storeRoom.unreadCount !== null
-                  ? storeRoom.unreadCount
-                  : (cachedRoom.unreadCount !== undefined && cachedRoom.unreadCount !== null ? cachedRoom.unreadCount : 0);
-                return {
-                  ...cachedRoom,
-                  unreadCount: finalUnreadCount,
-                  lastMessage: storeRoom.lastMessage || cachedRoom.lastMessage,
-                  updatedAt: storeRoom.updatedAt || cachedRoom.updatedAt,
-                } as ChatRoom;
-              }
-              // If no store room (component just mounted), use cached data as-is
-              // This ensures unreadCount from cache is preserved
-              return cachedRoom;
-            });
-            storeSetChatRooms(mergedCachedRooms);
-            setIsLoading(false);
-            return;
+          if (isCacheFresh) {
+            // Load from cache for immediate display only if cache is fresh
+            const cachedRooms = await chatCacheService.getChatRooms();
+            if (cachedRooms.length > 0) {
+              // Merge cached data with current state to preserve real-time updates
+              // IMPORTANT: Prioritize store unreadCount (from WebSocket) over cached
+              // WebSocket updates are the source of truth for real-time data
+              const mergedCachedRooms = cachedRooms.map(cachedRoom => {
+                const storeRoom = currentRooms.find(storeRoom => storeRoom.id === cachedRoom.id);
+                if (storeRoom) {
+                  // Prioritize store unreadCount (from WebSocket updates) over cached
+                  // This ensures real-time updates are preserved when returning to screen
+                  const finalUnreadCount = storeRoom.unreadCount !== undefined && storeRoom.unreadCount !== null
+                    ? storeRoom.unreadCount
+                    : (cachedRoom.unreadCount !== undefined && cachedRoom.unreadCount !== null ? cachedRoom.unreadCount : 0);
+                  return {
+                    ...cachedRoom,
+                    unreadCount: finalUnreadCount,
+                    lastMessage: storeRoom.lastMessage || cachedRoom.lastMessage,
+                    updatedAt: storeRoom.updatedAt || cachedRoom.updatedAt,
+                  } as ChatRoom;
+                }
+                // If no store room (component just mounted), use cached data as-is
+                // This ensures unreadCount from cache is preserved
+                return cachedRoom;
+              });
+              storeSetChatRooms(mergedCachedRooms);
+              // Clean up opened-chats session list from rooms that no longer exist
+              syncOpenedChatsWithExistingRooms(mergedCachedRooms).catch(() => {});
+              setIsLoading(false);
+              return;
+            }
           }
-        }
 
         // If cache is not fresh, load from API and merge with current state
         try {
@@ -234,6 +268,8 @@ export const useChatRooms = (): UseChatRoomsReturn => {
             chatCacheService.saveChatRooms(mergedRooms).catch(err => {
               console.error('❌ [useChatRooms] Failed to save to cache:', err);
             });
+            // Clean up opened-chats session list from rooms that no longer exist
+            syncOpenedChatsWithExistingRooms(mergedRooms).catch(() => {});
             return mergedRooms;
           })());
 
@@ -246,9 +282,9 @@ export const useChatRooms = (): UseChatRoomsReturn => {
           const cachedRooms = await chatCacheService.getChatRooms();
           if (cachedRooms.length > 0) {
             // Merge cached data with current state
-          storeSetChatRooms((() => {
+            storeSetChatRooms((() => {
               const mergedCachedRooms = cachedRooms.map(cachedRoom => {
-              const storeRoom = chatRooms.find(storeRoom => storeRoom.id === cachedRoom.id);
+                const storeRoom = chatRooms.find(storeRoom => storeRoom.id === cachedRoom.id);
                 if (storeRoom) {
                   // Prioritize store unreadCount, but use cached if store doesn't have it
                   const finalUnreadCount = storeRoom.unreadCount !== undefined && storeRoom.unreadCount !== null
@@ -264,8 +300,10 @@ export const useChatRooms = (): UseChatRoomsReturn => {
                 // If no store room, use cached data as-is (preserves unreadCount from cache)
                 return cachedRoom;
               });
-            return mergedCachedRooms;
-          })());
+              // Clean up opened-chats session list from rooms that no longer exist
+              syncOpenedChatsWithExistingRooms(mergedCachedRooms).catch(() => {});
+              return mergedCachedRooms;
+            })());
             setIsLoading(false);
             return;
           }
@@ -329,6 +367,8 @@ export const useChatRooms = (): UseChatRoomsReturn => {
           chatCacheService.saveChatRooms(mergedRooms).catch(err => {
             console.error('❌ [useChatRooms] Failed to save to cache:', err);
           });
+          // Clean up opened-chats session list from rooms that no longer exist
+          syncOpenedChatsWithExistingRooms(mergedRooms).catch(() => {});
           return mergedRooms;
         })());
       } catch (apiError) {
@@ -342,6 +382,15 @@ export const useChatRooms = (): UseChatRoomsReturn => {
       setIsLoading(false);
     }
   }, [isConnected, chatRooms]);
+
+  // Keep latest values in refs for use inside AppState listener
+  useEffect(() => {
+    isConnectedRef.current = isConnected;
+  }, [isConnected]);
+
+  useEffect(() => {
+    loadChatRoomsRef.current = loadChatRooms;
+  }, [loadChatRooms]);
 
   /**
    * Force refresh chat rooms from API (ignoring cache)
@@ -359,6 +408,8 @@ export const useChatRooms = (): UseChatRoomsReturn => {
 
       storeSetChatRooms(normalizedApiRooms);
       await chatCacheService.saveChatRooms(normalizedApiRooms);
+      // Clean up opened-chats session list from rooms that no longer exist
+      await syncOpenedChatsWithExistingRooms(normalizedApiRooms);
     } catch (error) {
       console.error('❌ [useChatRooms] Failed to refresh chat rooms:', error);
       setError('Failed to refresh chat rooms');
@@ -466,25 +517,15 @@ export const useChatRooms = (): UseChatRoomsReturn => {
           // After sync, log resulting chat rooms and total unread count.
           (async () => {
             try {
-              await loadChatRooms(true);
+              if (loadChatRoomsRef.current) {
+                await loadChatRoomsRef.current(true);
+              }
 
               // Read the latest chat rooms from store after loadChatRooms finishes
               const latestRooms = useChatStore.getState().chatRooms;
               const totalUnread = latestRooms.reduce((total, room) => {
                 return total + (room.unreadCount || 0);
               }, 0);
-
-              console.log('✅ [useChatRooms] Chat rooms synced on app active. Summary:', {
-                totalChats: latestRooms.length,
-                totalUnread,
-                chats: latestRooms.map((room) => ({
-                  id: room.id,
-                  name: room.name,
-                  unreadCount: room.unreadCount || 0,
-                  lastMessageId: room.lastMessage?.id,
-                  lastMessageCreatedAt: room.lastMessage?.createdAt,
-                })),
-              });
 
               // Try to align OS badge counter with real unread messages count.
               // Note: On Android badge support depends on launcher, but where supported
@@ -501,7 +542,7 @@ export const useChatRooms = (): UseChatRoomsReturn => {
         } else {
           // App was already active (just switching between screens)
           // Only reset flags if WebSocket is not connected
-          if (!isConnected) {
+          if (!isConnectedRef.current) {
             hasLoadedOnceRef.current = false;
           }
         }
@@ -513,7 +554,7 @@ export const useChatRooms = (): UseChatRoomsReturn => {
     return () => {
       subscription.remove();
     };
-  }, [isConnected, loadChatRooms]);
+  }, []); // subscribe once; use refs for latest values
 
   // Load chat rooms on mount (only once)
   useEffect(() => {

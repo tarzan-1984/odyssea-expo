@@ -1,5 +1,7 @@
 import * as Location from 'expo-location';
 import { StatusValue } from '@/components/common/StatusSelect';
+import { API_BASE_URL } from '@/lib/config';
+import { secureStorage } from '@/utils/secureStorage';
 
 /**
  * Format date and time for TMS API
@@ -61,6 +63,17 @@ export function mapStatusToApi(statusValue: StatusValue): string {
     'loaded_enroute': 'loaded_enroute',
   };
   return statusMap[statusValue] || 'available';
+}
+
+/**
+ * Get local time of device as ISO-like string without timezone suffix.
+ * Example: "2025-12-02T22:05:20.818" (exactly what user sees on the phone).
+ */
+export function getLocalIsoString(date: Date = new Date()): string {
+  const offsetMinutes = date.getTimezoneOffset();
+  const localTime = new Date(date.getTime() - offsetMinutes * 60_000);
+  // Remove trailing "Z" to avoid it being interpreted as UTC
+  return localTime.toISOString().replace(/Z$/, '');
 }
 
 /**
@@ -160,6 +173,95 @@ export async function sendLocationUpdateToTMS(
   } catch (error) {
     console.error('[locationApi] ❌ Error sending location update:', error);
     return false;
+  }
+}
+
+/**
+ * Send location update to our own backend (users table)
+ * Fire-and-forget helper: callers can ignore the returned promise.
+ */
+export async function sendLocationUpdateToBackendUser(params: {
+  location?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  latitude: number;
+  longitude: number;
+  lastUpdateIso?: string;
+}) {
+  try {
+    if (!API_BASE_URL) {
+      console.warn('[locationApi] API_BASE_URL is not configured, skipping backend location update');
+      return;
+    }
+
+    const accessToken = await secureStorage.getItemAsync('accessToken');
+    const userJson = await secureStorage.getItemAsync('user');
+
+    if (!accessToken || !userJson) {
+      console.warn('[locationApi] Missing access token or user data, skipping backend location update');
+      return;
+    }
+
+    const user = JSON.parse(userJson);
+    const userId = user?.id;
+
+    if (!userId) {
+      console.warn('[locationApi] User ID not found in secure storage, skipping backend location update');
+      return;
+    }
+
+    const url = `${API_BASE_URL}/v1/users/${userId}/location`;
+
+    const body = {
+      location: params.location,
+      city: params.city,
+      state: params.state,
+      zip: params.zip,
+      latitude: params.latitude,
+      longitude: params.longitude,
+      // Use either explicitly provided client timestamp or device local time string
+      lastLocationUpdateAt: params.lastUpdateIso ?? getLocalIsoString(),
+    };
+
+    try {
+      console.log('[locationApi] 🔄 Sending location update to backend users endpoint...', {
+        url,
+        body,
+      });
+
+      const response = await fetch(url, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify(body),
+      });
+
+      let responseData: any = null;
+      try {
+        responseData = await response.json();
+      } catch {
+        // ignore JSON parse errors, maybe empty body
+      }
+
+      if (response.ok) {
+        console.log(
+          '[locationApi] ✅ Backend user location updated successfully',
+          responseData ? { status: response.status, data: responseData } : { status: response.status },
+        );
+      } else {
+        console.warn(
+          '[locationApi] ❌ Backend user location update returned non-2xx status',
+          { status: response.status, data: responseData },
+        );
+      }
+    } catch (error) {
+      console.warn('[locationApi] ❌ Backend location update request failed:', error);
+    }
+  } catch (error) {
+    console.warn('[locationApi] ❌ Error while preparing backend location update:', error);
   }
 }
 

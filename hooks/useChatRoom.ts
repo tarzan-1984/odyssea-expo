@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { shallow } from 'zustand/shallow';
 import { AppState, AppStateStatus } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { chatApi, ArchiveDay, ArchiveFile } from '@/app-api/chatApi';
 import { messagesCacheService } from '@/services/MessagesCacheService';
 import { ChatRoom, Message } from '@/components/ChatListItem';
@@ -8,6 +9,8 @@ import { useWebSocket } from '@/context/WebSocketContext';
 import { useAuth } from '@/context/AuthContext';
 import { eventBus, AppEvents } from '@/services/EventBus';
 import { useChatStore } from '@/stores/chatStore';
+
+const OPENED_CHATS_KEY = '@chat_opened_rooms';
 
 // Stable empty array to avoid creating a new reference on each render
 const EMPTY_MESSAGES: Message[] = [];
@@ -17,7 +20,10 @@ interface UseChatRoomReturn {
   messages: Message[];
   isLoadingChatRoom: boolean;
   isLoadingMessages: boolean;
-  isLoadingOlderMessages: boolean; // Separate flag for loading older messages (scroll up)
+  // Full initial load for first session open (forces last 50 messages from API)
+  isInitialFullLoad: boolean;
+  // Separate flag for loading older messages (scroll up)
+  isLoadingOlderMessages: boolean;
   error: string | null;
   hasMoreMessages: boolean;
   currentPage: number;
@@ -40,6 +46,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
   const [isLoadingChatRoom, setIsLoadingChatRoom] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false); // Separate flag for loading older messages (scroll up)
+  const [isInitialFullLoad, setIsInitialFullLoad] = useState(false); // Full initial load for first session open
   const [error, setError] = useState<string | null>(null);
   const [hasMoreMessages, setHasMoreMessages] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
@@ -47,6 +54,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
   const currentRoomRef = useRef<string | null>(null);
   const hasLoadedMessagesOnceRef = useRef<Record<string, boolean>>({});
   const isLoadingMoreRef = useRef(false); // Prevent multiple simultaneous loadMoreMessages calls
+  const openedChatsRef = useRef<Set<string> | null>(null);
   
   // Archive-related state
   const [availableArchives, setAvailableArchives] = useState<ArchiveDay[]>([]);
@@ -616,6 +624,28 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
         setIsLoadingMessages(true);
         setError(null);
 
+        // Ensure opened chat rooms set is loaded from AsyncStorage
+        if (!openedChatsRef.current) {
+          try {
+            const stored = await AsyncStorage.getItem(OPENED_CHATS_KEY);
+            if (stored) {
+              const parsed = JSON.parse(stored);
+              if (Array.isArray(parsed)) {
+                openedChatsRef.current = new Set<string>(parsed);
+              } else {
+                openedChatsRef.current = new Set<string>();
+              }
+            } else {
+              openedChatsRef.current = new Set<string>();
+            }
+          } catch (e) {
+            console.warn('⚠️ [useChatRoom] Failed to load opened chats from AsyncStorage:', e);
+            openedChatsRef.current = new Set<string>();
+          }
+        }
+
+        const openedChats = openedChatsRef.current!;
+
         const isFirstLoadForThisRoom = !hasLoadedMessagesOnceRef.current[chatRoomId];
         if (isFirstLoadForThisRoom) {
           hasLoadedMessagesOnceRef.current[chatRoomId] = true;
@@ -629,7 +659,78 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
           chatRoomId,
           isFirstLoadForThisRoom,
           storeMessagesCount: storeMessages.length,
+          hasOpenedBeforeInSession: openedChats.has(chatRoomId),
         });
+
+        // If this chat has never been opened in the current session, always perform
+        // a full initial load of the last 50 messages from API, regardless of what
+        // WebSocket already placed into the store. This guarantees that on the very
+        // first open we see full recent history, not only the last WebSocket messages.
+        if (!openedChats.has(chatRoomId)) {
+          try {
+            setIsInitialFullLoad(true);
+            console.log('[useChatRoom][loadMessages] FIRST session open, forcing FULL load (last 50 messages)', {
+              chatRoomId,
+              limit,
+            });
+
+            const response = await chatApi.getMessages(chatRoomId, 1, limit);
+            const sortedMessages = [...response.messages].sort(
+              (a, b) =>
+                new Date(a.createdAt).getTime() -
+                new Date(b.createdAt).getTime()
+            );
+
+            setMessages(sortedMessages);
+
+            // Update store and cache in background
+            setTimeout(async () => {
+              try {
+                useChatStore.getState().setMessages(chatRoomId, sortedMessages);
+              } catch {}
+              await messagesCacheService.saveMessages(
+                chatRoomId,
+                sortedMessages
+              );
+            }, 0);
+
+            // Recalculate unreadCount based on actual messages
+            recalculateUnreadCount(sortedMessages);
+
+            // Update pagination state
+            setCurrentPage(1);
+            setHasMoreMessages(response.hasMore);
+
+            // Mark this chat as opened in the current session and persist
+            try {
+              openedChats.add(chatRoomId);
+              await AsyncStorage.setItem(
+                OPENED_CHATS_KEY,
+                JSON.stringify(Array.from(openedChats))
+              );
+            } catch (e) {
+              console.warn('⚠️ [useChatRoom] Failed to persist opened chat rooms:', e);
+            }
+
+            setIsLoadingMessages(false);
+            setIsInitialFullLoad(false);
+            console.log('[useChatRoom][loadMessages] FIRST session FULL load done', {
+              chatRoomId,
+              loadedCount: sortedMessages.length,
+              hasMore: response.hasMore,
+            });
+
+            return;
+          } catch (err) {
+            console.warn(
+              '⚠️ [useChatRoom] FIRST session full load failed, falling back to regular logic for chatRoomId=',
+              chatRoomId,
+              err
+            );
+            setIsInitialFullLoad(false);
+            // Fall through to existing logic below (store/cache/API) if full load fails
+          }
+        }
         
         // If there are unread messages for this chat, but store has no messages yet
         // (for example just logged in / returned from background and messages
@@ -1514,6 +1615,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
     messages,
     isLoadingChatRoom,
     isLoadingMessages,
+    isInitialFullLoad,
     isLoadingOlderMessages,
     error,
     hasMoreMessages,

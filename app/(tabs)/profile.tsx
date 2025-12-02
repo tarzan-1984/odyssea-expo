@@ -561,7 +561,7 @@ const styles = StyleSheet.create({
   screenTitle: {
     color: colors.neutral.white,
     fontFamily: fonts["700"],
-    fontSize: fp(18),
+    fontSize: fp(20),
     textTransform: 'capitalize',
   },
   screenWrap: {
@@ -578,7 +578,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingTop: 0,
+    paddingTop: rem(15),
     paddingBottom: rem(16),
     backgroundColor: colors.primary.violet,
     width: '100%',

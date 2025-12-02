@@ -55,7 +55,10 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }: any) => {
     if (locations && locations.length > 0) {
       const location = locations[locations.length - 1];
       const { latitude, longitude } = location.coords;
-      const timestamp = new Date().toISOString();
+      // Local device time string without timezone suffix (exactly what user sees)
+      const now = new Date();
+      const local = new Date(now.getTime() - now.getTimezoneOffset() * 60_000);
+      const timestamp = local.toISOString().replace(/Z$/, '');
       
       console.log(`📍 [LocationTask] New location received at ${new Date().toLocaleTimeString()}:`, {
         latitude: latitude.toFixed(6),
@@ -148,11 +151,13 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }: any) => {
                   // Dynamically import location API function to avoid issues in background task
                   // This works on both iOS and Android
                   let sendLocationUpdateToTMS;
+                  let sendLocationUpdateToBackendUser;
                   try {
                     console.log(`📦 [LocationTask] Importing location API module...`);
                     // Use require for background task compatibility (works on both platforms)
                     const locationApiModule = require('@/utils/locationApi');
                     sendLocationUpdateToTMS = locationApiModule.sendLocationUpdateToTMS;
+                    sendLocationUpdateToBackendUser = locationApiModule.sendLocationUpdateToBackendUser;
                     console.log(`✅ [LocationTask] Location API module imported successfully`);
                   } catch (importError) {
                     console.error('❌ [LocationTask] Failed to import locationApi:', importError);
@@ -180,6 +185,31 @@ TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }: any) => {
                   
                   if (success) {
                     console.log(`✅ [LocationTask] API call successful (took ${apiDuration}ms)`);
+
+                    // Fire-and-forget update to our own backend with extended location info
+                    try {
+                      const geo = (reverseGeocode && reverseGeocode.length > 0) ? reverseGeocode[0] : null;
+                      const city =
+                        geo?.city || geo?.subregion || geo?.district || undefined;
+                      const state = geo?.region ? geo.region.split(' ')[0] : undefined;
+                      const locationString = geo
+                        ? `${city || ''} ${state || ''} ${postalCode || ''}`.trim()
+                        : undefined;
+
+                    if (sendLocationUpdateToBackendUser) {
+                      void sendLocationUpdateToBackendUser({
+                        location: locationString,
+                        city,
+                        state,
+                        zip: postalCode,
+                        latitude,
+                        longitude,
+                        lastUpdateIso: timestamp,
+                      });
+                    }
+                    } catch (backendError) {
+                      console.warn('⚠️ [LocationTask] Failed to send location to backend users endpoint:', backendError);
+                    }
                   } else {
                     console.warn(`⚠️ [LocationTask] API call returned false (took ${apiDuration}ms)`);
                   }

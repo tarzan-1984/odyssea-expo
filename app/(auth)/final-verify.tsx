@@ -16,7 +16,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { LOCATION_TASK_NAME, LOCATION_UPDATE_INTERVAL } from '@/tasks/locationTask';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { sendLocationUpdateToTMS } from '@/utils/locationApi';
+import { sendLocationUpdateToTMS, sendLocationUpdateToBackendUser, getLocalIsoString } from '@/utils/locationApi';
 import PermissionsAssistant from '@/components/PermissionsAssistant';
 
 /**
@@ -307,63 +307,78 @@ export default function FinalVerifyScreen() {
     }
   }, [authState.userLocation, authState.userZipCode, automaticLocationSharing, startBackgroundLocationTracking]); // Run when location data is available
 
-  // Check for location updates from AsyncStorage (when app opens after background updates)
-  // Also periodically sync to catch updates from background task
-  useEffect(() => {
-    const checkForLocationUpdates = async () => {
-      try {
-        // Sync lastLocationUpdate from AsyncStorage to AuthContext
-        await syncLocationFromAsyncStorage();
+  // Check for location updates from AsyncStorage (when app opens or returns from background)
+  const checkForLocationUpdates = useCallback(async () => {
+    try {
+      // Sync lastLocationUpdate from AsyncStorage to AuthContext
+      await syncLocationFromAsyncStorage();
+      
+      // Load location from AsyncStorage (updated by background task or manual updates)
+      const locationJson = await AsyncStorage.getItem('@user_location');
+      if (locationJson) {
+        const locationData = JSON.parse(locationJson);
+        const { latitude, longitude, zipCode } = locationData;
         
-        // Load location from AsyncStorage (updated by background task or manual updates)
-        const locationJson = await AsyncStorage.getItem('@user_location');
-        if (locationJson) {
-          const locationData = JSON.parse(locationJson);
-          const { latitude, longitude, zipCode } = locationData;
-          
-          // Update local state and map if coordinates exist
-          if (latitude && longitude) {
-            setUserLocation({ latitude, longitude });
-            if (zipCode) {
-              setZip(zipCode);
-            }
-            
-            // Update map
-            const updateRegion: Region = {
-              latitude,
-              longitude,
-              latitudeDelta: 0.008,
-              longitudeDelta: 0.008,
-            };
-            
-            mapRef.current?.animateToRegion(updateRegion, 1000);
-            
-            // Update address label
-            try {
-              const [geo] = await Location.reverseGeocodeAsync({ latitude, longitude });
-              if (geo) {
-                setLocationLabel(formatAddressLabel(geo));
-              }
-            } catch {}
+        // Update local state and map if coordinates exist
+        if (latitude && longitude) {
+          setUserLocation({ latitude, longitude });
+          if (zipCode) {
+            setZip(zipCode);
           }
+          
+          // Update map
+          const updateRegion: Region = {
+            latitude,
+            longitude,
+            latitudeDelta: 0.008,
+            longitudeDelta: 0.008,
+          };
+          
+          mapRef.current?.animateToRegion(updateRegion, 1000);
+          
+          // Update address label
+          try {
+            const [geo] = await Location.reverseGeocodeAsync({ latitude, longitude });
+            if (geo) {
+              setLocationLabel(formatAddressLabel(geo));
+            }
+          } catch {}
         }
-      } catch (error) {
-        console.error('❌ [FinalVerify] Failed to check location updates:', error);
       }
-    };
-
-    // Check on mount and when automatic sharing is enabled
-    if (automaticLocationSharing) {
-      checkForLocationUpdates();
-      
-      // Set up periodic sync every 30 seconds to catch background updates
-      const syncInterval = setInterval(() => {
-        checkForLocationUpdates();
-      }, 30000); // Check every 30 seconds
-      
-      return () => clearInterval(syncInterval);
+    } catch (error) {
+      console.error('❌ [FinalVerify] Failed to check location updates:', error);
     }
-  }, [automaticLocationSharing, syncLocationFromAsyncStorage]);
+  }, [syncLocationFromAsyncStorage, setZip, formatAddressLabel]);
+
+  useEffect(() => {
+    // Always sync once on mount
+    checkForLocationUpdates();
+
+    // When automatic sharing is enabled, periodically sync to catch background updates
+    if (!automaticLocationSharing) {
+      return;
+    }
+
+    const syncInterval = setInterval(() => {
+      checkForLocationUpdates();
+      console.log('===========update location============');
+    }, 20000); // Check every 20 seconds
+    
+    return () => clearInterval(syncInterval);
+  }, [automaticLocationSharing, checkForLocationUpdates]);
+
+  // Additionally, sync when app returns from background to active state
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        checkForLocationUpdates();
+      }
+    });
+
+    return () => {
+      sub.remove();
+    };
+  }, [checkForLocationUpdates]);
 
   // Stop background tracking when automatic sharing is disabled
   useEffect(() => {
@@ -485,16 +500,23 @@ export default function FinalVerifyScreen() {
         longitudeDelta: 0.008,
       };
       
-      // Reverse geocode to get ZIP code
+      // Reverse geocode to get ZIP code and human-readable address
       let postalCode = '';
+      let city: string | undefined;
+      let state: string | undefined;
+      let locationString: string | undefined;
       try {
         const reverseGeocode = await Location.reverseGeocodeAsync({ latitude, longitude });
         if (reverseGeocode && reverseGeocode.length > 0) {
-          postalCode = reverseGeocode[0].postalCode || '';
+          const geo = reverseGeocode[0];
+          postalCode = geo.postalCode || '';
+          city = geo.city || geo.subregion || geo.district || undefined;
+          state = geo.region ? geo.region.split(' ')[0] : undefined;
           if (postalCode) {
             setZip(postalCode);
           }
-          setLocationLabel(formatAddressLabel(reverseGeocode[0]));
+          locationString = formatAddressLabel(geo);
+          setLocationLabel(locationString);
         }
       } catch (geoError) {
         console.warn('Failed to get ZIP code from geocoding:', geoError);
@@ -518,6 +540,18 @@ export default function FinalVerifyScreen() {
           // Save coordinates and time only after successful API call
           if (success) {
             await updateUserLocation(latitude, longitude, finalZipCode);
+
+            // Fire-and-forget: update user location in our own backend (users table)
+            void sendLocationUpdateToBackendUser({
+              location: locationString,
+              city,
+              state,
+              zip: finalZipCode,
+              latitude,
+              longitude,
+              // Exact local time on the device
+              lastUpdateIso: getLocalIsoString(),
+            });
           }
         }
         
