@@ -5,6 +5,8 @@ import OSMMapView, { Region, MarkerData } from '@/components/maps/OSMMapView';
 import { BlurView } from 'expo-blur';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
+import * as Notifications from 'expo-notifications';
+import { reverseGeocodeAsync } from '@/utils/geocoding';
 import { colors } from '@/lib/colors';
 import { borderRadius, fonts, fp, rem, typography } from "@/lib";
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -122,7 +124,7 @@ export default function FinalVerifyScreen() {
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [updateSuccessMessage, setUpdateSuccessMessage] = useState<string | null>(null);
 
-  const formatAddressLabel = useCallback((info: Partial<Location.LocationGeocodedAddress>): string => {
+  const formatAddressLabel = useCallback((info: Partial<{ city?: string; state?: string; postalCode?: string; country?: string; region?: string; subregion?: string; district?: string }>): string => {
     const city = info.city || info.subregion || info.district || '';
     const regionCode = (info.region || '').split(' ')[0];
     const postalCode = info.postalCode || '';
@@ -158,44 +160,63 @@ export default function FinalVerifyScreen() {
   // Start background location tracking
   const startBackgroundLocationTracking = useCallback(async () => {
     try {
-      const appState = AppState.currentState;
-      if (appState !== 'active') {
-        console.log('📍 [BackgroundTracking] Skip start — app is not active:', appState);
-        return;
+      console.log('📍 [BackgroundTracking] ========== STARTING BACKGROUND TRACKING ==========');
+      
+      // IMPORTANT: On Android 12+, we need notification permission for foreground service
+      if (Platform.OS === 'android') {
+        const { status: notificationStatus } = await Notifications.getPermissionsAsync();
+        if (notificationStatus !== 'granted') {
+          console.log('📍 [BackgroundTracking] Requesting notification permission for foreground service...');
+          const { status } = await Notifications.requestPermissionsAsync();
+          if (status !== 'granted') {
+            console.warn('📍 [BackgroundTracking] Notification permission not granted - foreground service notification may not appear');
+            // Continue anyway - some Android versions allow foreground service without notification permission
+          } else {
+            console.log('📍 [BackgroundTracking] ✅ Notification permission granted');
+          }
+        }
       }
-
-      console.log('📍 [BackgroundTracking] Starting background tracking...');
+      
       // Check current permission status first
       const foregroundStatus = await Location.getForegroundPermissionsAsync();
+      console.log('📍 [BackgroundTracking] Foreground permission status:', foregroundStatus.status);
       
       if (foregroundStatus.status !== 'granted') {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') {
+          console.warn('📍 [BackgroundTracking] Foreground permission not granted');
           alert('Background location updates require location permission. Please enable location access in app settings.');
           return;
         }
+        console.log('📍 [BackgroundTracking] ✅ Foreground permission granted');
       }
 
       // Request background permissions
-      const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
-      if (backgroundStatus !== 'granted') {
-        alert('To enable automatic background location updates, set Location permission to "Always".\n\nSettings → Privacy & Security → Location Services → odysseaexpo → Select "Always"');
-        return;
-      }
-
-      // If task is already running, do not restart it again to avoid duplicate work
-      const alreadyRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
-      if (alreadyRunning) {
-        console.log('📍 [BackgroundTracking] Task already running, skipping restart');
-        return;
+      const backgroundStatusResult = await Location.getBackgroundPermissionsAsync();
+      console.log('📍 [BackgroundTracking] Background permission status:', backgroundStatusResult.status);
+      
+      if (backgroundStatusResult.status !== 'granted') {
+        console.log('📍 [BackgroundTracking] Requesting background permission...');
+        const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
+        if (backgroundStatus !== 'granted') {
+          console.warn('📍 [BackgroundTracking] Background permission not granted');
+          alert('To enable automatic background location updates, set Location permission to "Always".\n\nSettings → Privacy & Security → Location Services → odysseaexpo → Select "Always"');
+          return;
+        }
+        console.log('📍 [BackgroundTracking] ✅ Background permission granted');
       }
 
       // ALWAYS stop task first to ensure clean restart with new interval (defensive)
       const isRegistered = await TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME);
+      console.log('📍 [BackgroundTracking] Task registered:', isRegistered);
+      
       if (isRegistered) {
         const isRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
+        console.log('📍 [BackgroundTracking] Task currently running:', isRunning);
+        
         if (isRunning) {
           try {
+            console.log('📍 [BackgroundTracking] Stopping existing task before restart...');
             await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
             // Wait longer to ensure task fully stops
             await new Promise(resolve => setTimeout(resolve, 2000));
@@ -206,9 +227,12 @@ export default function FinalVerifyScreen() {
               console.warn('⚠️ [BackgroundTracking] Task still running, forcing stop again...');
               await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
               await new Promise(resolve => setTimeout(resolve, 2000));
+            } else {
+              console.log('📍 [BackgroundTracking] ✅ Task stopped successfully');
             }
-          } catch {
-            // Silently ignore "task not found" errors
+          } catch (stopError) {
+            console.warn('⚠️ [BackgroundTracking] Error stopping task:', stopError);
+            // Continue anyway - try to start
           }
         }
       }
@@ -216,9 +240,16 @@ export default function FinalVerifyScreen() {
       // Start location updates with current interval setting
       const intervalInMinutes = LOCATION_UPDATE_INTERVAL / (60 * 1000);
       
-      await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, {
+      console.log('📍 [BackgroundTracking] Starting location updates with interval:', intervalInMinutes, 'minutes');
+      console.log('📍 [BackgroundTracking] Platform:', Platform.OS);
+      console.log('📍 [BackgroundTracking] App state:', AppState.currentState);
+      
+      // IMPORTANT: On Android, when app is in foreground, location updates may come more frequently
+      // We use distanceInterval=0 to accept all updates, then filter by time in locationTask.ts
+      // On iOS, timeInterval may be ignored, so we filter in JavaScript
+      const locationOptions: Location.LocationTaskOptions = {
         accuracy: Location.Accuracy.Balanced,
-        timeInterval: LOCATION_UPDATE_INTERVAL,
+        timeInterval: LOCATION_UPDATE_INTERVAL, // Request updates every 1 minute
         // distanceInterval: minimum distance (meters) for a new update
         // BEHAVIOR ON iOS AND ANDROID:
         // - iOS: distanceInterval=0 accepts all updates for any movement
@@ -229,16 +260,95 @@ export default function FinalVerifyScreen() {
         // then filter by time in locationTask.ts (same logic on iOS and Android)
         distanceInterval: 0, // Accept all updates; we filter by time ourselves
         foregroundService: {
-          notificationTitle: 'Location Tracking',
-          notificationBody: `Tracking your location every ${intervalInMinutes} minutes`,
+          notificationTitle: 'Location Tracking Active',
+          notificationBody: `Tracking your location every ${intervalInMinutes} minute${intervalInMinutes !== 1 ? 's' : ''}`,
+          notificationColor: '#292966', // App primary color
         },
+      };
+      
+      console.log('📍 [BackgroundTracking] Location options:', {
+        accuracy: locationOptions.accuracy,
+        timeInterval: locationOptions.timeInterval,
+        distanceInterval: locationOptions.distanceInterval,
+        hasForegroundService: !!locationOptions.foregroundService,
       });
       
-      // Verify the task started
-      const verification = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
-      console.log('📍 [BackgroundTracking] hasStartedLocationUpdatesAsync =', verification, 'interval(min)=', intervalInMinutes);
+      // Double-check all permissions one more time
+      const finalForegroundCheck = await Location.getForegroundPermissionsAsync();
+      const finalBackgroundCheck = await Location.getBackgroundPermissionsAsync();
+      console.log('📍 [BackgroundTracking] Final permission check:');
+      console.log('📍 [BackgroundTracking] - Foreground:', finalForegroundCheck.status);
+      console.log('📍 [BackgroundTracking] - Background:', finalBackgroundCheck.status);
+      
+      if (finalForegroundCheck.status !== 'granted' || finalBackgroundCheck.status !== 'granted') {
+        console.error('❌ [BackgroundTracking] Permissions not fully granted!');
+        console.error('❌ [BackgroundTracking] Foreground:', finalForegroundCheck.status);
+        console.error('❌ [BackgroundTracking] Background:', finalBackgroundCheck.status);
+        return;
+      }
+      
+      // Check location services are enabled
+      const providerStatus = await Location.getProviderStatusAsync();
+      console.log('📍 [BackgroundTracking] Location services enabled:', providerStatus.locationServicesEnabled);
+      if (!providerStatus.locationServicesEnabled) {
+        console.error('❌ [BackgroundTracking] Location services are disabled!');
+        return;
+      }
+      
+      // Start location updates
+      console.log('📍 [BackgroundTracking] Calling startLocationUpdatesAsync...');
+      try {
+        await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, locationOptions);
+        console.log('📍 [BackgroundTracking] startLocationUpdatesAsync completed without error');
+      } catch (startError) {
+        console.error('❌ [BackgroundTracking] startLocationUpdatesAsync threw an error:', startError);
+        throw startError; // Re-throw to be caught by outer catch
+      }
+      
+      // Wait longer for the service to start (Android may need more time)
+      console.log('📍 [BackgroundTracking] Waiting for service to initialize...');
+      await new Promise(resolve => setTimeout(resolve, 3000)); // Increased to 3 seconds
+      
+      // Verify the task started - try multiple times with delays
+      let verification = false;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        console.log(`📍 [BackgroundTracking] Verification attempt ${attempt}/3...`);
+        verification = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
+        if (verification) {
+          console.log(`📍 [BackgroundTracking] ✅ Verification successful on attempt ${attempt}`);
+          break;
+        }
+        if (attempt < 3) {
+          console.log(`📍 [BackgroundTracking] ⏳ Waiting 2 seconds before next attempt...`);
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
+      
+      console.log('📍 [BackgroundTracking] ========== TASK START RESULT ==========');
+      console.log('📍 [BackgroundTracking] hasStartedLocationUpdatesAsync =', verification);
+      console.log('📍 [BackgroundTracking] interval(min) =', intervalInMinutes);
+      console.log('📍 [BackgroundTracking] =========================================');
+      
+      if (verification) {
+        console.log('📍 [BackgroundTracking] ✅✅✅ TASK STARTED SUCCESSFULLY! ✅✅✅');
+        console.log('📍 [BackgroundTracking] Foreground service notification should appear in notification tray');
+      } else {
+        console.error('❌ [BackgroundTracking] ❌❌❌ TASK FAILED TO START ❌❌❌');
+        console.error('❌ [BackgroundTracking] Verification returned false after 3 attempts');
+        console.error('❌ [BackgroundTracking] Possible causes:');
+        console.error('❌ [BackgroundTracking] 1. Permissions not granted (check above logs)');
+        console.error('❌ [BackgroundTracking] 2. Task not registered (check above logs)');
+        console.error('❌ [BackgroundTracking] 3. Android system restrictions');
+        console.error('❌ [BackgroundTracking] 4. Foreground service notification permission issue');
+      }
     } catch (error) {
-      console.error('❌ [LocationTask] Failed to start background tracking:', error);
+      console.error('❌ [BackgroundTracking] ========== ERROR STARTING TASK ==========');
+      console.error('❌ [BackgroundTracking] Failed to start background tracking:', error);
+      if (error instanceof Error) {
+        console.error('❌ [BackgroundTracking] Error message:', error.message);
+        console.error('❌ [BackgroundTracking] Error stack:', error.stack);
+      }
+      console.error('❌ [BackgroundTracking] =========================================');
     }
   }, []);
 
@@ -298,7 +408,8 @@ export default function FinalVerifyScreen() {
       // Prepare address label for saved location
       (async () => {
         try {
-          const [geo] = await Location.reverseGeocodeAsync({ latitude, longitude });
+          const reverseGeocode = await reverseGeocodeAsync({ latitude, longitude });
+          const geo = reverseGeocode && reverseGeocode.length > 0 ? reverseGeocode[0] : null;
           if (geo) {
             setLocationLabel(formatAddressLabel(geo));
           }
@@ -338,7 +449,8 @@ export default function FinalVerifyScreen() {
           
           // Update address label
           try {
-            const [geo] = await Location.reverseGeocodeAsync({ latitude, longitude });
+            const reverseGeocode = await reverseGeocodeAsync({ latitude, longitude });
+          const geo = reverseGeocode && reverseGeocode.length > 0 ? reverseGeocode[0] : null;
             if (geo) {
               setLocationLabel(formatAddressLabel(geo));
             }
@@ -401,9 +513,43 @@ export default function FinalVerifyScreen() {
       return;
     }
 
-    // Fire and forget: startBackgroundLocationTracking internally checks if task is already running
-    // and will skip duplicate starts.
-    startBackgroundLocationTracking();
+    // Start background tracking when automatic sharing is enabled
+    // Use a small delay to ensure app is fully initialized
+    const timer = setTimeout(() => {
+      console.log('📍 [FinalVerify] Automatic sharing enabled, starting background tracking...');
+      startBackgroundLocationTracking();
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [automaticLocationSharing, startBackgroundLocationTracking]);
+
+  // Periodically verify that background tracking is still running
+  useEffect(() => {
+    if (!automaticLocationSharing) {
+      return;
+    }
+
+    const checkTaskStatus = async () => {
+      try {
+        const isRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
+        if (!isRunning) {
+          console.warn('⚠️ [FinalVerify] Background task is not running! Restarting...');
+          await startBackgroundLocationTracking();
+        } else {
+          console.log('✅ [FinalVerify] Background task is running correctly');
+        }
+      } catch (error) {
+        console.error('❌ [FinalVerify] Error checking task status:', error);
+      }
+    };
+
+    // Check immediately
+    checkTaskStatus();
+
+    // Then check every 30 seconds
+    const statusInterval = setInterval(checkTaskStatus, 30000);
+
+    return () => clearInterval(statusInterval);
   }, [automaticLocationSharing, startBackgroundLocationTracking]);
 
   const handleUpdateStatus = async () => {
@@ -491,7 +637,13 @@ export default function FinalVerifyScreen() {
         }
       }
 
-      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const pos = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      if (!pos) {
+        console.warn('Failed to get current location');
+        return;
+      }
       const { latitude, longitude } = pos.coords;
       const nextRegion: Region = {
         latitude,
@@ -506,7 +658,7 @@ export default function FinalVerifyScreen() {
       let state: string | undefined;
       let locationString: string | undefined;
       try {
-        const reverseGeocode = await Location.reverseGeocodeAsync({ latitude, longitude });
+        const reverseGeocode = await reverseGeocodeAsync({ latitude, longitude });
         if (reverseGeocode && reverseGeocode.length > 0) {
           const geo = reverseGeocode[0];
           postalCode = geo.postalCode || '';
@@ -594,6 +746,9 @@ export default function FinalVerifyScreen() {
       await stopBackgroundLocationTracking();
       // Note: We keep coordinates and lastLocationUpdate in AsyncStorage to display on map
     } else {
+      // When enabling automatic location sharing, start background tracking
+      console.log('📍 [FinalVerify] Automatic location sharing enabled, starting background tracking...');
+      
       // When enabling automatic location sharing:
       // 1. Get current location if not available
       // 2. Send location update to API
@@ -616,13 +771,15 @@ export default function FinalVerifyScreen() {
             }
           }
 
-          const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+          const pos = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
           currentLatitude = pos.coords.latitude;
           currentLongitude = pos.coords.longitude;
           
           // Reverse geocode to get ZIP code
           try {
-            const reverseGeocode = await Location.reverseGeocodeAsync({ latitude: currentLatitude, longitude: currentLongitude });
+            const reverseGeocode = await reverseGeocodeAsync({ latitude: currentLatitude, longitude: currentLongitude });
             if (reverseGeocode && reverseGeocode.length > 0) {
               const postalCode = reverseGeocode[0].postalCode || '';
               if (postalCode) {
@@ -657,12 +814,13 @@ export default function FinalVerifyScreen() {
       // Send location update to TMS API
       if (status && currentZipCode) {
         console.log('[FinalVerify] Sending location update to TMS API after enabling auto-sharing...');
-        const success = await sendLocationUpdate(
+        const success = await sendLocationUpdateToTMS(
+          user?.externalId || '',
           currentLatitude,
           currentLongitude,
           currentZipCode,
           status,
-          '' // Empty string - function will use current date/time
+          ''
         );
         
         // Save coordinates and time only after successful API call
@@ -671,7 +829,7 @@ export default function FinalVerifyScreen() {
         }
       }
       
-      // Start background location tracking
+      // Start background location tracking (only once, not twice)
       await startBackgroundLocationTracking();
     }
   };

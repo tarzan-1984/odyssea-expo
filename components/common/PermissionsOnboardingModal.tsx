@@ -63,33 +63,28 @@ export default function PermissionsOnboardingModal({
       console.error('Failed to check location services:', e);
     }
 
-    // 2. Foreground Location Permission
+    // 2. Foreground & Background Location Permission
     try {
       const foregroundStatus = await Location.getForegroundPermissionsAsync();
-      const foregroundGranted = foregroundStatus.status === 'granted';
+      const backgroundStatus = await Location.getBackgroundPermissionsAsync();
+      const foreground = foregroundStatus.status === 'granted';
+      const background = backgroundStatus.status === 'granted';
       
       checks.push({
         id: 'foreground_location',
         title: 'Allow Location Access (While Using)',
         description: 'This app needs location permission to show your position on the map',
-        granted: foregroundGranted,
+        granted: foreground,
         action: async () => {
-          if (!foregroundGranted) {
+          if (!foreground) {
             await Location.requestForegroundPermissionsAsync();
+            await Location.requestBackgroundPermissionsAsync();
           }
           // Re-check after request
           setTimeout(checkAllPermissions, 500);
         },
-        actionLabel: foregroundGranted ? 'Granted ✓' : 'Grant Permission',
+        actionLabel: foreground ? 'Granted ✓' : 'Grant Permission',
       });
-    } catch (e) {
-      console.error('Failed to check foreground permission:', e);
-    }
-
-    // 3. Background Location Permission (Always)
-    try {
-      const backgroundStatus = await Location.getBackgroundPermissionsAsync();
-      const backgroundGranted = backgroundStatus.status === 'granted';
       
       checks.push({
         id: 'background_location',
@@ -97,14 +92,10 @@ export default function PermissionsOnboardingModal({
         description: Platform.OS === 'ios'
           ? 'Go to Settings → Privacy & Security → Location Services → Odyssea → Select "Always"'
           : 'Go to App Settings → Permissions → Location → Select "Allow all the time"',
-        granted: backgroundGranted,
+        granted: background,
         action: async () => {
-          if (!backgroundGranted) {
-            // First ensure foreground is granted
-            const fgStatus = await Location.getForegroundPermissionsAsync();
-            if (fgStatus.status !== 'granted') {
-              await Location.requestForegroundPermissionsAsync();
-            }
+          if (!background) {
+            await Location.requestForegroundPermissionsAsync();
             await Location.requestBackgroundPermissionsAsync();
           }
           // Open settings to allow "Always"
@@ -112,10 +103,10 @@ export default function PermissionsOnboardingModal({
           // Re-check after user returns
           setTimeout(checkAllPermissions, 500);
         },
-        actionLabel: backgroundGranted ? 'Granted ✓' : 'Open Settings',
+        actionLabel: background ? 'Granted ✓' : 'Open Settings',
       });
     } catch (e) {
-      console.error('Failed to check background permission:', e);
+      console.error('Failed to check location permissions:', e);
     }
 
     // 4. Notification Permission

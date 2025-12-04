@@ -36,6 +36,9 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
 		await Location.requestForegroundPermissionsAsync();
 		await Location.requestBackgroundPermissionsAsync();
 		checkPermissions();
+		setTimeout(() => {
+			checkPermissions();
+		}, 500);
 	};
 	
 	const requestNotifications = async () => {

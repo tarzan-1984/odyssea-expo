@@ -2,6 +2,7 @@ import * as Location from 'expo-location';
 import { StatusValue } from '@/components/common/StatusSelect';
 import { API_BASE_URL } from '@/lib/config';
 import { secureStorage } from '@/utils/secureStorage';
+import { sendLocationUpdateNative } from '@/utils/nativeHttpClient';
 
 /**
  * Format date and time for TMS API
@@ -38,6 +39,7 @@ export async function getLocationDetails(
   let country = 'USA';
   
   try {
+    // Use expo-location's native reverseGeocodeAsync - works in both foreground and background
     const reverseGeocode = await Location.reverseGeocodeAsync({ latitude, longitude });
     if (reverseGeocode && reverseGeocode.length > 0) {
       const geo = reverseGeocode[0];
@@ -128,48 +130,77 @@ export async function sendLocationUpdateToTMS(
     console.log('[locationApi] URL:', url);
     console.log('[locationApi] Request data:', requestData);
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'X-API-Key': apiKey,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestData),
+    // IMPORTANT: In headless JS (background task), fetch may hang or timeout
+    // Use XMLHttpRequest instead - it works better in headless JS on Android
+    console.log('[locationApi] Starting HTTP request with XMLHttpRequest (works in headless JS)...');
+    const fetchStartTime = Date.now();
+    
+    return new Promise<boolean>((resolve) => {
+      const xhr = new XMLHttpRequest();
+      const timeout = 10000; // 10 seconds
+      
+      xhr.timeout = timeout;
+      xhr.open('POST', url, true);
+      xhr.setRequestHeader('X-API-Key', apiKey);
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      
+      let resolved = false;
+      
+      xhr.onload = () => {
+        if (resolved) return;
+        resolved = true;
+        const fetchDuration = Date.now() - fetchStartTime;
+        console.log(`[locationApi] ✅ Request completed in ${fetchDuration}ms, status: ${xhr.status}`);
+        
+        let responseData: any;
+        try {
+          responseData = JSON.parse(xhr.responseText);
+          console.log(`[locationApi] ✅ Response parsed successfully`);
+        } catch (parseError) {
+          console.warn(`[locationApi] ⚠️ Failed to parse JSON, response: ${xhr.responseText?.substring(0, 200)}`);
+          responseData = { error: 'Invalid JSON response', raw: xhr.responseText?.substring(0, 200) };
+        }
+        
+        if (xhr.status >= 200 && xhr.status < 300) {
+          console.log('[locationApi] ✅ Location update sent successfully');
+          if (responseData?.success) {
+            console.log('[locationApi] TMS API confirmed success');
+          }
+          resolve(true);
+        } else {
+          const errorMessage = responseData?.message || responseData?.error || 'Unknown error';
+          const errorCode = responseData?.code || 'unknown';
+          console.error(`[locationApi] ❌ Failed to send location update: ${xhr.status} (${errorCode})`);
+          console.error(`[locationApi] Error message: ${errorMessage}`);
+          resolve(false);
+        }
+      };
+      
+      xhr.onerror = () => {
+        if (resolved) return;
+        resolved = true;
+        const fetchDuration = Date.now() - fetchStartTime;
+        console.error(`[locationApi] ❌ Request failed after ${fetchDuration}ms: Network error`);
+        resolve(false);
+      };
+      
+      xhr.ontimeout = () => {
+        if (resolved) return;
+        resolved = true;
+        const fetchDuration = Date.now() - fetchStartTime;
+        console.error(`[locationApi] ❌ Request timed out after ${fetchDuration}ms`);
+        resolve(false);
+      };
+      
+      try {
+        xhr.send(JSON.stringify(requestData));
+      } catch (sendError) {
+        if (resolved) return;
+        resolved = true;
+        console.error(`[locationApi] ❌ Failed to send request:`, sendError);
+        resolve(false);
+      }
     });
-
-    let responseData: any;
-    try {
-      responseData = await response.json();
-    } catch (parseError) {
-      // If response is not JSON (e.g., HTML error page), read as text
-      const textData = await response.text();
-      responseData = { error: 'Invalid JSON response', raw: textData.substring(0, 200) };
-    }
-    
-    console.log('[locationApi] TMS API Response status:', response.status);
-    
-    if (response.ok) {
-      console.log('[locationApi] ✅ Location update sent successfully');
-      if (responseData?.success) {
-        console.log('[locationApi] TMS API confirmed success');
-      }
-      return true;
-    } else {
-      // Log error details without overwhelming the console
-      const errorMessage = responseData?.message || responseData?.error || 'Unknown error';
-      const errorCode = responseData?.code || 'unknown';
-      console.error(`[locationApi] ❌ Failed to send location update: ${response.status} (${errorCode})`);
-      console.error(`[locationApi] Error message: ${errorMessage}`);
-      
-      // Only log full response data for non-500 errors or if it's small
-      if (response.status !== 500 && responseData && Object.keys(responseData).length < 10) {
-        console.warn('[locationApi] Response data:', responseData);
-      } else if (response.status === 500) {
-        console.warn('[locationApi] Server error (500) - this is a backend issue, not a client issue');
-      }
-      
-      return false;
-    }
   } catch (error) {
     console.error('[locationApi] ❌ Error sending location update:', error);
     return false;

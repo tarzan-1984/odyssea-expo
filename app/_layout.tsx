@@ -12,6 +12,7 @@ import { useLocationPermission } from '@/hooks/useLocationPermission';
 import LocationPermissionModal from '@/components/common/LocationPermissionModal';
 // Import background location task to register it
 import '@/tasks/locationTask';
+import { flushLocationQueue } from '@/tasks/locationTask';
 // Ensure notifications handler is always registered regardless of auth flow
 import '@/services/NotificationsService';
 import PushTokenRegistrar from '@/components/notifications/PushTokenRegistrar';
@@ -19,10 +20,12 @@ import PushTokenRegistrar from '@/components/notifications/PushTokenRegistrar';
 // Prevent the splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
 
-// Suppress non-critical "Unable to activate keep awake" redbox in development.
-// Это известная dev‑ошибка Expo, не влияющая на работу приложения.
+// Suppress non-critical, known Expo dev warnings that do not affect app behavior
 if (__DEV__) {
-  LogBox.ignoreLogs(['Unable to activate keep awake']);
+  LogBox.ignoreLogs([
+    'Unable to activate keep awake',
+    'View not attached to window manager', // LogBox dialog error
+  ]);
 }
 
 /**
@@ -100,7 +103,41 @@ function RootLayoutNav() {
     };
     
     initAuth();
-  }, [loadStoredAuth, checkLocationEnabled, checkBackgroundPermission, authState.isAuthenticated]);
+  }, [loadStoredAuth, checkLocationEnabled, checkBackgroundPermission]);
+
+  // Flush location queue when app becomes ready and authenticated
+  useEffect(() => {
+    if (!isReady || !authState.isAuthenticated) return;
+    
+    // Delay flush to ensure app is fully initialized
+    const timer = setTimeout(() => {
+      flushLocationQueue().catch((error) => {
+        console.warn('[RootLayoutNav] Failed to flush location queue:', error);
+      });
+    }, 1000); // Wait 1 second after app is ready
+    
+    return () => clearTimeout(timer);
+  }, [isReady, authState.isAuthenticated]);
+
+  // Also flush queue when app becomes active (comes from background)
+  useEffect(() => {
+    if (!isReady || !authState.isAuthenticated) return;
+    
+    const { AppState } = require('react-native');
+    const subscription = AppState.addEventListener('change', (nextAppState) => {
+      if (nextAppState === 'active') {
+        // App became active - flush queue immediately
+        console.log('[RootLayoutNav] App became active, flushing location queue...');
+        flushLocationQueue().catch((error) => {
+          console.warn('[RootLayoutNav] Failed to flush location queue:', error);
+        });
+      }
+    });
+    
+    return () => {
+      subscription.remove();
+    };
+  }, [isReady, authState.isAuthenticated]);
 
   // Check permissions when navigating between screens (only when segment actually changes)
   useEffect(() => {
@@ -145,12 +182,12 @@ function RootLayoutNav() {
     if (shouldShowModal && !hasRequestedPermissionRef.current) {
       const requestPermission = async () => {
         try {
-          // Check current permission status
+          // Check current permission status without triggering request
           const foregroundStatus = await Location.getForegroundPermissionsAsync();
+          const foreground = foregroundStatus.status === 'granted';
           
-          // If permission was never requested (status is 'undetermined'), request it now
-          // This will show the system dialog and create the entry in app settings
-          if (foregroundStatus.status === 'undetermined') {
+          // If no foreground permission, request it
+          if (!foreground) {
             hasRequestedPermissionRef.current = true;
             await requestForegroundPermission();
             await requestBackgroundPermission();
@@ -162,6 +199,7 @@ function RootLayoutNav() {
           }
         } catch (error) {
           console.error('❌ [RootLayoutNav] Failed to request permission:', error);
+          hasRequestedPermissionRef.current = true; // Prevent infinite retries
         }
       };
       

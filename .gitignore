@@ -41,3 +41,6 @@ app-example
 # generated native folders
 /ios
 /android
+# But keep android/libs for react-native-background-geolocation (must come after /android)
+!/android/libs/
+!/android/libs/**

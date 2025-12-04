@@ -469,17 +469,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       // Stop background location tracking
       try {
-        const { LOCATION_TASK_NAME } = await import('@/tasks/locationTask');
         const Location = await import('expo-location');
-        const TaskManager = await import('expo-task-manager');
-        
-        const isRegistered = await TaskManager.default.isTaskRegisteredAsync(LOCATION_TASK_NAME);
-        if (isRegistered) {
-          const isRunning = await Location.default.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
-          if (isRunning) {
-            await Location.default.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
-            console.log('🛑 [AuthContext] Stopped background location tracking');
-          }
+        const { LOCATION_TASK_NAME } = await import('@/tasks/locationTask');
+        const isRunning = await Location.default.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
+        if (isRunning) {
+          await Location.default.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+          console.log('🛑 [AuthContext] Stopped background location tracking');
         }
       } catch (locationError) {
         console.warn('⚠️ [AuthContext] Failed to stop background location tracking:', locationError);
