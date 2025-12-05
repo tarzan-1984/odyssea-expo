@@ -157,6 +157,31 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           await secureStorage.setItemAsync('accessToken', accessToken);
           await secureStorage.setItemAsync('refreshToken', refreshToken);
           await secureStorage.setItemAsync('user', JSON.stringify(user));
+          // Cache externalId, accessToken, and userId in AsyncStorage for background tasks (secureStorage may not work in background on iOS)
+          if (user?.externalId) {
+            try {
+              await AsyncStorage.setItem('@user_external_id', user.externalId);
+              console.log('💾 [AuthContext] External ID cached in AsyncStorage for background tasks');
+            } catch (cacheError) {
+              console.warn('⚠️ [AuthContext] Failed to cache externalId:', cacheError);
+            }
+          }
+          if (accessToken) {
+            try {
+              await AsyncStorage.setItem('@user_access_token', accessToken);
+              console.log('💾 [AuthContext] Access token cached in AsyncStorage for background tasks');
+            } catch (cacheError) {
+              console.warn('⚠️ [AuthContext] Failed to cache accessToken:', cacheError);
+            }
+          }
+          if (user?.id) {
+            try {
+              await AsyncStorage.setItem('@user_id', user.id);
+              console.log('💾 [AuthContext] User ID cached in AsyncStorage for background tasks');
+            } catch (cacheError) {
+              console.warn('⚠️ [AuthContext] Failed to cache userId:', cacheError);
+            }
+          }
           console.log('💾 [AuthContext] Tokens and user saved (Face ID can now unlock this session)');
         } catch (storeError) {
           console.error('❌ [AuthContext] Failed to save:', storeError);
@@ -289,6 +314,32 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       if (accessToken && refreshToken && userJson) {
         const user = JSON.parse(userJson);
+        
+        // Cache externalId, accessToken, and userId in AsyncStorage for background tasks (secureStorage may not work in background on iOS)
+        if (user?.externalId) {
+          try {
+            await AsyncStorage.setItem('@user_external_id', user.externalId);
+            console.log('💾 [AuthContext] External ID cached in AsyncStorage for background tasks');
+          } catch (cacheError) {
+            console.warn('⚠️ [AuthContext] Failed to cache externalId:', cacheError);
+          }
+        }
+        if (accessToken) {
+          try {
+            await AsyncStorage.setItem('@user_access_token', accessToken);
+            console.log('💾 [AuthContext] Access token cached in AsyncStorage for background tasks');
+          } catch (cacheError) {
+            console.warn('⚠️ [AuthContext] Failed to cache accessToken:', cacheError);
+          }
+        }
+        if (user?.id) {
+          try {
+            await AsyncStorage.setItem('@user_id', user.id);
+            console.log('💾 [AuthContext] User ID cached in AsyncStorage for background tasks');
+          } catch (cacheError) {
+            console.warn('⚠️ [AuthContext] Failed to cache userId:', cacheError);
+          }
+        }
         
         console.log('✅ [AuthContext] Found stored auth data');
         console.log('👤 [AuthContext] User:', user.email);
@@ -427,6 +478,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await secureStorage.deleteItemAsync('user');
       await secureStorage.deleteItemAsync('userLocation');
       await secureStorage.deleteItemAsync('expoPushToken');
+      // Clear cached data from AsyncStorage (used for background tasks)
+      await AsyncStorage.removeItem('@user_external_id');
+      await AsyncStorage.removeItem('@user_access_token');
+      await AsyncStorage.removeItem('@user_id');
       console.log('💾 [AuthContext] Cleared secure storage (including push token)');
       
       // Clear chat messages cache

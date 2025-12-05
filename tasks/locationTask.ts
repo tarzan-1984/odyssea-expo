@@ -185,20 +185,45 @@ try {
             // Works on both iOS and Android
             console.log(`🌐 [LocationTask] Preparing to send location update to API...`);
             try {
-              // Get user data from secure storage (works on both iOS and Android)
-              console.log(`🔍 [LocationTask] Retrieving user data from secure storage...`);
-              const userJson = await secureStorage.getItemAsync('user');
-              if (userJson) {
-                const user = JSON.parse(userJson);
-                const externalId = user?.externalId;
-                console.log(`✅ [LocationTask] User data retrieved. External ID: ${externalId || 'not found'}`);
-                
-                // Get status from AsyncStorage
-                const savedStatus = await AsyncStorage.getItem('@user_status');
-                const statusValue = savedStatus || 'available'; // Default to 'available' if not set
-                console.log(`📋 [LocationTask] User status: ${statusValue}`);
-                
-                console.log(`🔍 [LocationTask] Checking conditions: externalId=${!!externalId}, postalCode=${!!postalCode}`);
+              // IMPORTANT: In background/headless JS, secureStorage may not work (requires user interaction on iOS)
+              // Use AsyncStorage instead - we cache externalId there when app is active
+              console.log(`🔍 [LocationTask] Retrieving user data from AsyncStorage (cached for background use)...`);
+              let externalId: string | null = null;
+              
+              // Try to get externalId from AsyncStorage (cached when app is active)
+              try {
+                const cachedExternalId = await AsyncStorage.getItem('@user_external_id');
+                if (cachedExternalId) {
+                  externalId = cachedExternalId;
+                  console.log(`✅ [LocationTask] External ID retrieved from cache: ${externalId}`);
+                } else {
+                  console.warn(`⚠️ [LocationTask] External ID not found in cache, trying secureStorage as fallback...`);
+                  // Fallback: try secureStorage (may fail in background on iOS)
+                  try {
+                    const userJson = await secureStorage.getItemAsync('user');
+                    if (userJson) {
+                      const user = JSON.parse(userJson);
+                      externalId = user?.externalId || null;
+                      // Cache it for next time
+                      if (externalId) {
+                        await AsyncStorage.setItem('@user_external_id', externalId);
+                        console.log(`✅ [LocationTask] External ID retrieved from secureStorage and cached: ${externalId}`);
+                      }
+                    }
+                  } catch (secureStorageError) {
+                    console.warn(`⚠️ [LocationTask] SecureStorage not available in background (expected on iOS):`, secureStorageError);
+                  }
+                }
+              } catch (cacheError) {
+                console.warn(`⚠️ [LocationTask] Failed to read from AsyncStorage:`, cacheError);
+              }
+              
+              // Get status from AsyncStorage
+              const savedStatus = await AsyncStorage.getItem('@user_status');
+              const statusValue = savedStatus || 'available'; // Default to 'available' if not set
+              console.log(`📋 [LocationTask] User status: ${statusValue}`);
+              
+              console.log(`🔍 [LocationTask] Checking conditions: externalId=${!!externalId}, postalCode=${!!postalCode}`);
                 // IMPORTANT: Allow sending even without postalCode if we have externalId
                 // The API might accept empty postal code or we can use a default value
                 if (externalId) {
@@ -327,9 +352,6 @@ try {
                     postalCode: postalCode || 'not found'
                   });
                 }
-              } else {
-                console.warn(`⚠️ [LocationTask] User data not found in secure storage`);
-              }
             } catch (apiError) {
               // Handle different types of errors
               if (apiError instanceof Error) {

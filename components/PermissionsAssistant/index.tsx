@@ -84,12 +84,15 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
 	
   const effectiveAutoStart = isMiuiBrand ? true : autoStartEnabled;
 
-	const allGranted =
-    locationAlways &&
-    notificationsAllowed &&
-    gpsEnabled &&
-    effectiveAutoStart &&
-		batterySettings;
+	// For iOS, only check location and notifications
+	// For Android, check all settings including battery and autostart
+	const allGranted = Platform.OS === "ios"
+		? locationAlways && notificationsAllowed && gpsEnabled
+		: locationAlways &&
+		  notificationsAllowed &&
+		  gpsEnabled &&
+		  effectiveAutoStart &&
+		  batterySettings;
 	
 	return (
 		<View style={[styles.container, { paddingTop: insets.top }]}>

@@ -3,6 +3,7 @@ import { StatusValue } from '@/components/common/StatusSelect';
 import { API_BASE_URL } from '@/lib/config';
 import { secureStorage } from '@/utils/secureStorage';
 import { sendLocationUpdateNative } from '@/utils/nativeHttpClient';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**
  * Format date and time for TMS API
@@ -226,16 +227,49 @@ export async function sendLocationUpdateToBackendUser(params: {
       return;
     }
 
-    const accessToken = await secureStorage.getItemAsync('accessToken');
-    const userJson = await secureStorage.getItemAsync('user');
+    // IMPORTANT: In background/headless JS, secureStorage may not work (requires user interaction on iOS)
+    // Try AsyncStorage first (cached when app is active), then secureStorage as fallback
+    let accessToken: string | null = null;
+    let userId: string | null = null;
+    
+    // Try to get from AsyncStorage cache first (works in background)
+    try {
+      const cachedToken = await AsyncStorage.getItem('@user_access_token');
+      const cachedUserId = await AsyncStorage.getItem('@user_id');
+      if (cachedToken && cachedUserId) {
+        accessToken = cachedToken;
+        userId = cachedUserId;
+        console.log('[locationApi] ✅ Using cached accessToken and userId from AsyncStorage');
+      }
+    } catch (cacheError) {
+      console.warn('[locationApi] Failed to read from AsyncStorage cache:', cacheError);
+    }
+    
+    // Fallback: try secureStorage (may fail in background on iOS)
+    if (!accessToken || !userId) {
+      try {
+        const token = await secureStorage.getItemAsync('accessToken');
+        const userJson = await secureStorage.getItemAsync('user');
+        if (token && userJson) {
+          const user = JSON.parse(userJson);
+          accessToken = token;
+          userId = user?.id || null;
+          // Cache for next time
+          if (accessToken && userId) {
+            await AsyncStorage.setItem('@user_access_token', accessToken);
+            await AsyncStorage.setItem('@user_id', userId);
+            console.log('[locationApi] ✅ Retrieved from secureStorage and cached in AsyncStorage');
+          }
+        }
+      } catch (secureStorageError) {
+        console.warn('[locationApi] SecureStorage not available in background (expected on iOS):', secureStorageError);
+      }
+    }
 
-    if (!accessToken || !userJson) {
+    if (!accessToken || !userId) {
       console.warn('[locationApi] Missing access token or user data, skipping backend location update');
       return;
     }
-
-    const user = JSON.parse(userJson);
-    const userId = user?.id;
 
     if (!userId) {
       console.warn('[locationApi] User ID not found in secure storage, skipping backend location update');
