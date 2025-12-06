@@ -10,7 +10,7 @@
     "newArchEnabled": true,
     "splash": {
       "image": "./assets/images/splash-icon.png",
-      "resizeMode": "cover",
+      "resizeMode": "contain",
       "backgroundColor": "#292966"
     },
     "ios": {
@@ -19,7 +19,7 @@
       "icon": "./assets/app-icon.png",
       "splash": {
         "image": "./assets/images/splash-icon.png",
-        "resizeMode": "cover",
+        "resizeMode": "contain",
         "backgroundColor": "#292966"
       },
       "infoPlist": {
@@ -58,7 +58,7 @@
       ],
       "splash": {
         "image": "./assets/images/splash-icon.png",
-        "resizeMode": "cover",
+        "resizeMode": "contain",
         "backgroundColor": "#292966"
       }
     },

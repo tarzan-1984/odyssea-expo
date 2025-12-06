@@ -1,29 +1,39 @@
 import { Linking, Platform } from "react-native";
 import DeviceInfo from "react-native-device-info";
+import { BatteryOptEnabled, OpenOptimizationSettings } from "react-native-battery-optimization-check";
+
+export async function checkBatteryOptimizationStatus(): Promise<boolean> {
+	if (Platform.OS !== "android") {
+		// iOS doesn't have battery optimization settings
+		return true;
+	}
+
+	try {
+		// BatteryOptEnabled() returns true if optimization is ENABLED (bad for us)
+		// We need to return true if optimization is DISABLED (good for us)
+		// So we invert the result
+		const isOptimized = await BatteryOptEnabled();
+		const isIgnoring = !isOptimized; // If optimization is disabled, we're ignoring it (good)
+		return isIgnoring;
+	} catch (error) {
+		// If check fails, assume it's not optimized (user needs to enable it)
+		return false;
+	}
+}
 
 export async function openBatterySettings() {
 	if (Platform.OS !== "android") return;
 	
-	// Some devices do not support these intents at all.
-	// Try them in order and fall back to generic app settings without throwing.
 	try {
-		await Linking.openURL("android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS");
-		return;
-	} catch (e) {
-		console.warn("[PermissionsAssistant] Failed to open REQUEST_IGNORE_BATTERY_OPTIMIZATIONS:", e);
-	}
-
-	try {
-		await Linking.openURL("android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS");
-		return;
-	} catch (e) {
-		console.warn("[PermissionsAssistant] Failed to open IGNORE_BATTERY_OPTIMIZATION_SETTINGS:", e);
-	}
-
-	try {
-		await Linking.openSettings();
-	} catch (e) {
-		console.warn("[PermissionsAssistant] Failed to open general app settings:", e);
+		// Use the library's function to open battery optimization settings
+		OpenOptimizationSettings();
+	} catch (error) {
+		// Fallback to app settings
+		try {
+			await Linking.openSettings();
+		} catch (e) {
+			// Silent fail
+		}
 	}
 }
 
@@ -63,13 +73,41 @@ export async function openAutoStartSettings() {
 		} catch {}
 	}
 	
-	// Samsung fallback
+	// Samsung specific intents for auto-start/battery optimization
 	if (brand === "samsung") {
+		const samsungIntents = [
+			"package:com.samsung.android.lool", // Device Care / Battery optimization
+			"package:com.samsung.android.sm", // Smart Manager
+			"package:com.samsung.android.app.boostmanager", // Boost Manager
+			"package:com.samsung.android.settings", // Samsung Settings
+		];
+		
+		for (const url of samsungIntents) {
+			try {
+				const supported = await Linking.canOpenURL(url);
+				if (supported) {
+					console.log("Opening Samsung AutoStart using:", url);
+					await Linking.openURL(url);
+					return;
+				}
+			} catch (e) {
+				console.warn(`[PermissionsAssistant] Failed to open Samsung intent ${url}:`, e);
+			}
+		}
+		
+		// Try direct settings intents
 		try {
-			return Linking.openURL("package:com.samsung.android.lool");
-		} catch {}
+			await Linking.openURL("android.settings.APPLICATION_DETAILS_SETTINGS");
+			return;
+		} catch (e) {
+			console.warn("[PermissionsAssistant] Failed to open application details:", e);
+		}
 	}
 	
 	console.log("Fallback: opening general app settings");
-	Linking.openSettings();
+	try {
+		await Linking.openSettings();
+	} catch (e) {
+		console.error("[PermissionsAssistant] Failed to open settings:", e);
+	}
 }

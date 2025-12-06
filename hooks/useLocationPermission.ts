@@ -1,6 +1,12 @@
 import { useState, useCallback, useEffect } from 'react';
-import { Platform, Linking, AppState } from 'react-native';
+import { Platform, Linking, AppState, NativeModules } from 'react-native';
 import * as Location from 'expo-location';
+import DeviceInfo from 'react-native-device-info';
+// @ts-ignore - react-native-settings doesn't have TypeScript definitions
+import RNSettings from 'react-native-settings';
+
+// @ts-ignore - Native module
+const { LocationSettingsModule } = NativeModules;
 
 export const useLocationPermission = () => {
   const [backgroundPermissionGranted, setBackgroundPermissionGranted] = useState<boolean | null>(null);
@@ -151,15 +157,119 @@ export const useLocationPermission = () => {
     } else {
       // Android: Open app-specific settings (not general system settings)
       // This will open the app's permission settings where user can grant "Always" permission
-      Linking.openSettings().catch((err) => {
-        console.error('❌ [useLocationPermission] Failed to open Android settings:', err);
+      Linking.openSettings().catch(err => {
+        console.warn("Failed to open app settings:", err);
       });
     }
   }, []);
 
+  // Open app location permission settings (specific page for location permission)
+  const openAppLocationPermissionSettings = useCallback(async () => {
+    if (Platform.OS === 'android') {
+      try {
+        // First, try using our custom native module (most reliable)
+        if (LocationSettingsModule && typeof LocationSettingsModule.openAppLocationPermissionSettings === 'function') {
+          try {
+            await LocationSettingsModule.openAppLocationPermissionSettings();
+            return; // Successfully opened
+          } catch (nativeError) {
+            console.warn('❌ [useLocationPermission] LocationSettingsModule.openAppLocationPermissionSettings failed, trying fallback:', nativeError);
+          }
+        }
+
+        // Fallback: Open app settings (user will need to navigate to location permission)
+        Linking.openSettings().catch(err => {
+          console.warn("Failed to open app settings:", err);
+        });
+      } catch (error) {
+        console.error('❌ [useLocationPermission] Failed to open app location permission settings:', error);
+        // Fallback to general app settings
+        Linking.openSettings().catch(err => {
+          console.warn("Failed to open app settings:", err);
+        });
+      }
+    } else {
+      // iOS: Use standard app settings
+      openAppSettings();
+    }
+  }, [openAppSettings]);
+
   // Open device location settings (for when location services are disabled)
-  const openLocationSettings = useCallback(() => {
-    if (Platform.OS === 'ios') {
+  const openLocationSettings = useCallback(async () => {
+    if (Platform.OS === 'android') {
+      try {
+        // First, try using our custom native module (most reliable)
+        if (LocationSettingsModule && typeof LocationSettingsModule.openLocationSettings === 'function') {
+          try {
+            await LocationSettingsModule.openLocationSettings();
+            console.log('[useLocationPermission] ✅ Successfully opened location settings via LocationSettingsModule');
+            return; // Successfully opened
+          } catch (nativeError) {
+            console.warn('❌ [useLocationPermission] LocationSettingsModule failed, trying alternatives:', nativeError);
+          }
+        }
+
+        // Second, try using react-native-settings library if available
+        if (RNSettings && typeof RNSettings.openSetting === 'function') {
+          try {
+            const locationIntent = RNSettings.ACTION_LOCATION_SOURCE_SETTINGS || "android.settings.LOCATION_SOURCE_SETTINGS";
+            await RNSettings.openSetting(locationIntent);
+            console.log('[useLocationPermission] ✅ Successfully opened location settings via RNSettings');
+            return; // Successfully opened
+          } catch (rnsError) {
+            console.warn('❌ [useLocationPermission] RNSettings.openSetting failed, trying alternatives:', rnsError);
+          }
+        }
+
+        // Check device brand for MIUI-specific handling
+        const brand = (await DeviceInfo.getBrand()).toLowerCase();
+        const isMiui = brand === 'xiaomi' || brand === 'redmi' || brand === 'poco';
+
+        if (isMiui) {
+          // MIUI-specific intents for location settings
+          const miuiIntents = [
+            "miui://settings/location?enter=1",
+            "package:com.android.settings/.Settings$LocationSettingsActivity",
+            "intent:#Intent;action=android.settings.LOCATION_SOURCE_SETTINGS;end",
+          ];
+
+          // Try MIUI-specific intents first
+          // Don't check canOpenURL - just try to open directly (some devices return false even if it works)
+          for (const intent of miuiIntents) {
+            try {
+              await Linking.openURL(intent);
+              return; // If no error thrown, assume it opened successfully
+            } catch (e) {
+              // Continue to next intent
+              console.warn(`[useLocationPermission] MIUI intent ${intent} failed:`, e);
+            }
+          }
+        }
+
+        // Standard Android intent (works on most devices)
+        // Try different formats for opening location source settings
+        // Use intent:// format which is more reliable for system settings
+        const standardIntents = [
+          "intent:#Intent;action=android.settings.LOCATION_SOURCE_SETTINGS;end",
+        ];
+
+        for (const intent of standardIntents) {
+          try {
+            // Try to open without checking canOpenURL first (some devices return false even if it works)
+            await Linking.openURL(intent);
+            return; // If no error, assume it opened
+          } catch (e) {
+            // Continue to next intent
+            console.warn(`[useLocationPermission] Failed to open with intent ${intent}:`, e);
+          }
+        }
+
+        // If all else fails, log error but don't open app settings (user needs system settings)
+        console.error('❌ [useLocationPermission] All methods failed to open system location settings');
+      } catch (error) {
+        console.warn('❌ [useLocationPermission] Failed to open Android location settings:', error);
+      }
+    } else {
       // iOS: Try multiple methods to open location settings
       // Method 1: Try App-Prefs (may not work on iOS 10+)
       Linking.openURL('App-Prefs:root=Privacy&path=LOCATION').catch(() => {
@@ -170,15 +280,6 @@ export const useLocationPermission = () => {
           Linking.openURL('app-settings:').catch(() => {
             console.error('❌ [useLocationPermission] Failed to open iOS location settings');
           });
-        });
-      });
-    } else {
-      // Android: Open system location settings directly
-      // Use Android Intent to open location source settings
-      Linking.openURL('android.settings.LOCATION_SOURCE_SETTINGS').catch(() => {
-        // Fallback: Try to open general settings
-        Linking.openSettings().catch(() => {
-          console.error('❌ [useLocationPermission] Failed to open Android location settings');
         });
       });
     }
@@ -193,6 +294,7 @@ export const useLocationPermission = () => {
     requestBackgroundPermission,
     openAppSettings,
     openLocationSettings,
+    openAppLocationPermissionSettings,
   };
 };
 

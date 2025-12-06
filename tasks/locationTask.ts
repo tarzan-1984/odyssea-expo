@@ -92,27 +92,74 @@ try {
       });
 
       try {
-        // IMPORTANT: Skip reverse geocoding in background task - it may not work in headless JS
-        // We'll send location update without postal code - API should accept it
-        // Reverse geocoding can be done later when app is active
+        // Perform reverse geocoding to get zip, city, state from new coordinates
+        // Uses native HTTP client (works in headless JS on Android) or fetch fallback
         let postalCode = '';
+        let city = '';
+        let state = '';
         
-        // Try to get postal code from last saved location (if available)
         try {
-          const lastLocationJson = await AsyncStorage.getItem(USER_LOCATION_KEY);
-          if (lastLocationJson) {
-            const lastLocation = JSON.parse(lastLocationJson);
-            if (lastLocation.zipCode) {
-              postalCode = lastLocation.zipCode;
-              console.log(`✅ [LocationTask] Using saved postal code: ${postalCode}`);
-            }
+          console.log(`🌍 [LocationTask] Performing reverse geocoding for coordinates: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
+          
+          // Use reverse geocoding function (uses native HTTP client on Android, fetch on iOS)
+          const reverseGeocodeModule = require('@/utils/geocoding');
+          const reverseGeocodeAsync = reverseGeocodeModule.reverseGeocodeAsync;
+          
+          const reverseGeocode = await reverseGeocodeAsync({ latitude, longitude });
+          
+          if (reverseGeocode && reverseGeocode.length > 0) {
+            const geo = reverseGeocode[0];
+            postalCode = geo.postalCode || '';
+            city = geo.city || geo.subregion || geo.district || '';
+            state = geo.region ? geo.region.split(' ')[0] : '';
+            
+            console.log(`✅ [LocationTask] Reverse geocoding successful:`, {
+              postalCode: postalCode || 'not found',
+              city: city || 'not found',
+              state: state || 'not found',
+            });
+          } else {
+            console.warn(`⚠️ [LocationTask] Reverse geocoding returned no results`);
           }
-        } catch (error) {
-          // Ignore - we'll send without postal code
+        } catch (geoError) {
+          console.warn(`⚠️ [LocationTask] Reverse geocoding failed:`, geoError);
+        }
+        
+        // Fallback: try to get postal code, city, state from saved location
+        if (!postalCode || !city || !state) {
+          try {
+            const lastLocationJson = await AsyncStorage.getItem(USER_LOCATION_KEY);
+            if (lastLocationJson) {
+              const lastLocation = JSON.parse(lastLocationJson);
+              if (!postalCode && lastLocation.zipCode) {
+                postalCode = lastLocation.zipCode;
+                console.log(`✅ [LocationTask] Using saved postal code as fallback: ${postalCode}`);
+              }
+              if (!city && lastLocation.city) {
+                city = lastLocation.city;
+                console.log(`✅ [LocationTask] Using saved city as fallback: ${city}`);
+              }
+              if (!state && lastLocation.state) {
+                state = lastLocation.state;
+                console.log(`✅ [LocationTask] Using saved state as fallback: ${state}`);
+              }
+            }
+            
+            // If still not found, try from @user_zip
+            if (!postalCode) {
+              const savedZip = await AsyncStorage.getItem('@user_zip');
+              if (savedZip) {
+                postalCode = savedZip;
+                console.log(`✅ [LocationTask] Using postal code from @user_zip as fallback: ${postalCode}`);
+              }
+            }
+          } catch (storageError) {
+            console.warn(`⚠️ [LocationTask] Failed to get data from storage:`, storageError);
+          }
         }
         
         if (!postalCode) {
-          console.log(`ℹ️ [LocationTask] No postal code available, will send with empty postal code`);
+          console.warn(`⚠️ [LocationTask] No postal code available, will send with empty postal code`);
         }
 
         // Check if automatic location sharing is still enabled
@@ -184,6 +231,20 @@ try {
             // This ensures updates are sent even when app is closed
             // Works on both iOS and Android
             console.log(`🌐 [LocationTask] Preparing to send location update to API...`);
+            
+            // IMPORTANT: Check if permissions onboarding was completed
+            // Don't send location updates if user hasn't completed the permissions popup
+            try {
+              const permissionsCompleted = await AsyncStorage.getItem('@permissions_onboarding_completed');
+              if (permissionsCompleted !== 'true') {
+                console.log(`⏸️ [LocationTask] Permissions onboarding not completed yet, skipping location update`);
+                return; // Don't send updates until permissions are set up
+              }
+            } catch (permissionsCheckError) {
+              console.warn(`⚠️ [LocationTask] Failed to check permissions onboarding status:`, permissionsCheckError);
+              // If we can't check, assume it's completed to avoid blocking updates
+            }
+            
             try {
               // IMPORTANT: In background/headless JS, secureStorage may not work (requires user interaction on iOS)
               // Use AsyncStorage instead - we cache externalId there when app is active
@@ -302,13 +363,13 @@ try {
                     });
                   }
 
-                  // Fire-and-forget update to our own backend (without reverse geocoding in background)
+                  // Fire-and-forget update to our own backend (with reverse geocoded data)
                   try {
                     if (sendLocationUpdateToBackendUser) {
                       void sendLocationUpdateToBackendUser({
                         location: undefined, // Skip location string in background
-                        city: undefined,
-                        state: undefined,
+                        city: city || undefined,
+                        state: state || undefined,
                         zip: finalPostalCode,
                         latitude,
                         longitude,
@@ -326,16 +387,25 @@ try {
                         latitude,
                         longitude,
                         zipCode: finalPostalCode,
+                        city: city || undefined,
+                        state: state || undefined,
                         lastUpdate: new Date().toISOString()
                       };
                       console.log(`💾 [LocationTask] Saving location data to AsyncStorage...`, {
                         latitude: latitude.toFixed(6),
                         longitude: longitude.toFixed(6),
                         zipCode: finalPostalCode,
+                        city: city || 'not found',
+                        state: state || 'not found',
                         lastUpdate: locationData.lastUpdate
                       });
                       // Save to AsyncStorage (unified storage for both foreground and background)
                       await AsyncStorage.setItem(USER_LOCATION_KEY, JSON.stringify(locationData));
+                      
+                      // Also save zip code separately to @user_zip for easier access
+                      if (finalPostalCode) {
+                        await AsyncStorage.setItem('@user_zip', finalPostalCode);
+                      }
                       
                       console.log(`✅ [LocationTask] Location data saved to AsyncStorage successfully`);
                     } catch (storageError) {

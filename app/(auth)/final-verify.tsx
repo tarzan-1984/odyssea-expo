@@ -6,7 +6,7 @@ import { BlurView } from 'expo-blur';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import * as Notifications from 'expo-notifications';
-import { reverseGeocodeAsync } from '@/utils/geocoding';
+import { reverseGeocodeAsync, GeocodedAddress } from '@/utils/geocoding';
 import { colors } from '@/lib/colors';
 import { borderRadius, fonts, fp, rem, typography } from "@/lib";
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -124,7 +124,7 @@ export default function FinalVerifyScreen() {
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [updateSuccessMessage, setUpdateSuccessMessage] = useState<string | null>(null);
 
-  const formatAddressLabel = useCallback((info: Partial<{ city?: string; state?: string; postalCode?: string; country?: string; region?: string; subregion?: string; district?: string }>): string => {
+  const formatAddressLabel = useCallback((info: Partial<GeocodedAddress>): string => {
     const city = info.city || info.subregion || info.district || '';
     const regionCode = (info.region || '').split(' ')[0];
     const postalCode = info.postalCode || '';
@@ -291,7 +291,7 @@ export default function FinalVerifyScreen() {
       const providerStatus = await Location.getProviderStatusAsync();
       console.log('📍 [BackgroundTracking] Location services enabled:', providerStatus.locationServicesEnabled);
       if (!providerStatus.locationServicesEnabled) {
-        console.error('❌ [BackgroundTracking] Location services are disabled!');
+        console.log('❌ [BackgroundTracking] Location services are disabled!');
         return;
       }
       
@@ -373,6 +373,11 @@ export default function FinalVerifyScreen() {
 
   // Load saved location data on mount
   useEffect(() => {
+    // Don't load location data if permissions assistant is still open
+    if (showPermissionsAssistant) {
+      return;
+    }
+
     // Always load coordinates if they exist in authState, even if userLocation is already set
     // This ensures coordinates are displayed on map after app restart
     if (authState.userLocation) {
@@ -416,7 +421,7 @@ export default function FinalVerifyScreen() {
         } catch {}
       })();
     }
-  }, [authState.userLocation, authState.userZipCode, automaticLocationSharing, startBackgroundLocationTracking]); // Run when location data is available
+  }, [authState.userLocation, authState.userZipCode, automaticLocationSharing, startBackgroundLocationTracking, showPermissionsAssistant]); // Run when location data is available
 
   // Check for location updates from AsyncStorage (when app opens or returns from background)
   const checkForLocationUpdates = useCallback(async () => {
@@ -463,6 +468,11 @@ export default function FinalVerifyScreen() {
   }, [syncLocationFromAsyncStorage, setZip, formatAddressLabel]);
 
   useEffect(() => {
+    // Don't start location tracking if permissions assistant is still open
+    if (showPermissionsAssistant) {
+      return;
+    }
+
     // Always sync once on mount
     checkForLocationUpdates();
 
@@ -477,12 +487,17 @@ export default function FinalVerifyScreen() {
     }, 20000); // Check every 20 seconds
     
     return () => clearInterval(syncInterval);
-  }, [automaticLocationSharing, checkForLocationUpdates]);
+  }, [automaticLocationSharing, checkForLocationUpdates, showPermissionsAssistant]);
 
   // Additionally, sync when app returns from background to active state
   useEffect(() => {
+    // Don't sync if permissions assistant is still open
+    if (showPermissionsAssistant) {
+      return;
+    }
+
     const sub = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active') {
+      if (nextState === 'active' && !showPermissionsAssistant) {
         checkForLocationUpdates();
       }
     });
@@ -490,7 +505,7 @@ export default function FinalVerifyScreen() {
     return () => {
       sub.remove();
     };
-  }, [checkForLocationUpdates]);
+  }, [checkForLocationUpdates, showPermissionsAssistant]);
 
   // Stop background tracking when automatic sharing is disabled
   useEffect(() => {
@@ -509,6 +524,11 @@ export default function FinalVerifyScreen() {
   // This covers the case when user previously enabled automatic sharing, fully closed the app,
   // and then opened it again.
   useEffect(() => {
+    // Don't start tracking if permissions assistant is still open
+    if (showPermissionsAssistant) {
+      return;
+    }
+
     if (!automaticLocationSharing) {
       return;
     }
@@ -521,10 +541,15 @@ export default function FinalVerifyScreen() {
     }, 500);
 
     return () => clearTimeout(timer);
-  }, [automaticLocationSharing, startBackgroundLocationTracking]);
+  }, [automaticLocationSharing, startBackgroundLocationTracking, showPermissionsAssistant]);
 
   // Periodically verify that background tracking is still running
   useEffect(() => {
+    // Don't check if permissions assistant is still open
+    if (showPermissionsAssistant) {
+      return;
+    }
+
     if (!automaticLocationSharing) {
       return;
     }
@@ -550,7 +575,7 @@ export default function FinalVerifyScreen() {
     const statusInterval = setInterval(checkTaskStatus, 30000);
 
     return () => clearInterval(statusInterval);
-  }, [automaticLocationSharing, startBackgroundLocationTracking]);
+  }, [automaticLocationSharing, startBackgroundLocationTracking, showPermissionsAssistant]);
 
   const handleUpdateStatus = async () => {
     try {
