@@ -500,7 +500,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       console.log('💾 [AuthContext] Cleared chat store (in-memory state)');
       
       // Clear all AsyncStorage data
-      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+      // Use already imported AsyncStorage (no need to re-import)
       
       // Clear app settings
       await AsyncStorage.removeItem('@odyssea_app_settings');
