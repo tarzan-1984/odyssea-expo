@@ -27,6 +27,7 @@ try {
   console.log(`📍 [LocationTask] Time: ${triggerTime}`);
   console.log(`📍 [LocationTask] hasError: ${!!error}`);
   console.log(`📍 [LocationTask] hasData: ${!!data}`);
+  console.log(`📍 [LocationTask] App state check - task is running in background/foreground`);
   if (error) {
     console.log(`📍 [LocationTask] Error object:`, error);
   }
@@ -201,9 +202,9 @@ try {
             // This ensures consistent behavior on both iOS and Android
             // IMPORTANT: For testing, we'll use a shorter interval to allow more frequent updates
             // In production, this should be LOCATION_UPDATE_INTERVAL - 30000 (30 seconds before target)
-            // For testing, we use 15 seconds to allow updates every 15 seconds minimum
+            // For testing, we use 30 seconds to allow updates every 30 seconds minimum (more lenient)
             const TESTING_MODE = true; // Set to false for production
-            const minInterval = TESTING_MODE ? 15000 : (LOCATION_UPDATE_INTERVAL - 30000); // 15 seconds for testing, 30 seconds for production
+            const minInterval = TESTING_MODE ? 30000 : (LOCATION_UPDATE_INTERVAL - 30000); // 30 seconds for testing, 30 seconds for production
             console.log(`⏱️ [LocationTask] Time since last update: ${timeSinceLastUpdate}ms (${Math.floor(timeSinceLastUpdate / 1000)}s)`);
             console.log(`⏱️ [LocationTask] Minimum interval required: ${minInterval}ms (${Math.floor(minInterval / 1000)}s)`);
             console.log(`⏱️ [LocationTask] Testing mode: ${TESTING_MODE}`);

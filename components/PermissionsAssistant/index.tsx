@@ -4,7 +4,13 @@ import * as Location from "expo-location";
 import * as Notifications from "expo-notifications";
 import DeviceInfo from "react-native-device-info";
 import styles from "./styles";
-import { openBatterySettings, openAutoStartSettings, checkBatteryOptimizationStatus } from "./utils";
+import { 
+	openBatterySettings, 
+	openAutoStartSettings, 
+	checkBatteryOptimizationStatus,
+	isBatteryOptimizationAvailable,
+	isAutoStartAvailable
+} from "./utils";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocationPermission } from "@/hooks/useLocationPermission";
 
@@ -17,6 +23,8 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
 	const [autoStartEnabled, setAutoStartEnabled] = useState(false);
 	const [batterySettings, setOpenBatterySettings] = useState(false);
   const [isMiuiBrand, setIsMiuiBrand] = useState(false); // Xiaomi / Redmi / POCO
+	const [batteryAvailable, setBatteryAvailable] = useState(false);
+	const [autoStartAvailable, setAutoStartAvailable] = useState(false);
 	const appState = useRef(AppState.currentState);
 	
 	const checkPermissions = useCallback(async () => {
@@ -29,23 +37,33 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
 			const bg = await Location.getBackgroundPermissionsAsync();
 			hasLocationAlways = fg.granted && bg.granted;
 		} else {
-			// For iOS: check background permissions and scope
+			// For iOS: check both foreground and background permissions with scope
+			const fg = await Location.getForegroundPermissionsAsync();
 			const bg = await Location.getBackgroundPermissionsAsync();
-			if (bg.ios?.scope === 'always') {
-				hasLocationAlways = true;
-			}
+			
+			// On iOS, need both: status === 'granted' AND scope === 'always'
+			// The scope is directly on bg object, not in bg.ios.scope
+			// Also check 'granted' property as fallback
+			const fgGranted = fg.status === 'granted' || fg.granted;
+			const bgGranted = bg.status === 'granted' || bg.granted;
+			// Check scope directly on bg object (not ios.scope) - this is the correct way for iOS
+			const iosScopeAlways = (bg as any).scope === 'always';
+			
+			hasLocationAlways = fgGranted && bgGranted && iosScopeAlways;
 		}
 		
 		setLocationAlways(hasLocationAlways);
 		
-		// Check GPS enabled - only for Android
+		// Check GPS enabled - for both Android and iOS
 		if (Platform.OS === "android") {
 			const providers = await Location.getProviderStatusAsync();
 			const gpsAvailable = Boolean(providers.gpsAvailable);
 			setGpsEnabled(gpsAvailable);
 		} else {
-			// For iOS, GPS is always considered enabled (handled by system)
-			setGpsEnabled(true);
+			// For iOS, check if Location Services are enabled globally
+			const providers = await Location.getProviderStatusAsync();
+			const locationServicesEnabled = Boolean(providers.locationServicesEnabled);
+			setGpsEnabled(locationServicesEnabled);
 		}
 		
 		// Check notifications
@@ -71,53 +89,28 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
 				const fg = await Location.getForegroundPermissionsAsync();
 				const bg = await Location.getBackgroundPermissionsAsync();
 				hasLocationAlways = fg.granted && bg.granted;
-			} else {
-				const bg = await Location.getBackgroundPermissionsAsync();
-				if (bg.ios?.scope === 'always') {
-					hasLocationAlways = true;
-				}
-			}
+		} else {
+			// For iOS: check both foreground and background permissions with scope
+			const fg = await Location.getForegroundPermissionsAsync();
+			const bg = await Location.getBackgroundPermissionsAsync();
 			
-			// If already granted "Always", just re-check
-			if (hasLocationAlways) {
-				checkPermissions();
-				return;
-			}
+			// On iOS, need both: status === 'granted' AND scope === 'always'
+			// The scope is directly on bg object, not in bg.ios.scope
+			// Also check 'granted' property as fallback
+			const fgGranted = fg.status === 'granted' || fg.granted;
+			const bgGranted = bg.status === 'granted' || bg.granted;
+			// Check scope directly on bg object (not ios.scope) - this is the correct way for iOS
+			const iosScopeAlways = (bg as any).scope === 'always';
 			
-			// Try to request permissions
-			// First request foreground permission
-			const fgResult = await Location.requestForegroundPermissionsAsync();
+			hasLocationAlways = fgGranted && bgGranted && iosScopeAlways;
+		}
 			
-			if (!fgResult.granted) {
-				// Foreground permission denied, open app location permission settings
-				await openAppLocationPermissionSettings();
-				return;
-			}
+			// Always open app location permission settings when button is clicked
+			// This allows user to change settings even if already granted
+			await openAppLocationPermissionSettings();
 			
-			// Then request background permission
-			const bgResult = await Location.requestBackgroundPermissionsAsync();
-			
-			// Check if background permission was granted
-			if (Platform.OS === "android") {
-				if (!bgResult.granted) {
-					// Background permission not granted, open app location permission settings
-					await openAppLocationPermissionSettings();
-					return;
-				}
-			} else {
-				// For iOS, check if scope is 'always'
-				if (bgResult.ios?.scope !== 'always') {
-					// User selected "While Using App" instead of "Always", open app location permission settings
-					await openAppLocationPermissionSettings();
-					return;
-				}
-			}
-			
-			// Permissions granted, re-check
-			checkPermissions();
-			setTimeout(() => {
-				checkPermissions();
-			}, 500);
+			// Permissions will be re-checked when app returns to foreground
+			// (handled by AppState listener in useEffect)
 		} catch (error) {
 			console.error("[PermissionsAssistant] Failed to request location permissions:", error);
 			// Fallback: open app location permission settings
@@ -172,13 +165,23 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
 			await openBatterySettings();
 			// Don't automatically set to enabled - let user actually enable it in settings
 			// We'll check again when app returns to foreground
+			// The check will happen in the AppState listener below
 		} catch (error) {
-			// Silent fail
+			console.error("[PermissionsAssistant] Failed to open battery settings:", error);
 		}
 	};
 	
-	// Check permissions on mount
+	// Check permissions and availability on mount
 	useEffect(() => {
+		const checkAvailability = async () => {
+			if (Platform.OS === "android") {
+				const batteryAvail = await isBatteryOptimizationAvailable();
+				const autoStartAvail = await isAutoStartAvailable();
+				setBatteryAvailable(batteryAvail);
+				setAutoStartAvailable(autoStartAvail);
+			}
+		};
+		checkAvailability();
 		checkPermissions();
 	}, []);
 
@@ -205,10 +208,14 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
 				appState.current.match(/inactive|background/) &&
 				nextAppState === 'active'
 			) {
-				// Wait a bit for system settings to apply (especially for battery settings on some devices)
-				setTimeout(() => {
-					checkPermissions();
-				}, 1000);
+			// Wait a bit for system settings to apply
+			// iOS usually updates permission status quickly, so reduced delay
+			// For Android battery settings, may need more time
+			const delay = Platform.OS === 'ios' ? 300 : 1500;
+			setTimeout(() => {
+				console.log("[PermissionsAssistant] App returned to foreground, rechecking permissions...");
+				checkPermissions();
+			}, delay);
 			}
 			appState.current = nextAppState;
 		});
@@ -220,15 +227,16 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
 	
   const effectiveAutoStart = isMiuiBrand ? true : autoStartEnabled;
 
-	// For iOS, only check location and notifications (GPS is always enabled on iOS)
+	// For iOS, check location, notifications, and GPS (Location Services)
 	// For Android, check all settings including GPS, battery and autostart
+	// Only require battery and autostart if they are available on this device
 	const allGranted = Platform.OS === "ios"
-		? locationAlways && notificationsAllowed
+		? locationAlways && notificationsAllowed && gpsEnabled
 		: locationAlways &&
 		  notificationsAllowed &&
 		  gpsEnabled &&
-		  effectiveAutoStart &&
-		  batterySettings;
+		  (batteryAvailable ? batterySettings : true) && // If unavailable, consider it granted
+		  (autoStartAvailable ? effectiveAutoStart : true); // If unavailable, consider it granted
 	
 	return (
 		<View style={[styles.container, { paddingTop: insets.top }]}>
@@ -237,6 +245,17 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.title}>Mandatory system settings</Text>
+        
+        {/* GPS Enabled - Show for both Android and iOS (First in list) */}
+        <TouchableOpacity
+          style={[styles.block, gpsEnabled && styles.completeBlock]}
+          onPress={gotoGpsSettings}
+        >
+          <Text style={styles.label}>Turn on GPS</Text>
+          <Text style={styles.status}>
+            {gpsEnabled ? "✓ Enabled" : "Open Settings"}
+          </Text>
+        </TouchableOpacity>
         
         {/* Location Always */}
         <TouchableOpacity
@@ -260,21 +279,8 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
           </Text>
         </TouchableOpacity>
         
-        {/* GPS Enabled - Only show for Android */}
-        {Platform.OS === "android" && (
-          <TouchableOpacity
-            style={[styles.block, gpsEnabled && styles.completeBlock]}
-            onPress={gotoGpsSettings}
-          >
-            <Text style={styles.label}>Turn on GPS</Text>
-            <Text style={styles.status}>
-              {gpsEnabled ? "✓ Enabled" : "Open Settings"}
-            </Text>
-          </TouchableOpacity>
-        )}
-        
-        {/* Battery Optimization */}
-        {Platform.OS === "android" && (
+        {/* Battery Optimization - Only show if available on this device */}
+        {Platform.OS === "android" && batteryAvailable && (
           <TouchableOpacity
             style={[styles.block, batterySettings && styles.completeBlock]}
             onPress={handleBattery}
@@ -284,8 +290,8 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
           </TouchableOpacity>
         )}
         
-        {/* Auto Start */}
-        {Platform.OS === "android" && (
+        {/* Auto Start - Only show if available on this device */}
+        {Platform.OS === "android" && autoStartAvailable && (
           <View>
             {/* For non‑Xiaomi/Redmi/POCO devices show interactive auto‑start option */}
             {!isMiuiBrand && (

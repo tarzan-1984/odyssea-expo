@@ -14,9 +14,99 @@ export async function checkBatteryOptimizationStatus(): Promise<boolean> {
 		// So we invert the result
 		const isOptimized = await BatteryOptEnabled();
 		const isIgnoring = !isOptimized; // If optimization is disabled, we're ignoring it (good)
+		console.log(`[checkBatteryOptimizationStatus] isOptimized: ${isOptimized}, isIgnoring: ${isIgnoring}`);
 		return isIgnoring;
 	} catch (error) {
 		// If check fails, assume it's not optimized (user needs to enable it)
+		console.warn(`[checkBatteryOptimizationStatus] Error checking status:`, error);
+		// On some devices, if the check fails, it might mean optimization is not available
+		// or the app is already optimized. Return false to show the option.
+		return false;
+	}
+}
+
+/**
+ * Check if battery optimization settings are available on this device
+ */
+export async function isBatteryOptimizationAvailable(): Promise<boolean> {
+	if (Platform.OS !== "android") {
+		return false;
+	}
+	
+	try {
+		// Try to check if the battery optimization check function works
+		// If it throws an error, the feature is likely not available
+		await BatteryOptEnabled();
+		return true;
+	} catch (error) {
+		// If check fails, battery optimization is likely not available on this device
+		return false;
+	}
+}
+
+/**
+ * Check if autostart settings are available on this device
+ * Tests actual availability by checking if any autostart intents can be opened
+ */
+export async function isAutoStartAvailable(): Promise<boolean> {
+	if (Platform.OS !== "android") {
+		return false;
+	}
+	
+	try {
+		const brand = (await DeviceInfo.getBrand()).toLowerCase();
+		
+		// Try all possible autostart intents for this brand
+		const intentsToCheck: string[] = [];
+		
+		// Xiaomi / Redmi / POCO (MIUI) specific intents
+		if (brand === "xiaomi" || brand === "redmi" || brand === "poco") {
+			intentsToCheck.push(
+				"miui.intent.action.OP_AUTO_START",
+				"miui.intent.action.APP_PERM_EDITOR",
+				"miui.intent.action.privacycenter",
+				"package:com.miui.securitycenter",
+				"package:com.miui.powerkeeper"
+			);
+		}
+		
+		// Samsung specific intents
+		if (brand === "samsung") {
+			intentsToCheck.push(
+				"package:com.samsung.android.lool",
+				"package:com.samsung.android.sm",
+				"package:com.samsung.android.app.boostmanager",
+				"package:com.samsung.android.settings"
+			);
+		}
+		
+		// Huawei specific intents
+		if (brand === "huawei") {
+			intentsToCheck.push("package:com.huawei.systemmanager");
+		}
+		
+		// Generic Android intents (try for all devices)
+		intentsToCheck.push("android.settings.APPLICATION_DETAILS_SETTINGS");
+		
+		// Check if any of the intents are available
+		for (const url of intentsToCheck) {
+			try {
+				const supported = await Linking.canOpenURL(url);
+				if (supported) {
+					console.log(`[isAutoStartAvailable] Autostart available via: ${url}`);
+					return true;
+				}
+			} catch (e) {
+				// Continue checking other intents
+			}
+		}
+		
+		// If no intents are available, autostart is not available
+		console.log(`[isAutoStartAvailable] Autostart not available on ${brand}`);
+		return false;
+	} catch (error) {
+		// If detection fails, assume autostart is not available
+		console.warn(`[isAutoStartAvailable] Error checking availability:`, error);
 		return false;
 	}
 }

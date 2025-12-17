@@ -2,6 +2,7 @@
 
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
+import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { getActiveChatRoomId } from '@/services/ActiveChatService';
 import { useChatStore } from '@/stores/chatStore';
@@ -146,16 +147,49 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 				return null;
 			}
 			
-			console.log('[NotificationsService] Permission granted, getting device push token...');
-			// Use getDevicePushTokenAsync() for FCM device token
-			const { data: devicePushToken } = await Notifications.getDevicePushTokenAsync();
-			
-			token = devicePushToken;
-			if (token) {
-				console.log('[NotificationsService] ✅ FCM device push token obtained:', token.substring(0, 20) + '...');
-			} else {
-				console.warn('[NotificationsService] ⚠️ Device push token is null or undefined');
+			// Platform-specific token retrieval
+			if (Platform.OS === 'android') {
+				// Android: Use FCM device token (existing behavior - DO NOT CHANGE)
+				console.log('[NotificationsService] Permission granted, getting FCM device push token for Android...');
+				const { data: devicePushToken } = await Notifications.getDevicePushTokenAsync();
+				
+				token = devicePushToken;
+				if (token) {
+					console.log('[NotificationsService] ✅ FCM device push token obtained:', token.substring(0, 20) + '...');
+				} else {
+					console.warn('[NotificationsService] ⚠️ Device push token is null or undefined');
+				}
+			} else if (Platform.OS === 'ios') {
+				// iOS: Use Expo Push Token
+				console.log('[NotificationsService] Permission granted, getting Expo push token for iOS...');
+				
+				// Get projectId from app.json
+				let projectId = Constants.expoConfig?.extra?.eas?.projectId;
+				
+				// Fallback: hardcoded projectId from app.json if not found
+				if (!projectId) {
+					projectId = 'd95b9117-4914-4642-ae1d-a6d37a32ec26';
+				}
+				
+				if (!projectId) {
+					console.error('[NotificationsService] ❌ Project ID not found in app.json');
+					return null;
+				}
+				
+				try {
+					const tokenResult = await Notifications.getExpoPushTokenAsync({ projectId });
+					token = tokenResult?.data;
+					if (token) {
+						console.log('[NotificationsService] ✅ Expo push token obtained:', token.substring(0, 20) + '...');
+					} else {
+						console.warn('[NotificationsService] ⚠️ Expo push token is null or undefined');
+					}
+				} catch (tokenError: any) {
+					console.error('[NotificationsService] ❌ Error getting Expo push token:', tokenError?.message);
+					return null;
+				}
 			}
+			
 			return token;
 		} else {
 			console.warn('[NotificationsService] Must use physical device for Push Notifications (Device.isDevice = false)');
@@ -166,20 +200,25 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 		const fullError = e?.toString() || String(e);
 		
 		// Log full error details
-		console.error('[NotificationsService] ❌ ERROR: Failed to get Expo push token');
+		console.error('[NotificationsService] ❌ ERROR: Failed to get push token');
 		console.error('[NotificationsService] Error message:', errorMessage);
 		console.error('[NotificationsService] Full error:', fullError);
 		
-		if (errorMessage.includes('FirebaseApp') || errorMessage.includes('FCM') || errorMessage.includes('Firebase')) {
-			console.error('[NotificationsService] ❌ FIREBASE ERROR: Firebase/FCM not configured!');
-			console.error('[NotificationsService] Error details:', errorMessage);
-			console.error('[NotificationsService] For cloud builds: Configure FCM credentials via EAS:');
-			console.error('[NotificationsService]   1. Run: eas credentials');
-			console.error('[NotificationsService]   2. Select Android platform');
-			console.error('[NotificationsService]   3. Select Development/Preview/Production profile');
-			console.error('[NotificationsService]   4. Configure FCM credentials (Service Account JSON or FCM Server Key)');
-			console.error('[NotificationsService]   5. Rebuild: eas build -p android --profile development');
-			console.error('[NotificationsService] For local builds: Ensure google-services.json is in project root and expo-build-properties is configured in app.json');
+		// Platform-specific error handling
+		if (Platform.OS === 'android') {
+			if (errorMessage.includes('FirebaseApp') || errorMessage.includes('FCM') || errorMessage.includes('Firebase')) {
+				console.error('[NotificationsService] ❌ FIREBASE ERROR: Firebase/FCM not configured!');
+				console.error('[NotificationsService] Error details:', errorMessage);
+				console.error('[NotificationsService] For cloud builds: Configure FCM credentials via EAS:');
+				console.error('[NotificationsService]   1. Run: eas credentials');
+				console.error('[NotificationsService]   2. Select Android platform');
+				console.error('[NotificationsService]   3. Select Development/Preview/Production profile');
+				console.error('[NotificationsService]   4. Configure FCM credentials (Service Account JSON or FCM Server Key)');
+				console.error('[NotificationsService]   5. Rebuild: eas build -p android --profile development');
+				console.error('[NotificationsService] For local builds: Ensure google-services.json is in project root and expo-build-properties is configured in app.json');
+			} else {
+				console.error('[NotificationsService] ❌ ERROR: Failed to get FCM device push token:', errorMessage);
+			}
 		} else {
 			console.error('[NotificationsService] ❌ ERROR: Failed to get Expo push token:', errorMessage);
 		}
