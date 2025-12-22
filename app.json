@@ -30,8 +30,7 @@
         "UIBackgroundModes": [
           "location",
           "remote-notification",
-          "location",
-          "remote-notification"
+          "processing"
         ],
         "ITSAppUsesNonExemptEncryption": false
       }
