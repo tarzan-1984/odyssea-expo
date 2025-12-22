@@ -1,24 +1,30 @@
 import React from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, StyleSheet, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import NotificationsSettings from '@/components/settings/NotificationsSettings';
+import LogsSettings from '@/components/settings/LogsSettings';
 import BottomNavigation from '@/components/navigation/BottomNavigation';
 import { colors } from '@/lib';
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   return (
-    <View style={styles.screenWrap}>
-      <View style={{ height: insets.top, backgroundColor: colors.primary.violet }} />
-      <View style={styles.container}>
-        <NotificationsSettings />
+    <View style={[styles.screenWrap, Platform.OS === 'android' && { paddingBottom: insets.bottom }]}>
+      <View style={styles.screenContent}>
+        <View style={{ height: insets.top, backgroundColor: colors.primary.violet }} />
+        <View style={styles.container}>
+          <LogsSettings />
+        </View>
+        <BottomNavigation currentRoute="/settings" />
       </View>
-      <BottomNavigation currentRoute="/settings" />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  screenContent: {
+    flex: 1,
+    position: "relative"
+  },
   screenWrap: {
     flex: 1,
     position: 'relative',

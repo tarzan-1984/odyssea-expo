@@ -20,6 +20,7 @@ import { LOCATION_TASK_NAME, LOCATION_UPDATE_INTERVAL } from '@/tasks/locationTa
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { sendLocationUpdateToTMS, sendLocationUpdateToBackendUser, getLocalIsoString } from '@/utils/locationApi';
 import PermissionsAssistant from '@/components/PermissionsAssistant';
+import { fileLogger } from '@/utils/fileLogger';
 
 /**
  * FinalVerifyScreen - Final verification/profile screen
@@ -60,10 +61,43 @@ export default function FinalVerifyScreen() {
   useEffect(() => {
     const loadSavedData = async () => {
       try {
-        // Check if permissions assistant was already completed
-        const permissionsCompleted = await AsyncStorage.getItem('@permissions_onboarding_completed');
-        if (permissionsCompleted !== 'true') {
+        // Check if this is the first launch of the app
+        const firstLaunch = await AsyncStorage.getItem('@app_first_launch');
+        
+        if (!firstLaunch) {
+          // First launch - clear all old data that might cause issues
+          console.log('[FinalVerify] First app launch detected, clearing old data...');
+          
+          // Clear all keys that might cause problems from previous installation
+          const keysToClear = [
+            '@permissions_onboarding_completed',
+            '@odyssea_app_settings',
+            '@user_location',
+            '@location_update_queue',
+          ];
+          
+          try {
+            await AsyncStorage.multiRemove(keysToClear);
+            console.log('[FinalVerify] ✅ Cleared old data:', keysToClear);
+          } catch (clearError) {
+            console.warn('[FinalVerify] Failed to clear some old data:', clearError);
+          }
+          
+          // Mark as launched AFTER clearing data
+          await AsyncStorage.setItem('@app_first_launch', 'true');
+          console.log('[FinalVerify] ✅ App marked as launched');
+          
+          // Show permissions assistant
           setShowPermissionsAssistant(true);
+        } else {
+          // Not first launch - check if permissions were completed
+          const permissionsCompleted = await AsyncStorage.getItem('@permissions_onboarding_completed');
+          if (permissionsCompleted !== 'true') {
+            console.log('[FinalVerify] Permissions not completed, showing permissions assistant');
+            setShowPermissionsAssistant(true);
+          } else {
+            console.log('[FinalVerify] Permissions already completed, skipping permissions assistant');
+          }
         }
 
         // Load status
@@ -609,21 +643,50 @@ export default function FinalVerifyScreen() {
       console.log('[FinalVerify] Updated status saved to AsyncStorage:', { status, zip, date });
       
       // Send location update to TMS API
-      const success = await sendLocationUpdate(
-        currentLocation.latitude,
-        currentLocation.longitude,
-        zip,
-        status,
-        date
-      );
+      let tmsSuccess = false;
+      try {
+        tmsSuccess = await sendLocationUpdate(
+          currentLocation.latitude,
+          currentLocation.longitude,
+          zip,
+          status,
+          date
+        );
+      } catch (tmsError) {
+        console.warn('[FinalVerify] TMS API request failed:', tmsError);
+        tmsSuccess = false;
+      }
 
-      if (success) {
-        // Update lastLocationUpdate in AuthContext
+      // Send location update to our backend (independent of TMS API)
+      fileLogger.warn('FinalVerify', 'Sending location update to backend in handleUpdateStatus', {
+        latitude: currentLocation.latitude,
+        longitude: currentLocation.longitude,
+        zip,
+      });
+      
+      const backendSuccess = await sendLocationUpdateToBackendUser({
+        location: undefined,
+        city: undefined,
+        state: undefined,
+        zip: zip,
+        latitude: currentLocation.latitude,
+        longitude: currentLocation.longitude,
+        lastUpdateIso: getLocalIsoString(),
+      });
+
+      if (backendSuccess) {
+        fileLogger.warn('FinalVerify', 'Backend update successful in handleUpdateStatus, saving location data');
+        // Update lastLocationUpdate in AuthContext only after successful backend update
         await updateUserLocation(
           currentLocation.latitude,
           currentLocation.longitude,
           zip
         );
+        fileLogger.warn('FinalVerify', 'Location data saved to app in handleUpdateStatus', {
+          latitude: currentLocation.latitude,
+          longitude: currentLocation.longitude,
+          zip,
+        });
         
         // Show success message
         setUpdateSuccessMessage('Location data sent successfully');
@@ -631,6 +694,7 @@ export default function FinalVerifyScreen() {
           setUpdateSuccessMessage(null);
         }, 3000);
       } else {
+        fileLogger.error('FinalVerify', 'Backend update failed in handleUpdateStatus');
         setUpdateSuccessMessage('Failed to send location data. Please try again.');
         setTimeout(() => {
           setUpdateSuccessMessage(null);
@@ -650,26 +714,33 @@ export default function FinalVerifyScreen() {
       return;
     }
 
+    fileLogger.warn('FinalVerify', 'Share location button pressed');
     setIsSharingLocation(true);
     try {
       if (hasLocationPermission === null) {
+        fileLogger.warn('FinalVerify', 'Requesting location permission');
         const { status } = await Location.requestForegroundPermissionsAsync();
         const granted = status === 'granted';
         setHasLocationPermission(granted);
         if (!granted) {
+          fileLogger.error('FinalVerify', 'Location permission not granted');
           console.warn('Location permission not granted');
           return;
         }
+        fileLogger.warn('FinalVerify', 'Location permission granted');
       }
 
+      fileLogger.warn('FinalVerify', 'Getting current location');
       const pos = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
       });
       if (!pos) {
+        fileLogger.error('FinalVerify', 'Failed to get current location');
         console.warn('Failed to get current location');
         return;
       }
       const { latitude, longitude } = pos.coords;
+      fileLogger.warn('FinalVerify', 'Location obtained', { latitude, longitude });
       const nextRegion: Region = {
         latitude,
         longitude,
@@ -678,6 +749,7 @@ export default function FinalVerifyScreen() {
       };
       
       // Reverse geocode to get ZIP code and human-readable address
+      fileLogger.warn('FinalVerify', 'Starting reverse geocoding', { latitude, longitude });
       let postalCode = '';
       let city: string | undefined;
       let state: string | undefined;
@@ -694,8 +766,12 @@ export default function FinalVerifyScreen() {
           }
           locationString = formatAddressLabel(geo);
           setLocationLabel(locationString);
+          fileLogger.warn('FinalVerify', 'Reverse geocoding successful', { postalCode, city, state });
+        } else {
+          fileLogger.warn('FinalVerify', 'Reverse geocoding returned empty results');
         }
       } catch (geoError) {
+        fileLogger.error('FinalVerify', 'Reverse geocoding failed', { error: geoError instanceof Error ? geoError.message : String(geoError) });
         console.warn('Failed to get ZIP code from geocoding:', geoError);
       }
       
@@ -704,32 +780,49 @@ export default function FinalVerifyScreen() {
         const finalZipCode = postalCode || zip;
         
         // Send location update to TMS API
+        let tmsSuccess = false;
         if (status && finalZipCode) {
           console.log('[FinalVerify] Sending location update to TMS API after Share my location...');
-          const success = await sendLocationUpdate(
+          tmsSuccess = await sendLocationUpdate(
             latitude,
             longitude,
             finalZipCode,
             status,
             '' // Empty string - function will use current date/time
           );
+        }
+        
+        // Send location update to our backend (independent of TMS API)
+        if (status && finalZipCode) {
+          fileLogger.warn('FinalVerify', 'Sending location update to backend after Share my location', {
+            latitude,
+            longitude,
+            zip: finalZipCode,
+            city,
+            state,
+          });
+          console.log('[FinalVerify] Sending location update to backend after Share my location...');
           
-          // Save coordinates and time only after successful API call
-          if (success) {
+          const backendSuccess = await sendLocationUpdateToBackendUser({
+            location: locationString,
+            city,
+            state,
+            zip: finalZipCode,
+            latitude,
+            longitude,
+            lastUpdateIso: getLocalIsoString(),
+          });
+          
+          if (backendSuccess) {
+            fileLogger.warn('FinalVerify', 'Backend update successful, saving location data to app');
+            // Update coordinates and time only after successful backend update
             await updateUserLocation(latitude, longitude, finalZipCode);
-
-            // Fire-and-forget: update user location in our own backend (users table)
-            void sendLocationUpdateToBackendUser({
-              location: locationString,
-              city,
-              state,
-              zip: finalZipCode,
-              latitude,
-              longitude,
-              // Exact local time on the device
-              lastUpdateIso: getLocalIsoString(),
-            });
+            fileLogger.warn('FinalVerify', 'Location data saved to app', { latitude, longitude, zip: finalZipCode });
+          } else {
+            fileLogger.error('FinalVerify', 'Backend update failed');
           }
+        } else {
+          fileLogger.warn('FinalVerify', 'Skipping backend update - missing status or zip', { hasStatus: !!status, hasZip: !!finalZipCode });
         }
         
         // Start background location tracking
@@ -837,19 +930,40 @@ export default function FinalVerifyScreen() {
       }
       
       // Send location update to TMS API
+      let tmsSuccess = false;
       if (status && currentZipCode) {
         console.log('[FinalVerify] Sending location update to TMS API after enabling auto-sharing...');
-        const success = await sendLocationUpdateToTMS(
-          user?.externalId || '',
-          currentLatitude,
-          currentLongitude,
-          currentZipCode,
-          status,
-          ''
-        );
+        try {
+          tmsSuccess = await sendLocationUpdateToTMS(
+            user?.externalId || '',
+            currentLatitude,
+            currentLongitude,
+            currentZipCode,
+            status,
+            ''
+          );
+        } catch (tmsError) {
+          console.warn('[FinalVerify] TMS API request failed:', tmsError);
+          tmsSuccess = false;
+        }
+      }
+
+      // Send location update to our backend (independent of TMS API)
+      if (status && currentZipCode) {
+        console.log('[FinalVerify] Sending location update to backend after enabling auto-sharing...');
         
-        // Save coordinates and time only after successful API call
-        if (success) {
+        const backendSuccess = await sendLocationUpdateToBackendUser({
+          location: undefined,
+          city: undefined,
+          state: undefined,
+          zip: currentZipCode,
+          latitude: currentLatitude,
+          longitude: currentLongitude,
+          lastUpdateIso: getLocalIsoString(),
+        });
+        
+        // Update coordinates and time only after successful backend update
+        if (backendSuccess) {
           await updateUserLocation(currentLatitude, currentLongitude, currentZipCode);
         }
       }
@@ -949,7 +1063,7 @@ export default function FinalVerifyScreen() {
             {/* Settings section */}
             <View style={styles.settingsSection}>
           <TouchableOpacity
-            style={[styles.shareButton, isSharingLocation && styles.shareButtonDisabled]}
+            style={styles.shareButton}
             onPress={handleShareLocation}
             disabled={isSharingLocation}
           >
@@ -1059,9 +1173,6 @@ const styles = StyleSheet.create({
      marginTop: -27,
      marginBottom: rem(20),
    },
-  shareButtonDisabled: {
-    opacity: 0.7,
-  },
    buttonText: {
      ...typography.button,
    },

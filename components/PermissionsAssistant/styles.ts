@@ -51,5 +51,19 @@ export default StyleSheet.create({
 		color: colors.neutral.white,
 		marginTop: rem(8),
 		lineHeight: fp(20),
-	}
+	},
+	autostartWarning: {
+		backgroundColor: '#FF3B30', // Red background
+		padding: rem(16),
+		borderRadius: rem(10),
+		marginBottom: rem(16),
+	},
+	autostartWarningText: {
+		color: colors.neutral.white, // White text
+		fontSize: fp(16),
+		fontFamily: fonts["700"], // Bold
+		fontWeight: 'bold',
+		textAlign: 'center',
+		lineHeight: fp(20),
+	},
 });

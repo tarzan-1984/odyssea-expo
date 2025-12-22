@@ -2,6 +2,7 @@ import * as TaskManager from 'expo-task-manager';
 import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { secureStorage } from '@/utils/secureStorage';
+import { fileLogger } from '@/utils/fileLogger';
 
 const LOCATION_TASK_NAME = 'background-location-task';
 // Interval for desired background location updates.
@@ -368,25 +369,46 @@ try {
                     });
                   }
 
-                  // Fire-and-forget update to our own backend (with reverse geocoded data)
-                  try {
-                    if (sendLocationUpdateToBackendUser) {
-                      void sendLocationUpdateToBackendUser({
-                        location: undefined, // Skip location string in background
-                        city: city || undefined,
-                        state: state || undefined,
-                        zip: finalPostalCode,
-                        latitude,
-                        longitude,
-                        lastUpdateIso: timestamp,
-                      });
-                    }
-                  } catch (backendError) {
-                    console.warn('⚠️ [LocationTask] Failed to send location to backend users endpoint:', backendError);
-                  }
+              // Send location update to our backend (independent of TMS API)
+              let backendUpdateSuccess = false;
+              try {
+                if (sendLocationUpdateToBackendUser) {
+                  fileLogger.warn('LocationTask', 'Preparing to send location to backend', {
+                    latitude,
+                    longitude,
+                    zip: finalPostalCode,
+                    city: city || 'empty',
+                    state: state || 'empty',
+                  });
                   
-                  // Save coordinates and time only after successful API call
-                  if (success) {
+                  backendUpdateSuccess = await sendLocationUpdateToBackendUser({
+                    location: undefined, // Skip location string in background
+                    city: city || undefined,
+                    state: state || undefined,
+                    zip: finalPostalCode,
+                    latitude,
+                    longitude,
+                    lastUpdateIso: timestamp,
+                  });
+                  
+                  if (backendUpdateSuccess) {
+                    fileLogger.warn('LocationTask', 'Backend location update sent successfully');
+                    console.log(`✅ [LocationTask] Backend location update sent successfully`);
+                  } else {
+                    fileLogger.error('LocationTask', 'Backend location update failed');
+                    console.warn(`⚠️ [LocationTask] Backend location update failed`);
+                  }
+                }
+              } catch (backendError) {
+                fileLogger.error('LocationTask', 'Failed to send location to backend', {
+                  error: backendError instanceof Error ? backendError.message : String(backendError),
+                });
+                console.warn('⚠️ [LocationTask] Failed to send location to backend users endpoint:', backendError);
+                backendUpdateSuccess = false;
+              }
+                  
+                  // Save coordinates and time only after successful backend update
+                  if (backendUpdateSuccess) {
                     try {
                       const locationData = {
                         latitude,
@@ -417,7 +439,7 @@ try {
                       console.error(`❌ [LocationTask] Failed to save location data to AsyncStorage:`, storageError);
                     }
                   } else {
-                    console.warn(`⚠️ [LocationTask] Skipping AsyncStorage save - API call was not successful`);
+                    console.warn(`⚠️ [LocationTask] Skipping AsyncStorage save - backend update was not successful`);
                   }
                 } else {
                   console.warn(`⚠️ [LocationTask] Missing required data for API call:`, {

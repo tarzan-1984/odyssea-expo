@@ -111,6 +111,43 @@ export async function isAutoStartAvailable(): Promise<boolean> {
 	}
 }
 
+/**
+ * Check if device requires autostart warning based on brand and firmware
+ * Returns true for devices that need manual autostart configuration
+ * Based on table: Xiaomi (MIUI/HyperOS), Huawei (EMUI), Oppo (ColorOS),
+ * Vivo (Funtouch), Realme (Realme UI), Honor (Magic UI)
+ */
+export async function requiresAutostartWarning(): Promise<boolean> {
+	if (Platform.OS !== "android") {
+		return false;
+	}
+	
+	try {
+		const brand = (await DeviceInfo.getBrand()).toLowerCase();
+		
+		// Brands that require autostart warning:
+		// Xiaomi / Redmi / POCO (MIUI/HyperOS)
+		// Huawei (EMUI)
+		// Oppo (ColorOS)
+		// Vivo (Funtouch)
+		// Realme (Realme UI)
+		// Honor (Magic UI)
+		const brandsRequiringWarning = [
+			"xiaomi", "redmi", "poco", // Xiaomi group (MIUI/HyperOS)
+			"huawei", // Huawei (EMUI)
+			"oppo", // Oppo (ColorOS)
+			"vivo", // Vivo (Funtouch)
+			"realme", // Realme (Realme UI)
+			"honor", // Honor (Magic UI)
+		];
+		
+		return brandsRequiringWarning.includes(brand);
+	} catch (error) {
+		console.warn(`[requiresAutostartWarning] Error checking brand:`, error);
+		return false;
+	}
+}
+
 export async function openBatterySettings() {
 	if (Platform.OS !== "android") return;
 	

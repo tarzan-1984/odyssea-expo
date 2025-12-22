@@ -9,7 +9,8 @@ import {
 	openAutoStartSettings, 
 	checkBatteryOptimizationStatus,
 	isBatteryOptimizationAvailable,
-	isAutoStartAvailable
+	isAutoStartAvailable,
+	requiresAutostartWarning
 } from "./utils";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocationPermission } from "@/hooks/useLocationPermission";
@@ -25,6 +26,7 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
   const [isMiuiBrand, setIsMiuiBrand] = useState(false); // Xiaomi / Redmi / POCO
 	const [batteryAvailable, setBatteryAvailable] = useState(false);
 	const [autoStartAvailable, setAutoStartAvailable] = useState(false);
+	const [requiresAutostartWarningState, setRequiresAutostartWarningState] = useState(false);
 	const appState = useRef(AppState.currentState);
 	
 	const checkPermissions = useCallback(async () => {
@@ -177,8 +179,10 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
 			if (Platform.OS === "android") {
 				const batteryAvail = await isBatteryOptimizationAvailable();
 				const autoStartAvail = await isAutoStartAvailable();
+				const needsWarning = await requiresAutostartWarning();
 				setBatteryAvailable(batteryAvail);
 				setAutoStartAvailable(autoStartAvail);
+				setRequiresAutostartWarningState(needsWarning);
 			}
 		};
 		checkAvailability();
@@ -245,6 +249,15 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.title}>Mandatory system settings</Text>
+        
+        {/* Autostart Warning - Show for specific brands */}
+        {Platform.OS === "android" && requiresAutostartWarningState && (
+          <View style={styles.autostartWarning}>
+            <Text style={styles.autostartWarningText}>
+              For the app to work properly, you must enable autostart in background mode in settings
+            </Text>
+          </View>
+        )}
         
         {/* GPS Enabled - Show for both Android and iOS (First in list) */}
         <TouchableOpacity

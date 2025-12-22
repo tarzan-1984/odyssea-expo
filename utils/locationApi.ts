@@ -4,6 +4,7 @@ import { API_BASE_URL } from '@/lib/config';
 import { secureStorage } from '@/utils/secureStorage';
 import { sendLocationUpdateNative } from '@/utils/nativeHttpClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { fileLogger } from '@/utils/fileLogger';
 
 /**
  * Format date and time for TMS API
@@ -210,7 +211,7 @@ export async function sendLocationUpdateToTMS(
 
 /**
  * Send location update to our own backend (users table)
- * Fire-and-forget helper: callers can ignore the returned promise.
+ * Returns true if successful, false otherwise.
  */
 export async function sendLocationUpdateToBackendUser(params: {
   location?: string;
@@ -220,11 +221,11 @@ export async function sendLocationUpdateToBackendUser(params: {
   latitude: number;
   longitude: number;
   lastUpdateIso?: string;
-}) {
+}): Promise<boolean> {
   try {
     if (!API_BASE_URL) {
       console.warn('[locationApi] API_BASE_URL is not configured, skipping backend location update');
-      return;
+      return false;
     }
 
     // IMPORTANT: In background/headless JS, secureStorage may not work (requires user interaction on iOS)
@@ -268,12 +269,7 @@ export async function sendLocationUpdateToBackendUser(params: {
 
     if (!accessToken || !userId) {
       console.warn('[locationApi] Missing access token or user data, skipping backend location update');
-      return;
-    }
-
-    if (!userId) {
-      console.warn('[locationApi] User ID not found in secure storage, skipping backend location update');
-      return;
+      return false;
     }
 
     const url = `${API_BASE_URL}/v1/users/${userId}/location`;
@@ -290,6 +286,16 @@ export async function sendLocationUpdateToBackendUser(params: {
     };
 
     try {
+      fileLogger.warn('locationApi', 'Sending location update to backend', {
+        url,
+        body: {
+          latitude: body.latitude,
+          longitude: body.longitude,
+          zip: body.zip,
+          city: body.city,
+          state: body.state,
+        },
+      });
       console.log('[locationApi] 🔄 Sending location update to backend users endpoint...', {
         url,
         body,
@@ -312,21 +318,36 @@ export async function sendLocationUpdateToBackendUser(params: {
       }
 
       if (response.ok) {
+        fileLogger.warn('locationApi', 'Backend location update successful', {
+          status: response.status,
+          data: responseData,
+        });
         console.log(
           '[locationApi] ✅ Backend user location updated successfully',
           responseData ? { status: response.status, data: responseData } : { status: response.status },
         );
+        return true;
       } else {
+        fileLogger.error('locationApi', 'Backend location update returned non-2xx status', {
+          status: response.status,
+          data: responseData,
+        });
         console.warn(
           '[locationApi] ❌ Backend user location update returned non-2xx status',
           { status: response.status, data: responseData },
         );
+        return false;
       }
     } catch (error) {
+      fileLogger.error('locationApi', 'Backend location update request failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
       console.warn('[locationApi] ❌ Backend location update request failed:', error);
+      return false;
     }
   } catch (error) {
     console.warn('[locationApi] ❌ Error while preparing backend location update:', error);
+    return false;
   }
 }
 

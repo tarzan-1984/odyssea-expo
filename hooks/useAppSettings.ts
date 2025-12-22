@@ -18,6 +18,20 @@ export const useAppSettings = () => {
   // Load settings from storage
   const loadSettings = useCallback(async () => {
     try {
+      // Check if this is first launch (settings should already be cleared in final-verify.tsx)
+      const firstLaunch = await AsyncStorage.getItem('@app_first_launch');
+      
+      // If first launch, settings should already be cleared, but ensure defaults
+      if (!firstLaunch) {
+        // First launch - use defaults (settings were cleared in final-verify.tsx)
+        console.log('[useAppSettings] First launch detected, using default settings');
+        await AsyncStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(DEFAULT_SETTINGS));
+        setSettings(DEFAULT_SETTINGS);
+        setIsLoading(false);
+        return;
+      }
+      
+      // Not first launch - load saved settings
       const storedSettings = await AsyncStorage.getItem(SETTINGS_STORAGE_KEY);
       if (storedSettings) {
         const parsedSettings = JSON.parse(storedSettings);
