@@ -7,6 +7,7 @@ import { chatCacheService } from '@/services/ChatCacheService';
 import { ChatRoom } from '@/components/ChatListItem';
 import { useChatStore } from '@/stores/chatStore';
 import { useWebSocket } from '@/context/WebSocketContext';
+import { useAuth } from '@/context/AuthContext';
 
 const OPENED_CHATS_KEY = '@chat_opened_rooms';
 
@@ -98,6 +99,7 @@ interface UseChatRoomsReturn {
 export const useChatRooms = (): UseChatRoomsReturn => {
   const { chatRooms, setChatRooms: storeSetChatRooms, updateChatRoom: storeUpdateChatRoom, mergeChatRooms } = useChatStore();
   const { isConnected } = useWebSocket();
+  const { authState } = useAuth();
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const hasLoadedOnceRef = useRef<boolean>(false);
@@ -513,6 +515,12 @@ export const useChatRooms = (): UseChatRoomsReturn => {
           console.log('📱 [useChatRooms] App became active after being in background, forcing chat rooms sync from API...');
           wasInBackground = false;
 
+          // Only sync if user is authenticated
+          if (!authState.isAuthenticated) {
+            console.log('📱 [useChatRooms] User not authenticated, skipping chat rooms sync');
+            return;
+          }
+
           // Force refresh from API to sync unreadCount and chat list.
           // After sync, log resulting chat rooms and total unread count.
           (async () => {
@@ -554,7 +562,7 @@ export const useChatRooms = (): UseChatRoomsReturn => {
     return () => {
       subscription.remove();
     };
-  }, []); // subscribe once; use refs for latest values
+  }, [authState.isAuthenticated]); // subscribe once; use refs for latest values, but check auth state
 
   // Load chat rooms on mount (only once)
   useEffect(() => {

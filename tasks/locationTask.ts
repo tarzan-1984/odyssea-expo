@@ -3,6 +3,7 @@ import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { secureStorage } from '@/utils/secureStorage';
 import { fileLogger } from '@/utils/fileLogger';
+import { Platform, AppState } from 'react-native';
 
 const LOCATION_TASK_NAME = 'background-location-task';
 // Interval for desired background location updates.
@@ -24,11 +25,19 @@ console.log('📍 [LocationTask] defineTask available:', typeof TaskManager.defi
 try {
   TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }: any) => {
   const triggerTime = new Date().toLocaleTimeString();
+  const appState = AppState.currentState;
   console.log(`📍 [LocationTask] ========== TASK TRIGGERED ==========`);
   console.log(`📍 [LocationTask] Time: ${triggerTime}`);
+  console.log(`📍 [LocationTask] App State: ${appState} (active=foreground, background/inactive=background)`);
   console.log(`📍 [LocationTask] hasError: ${!!error}`);
   console.log(`📍 [LocationTask] hasData: ${!!data}`);
-  console.log(`📍 [LocationTask] App state check - task is running in background/foreground`);
+  fileLogger.warn('LocationTask', 'TASK TRIGGERED', {
+    time: triggerTime,
+    appState,
+    hasError: !!error,
+    hasData: !!data,
+    platform: Platform.OS,
+  });
   if (error) {
     console.log(`📍 [LocationTask] Error object:`, error);
   }
@@ -199,27 +208,34 @@ try {
                   
                   console.log(`⏱️ [LocationTask] Last update was ${minutesSinceUpdate}m ${secondsSinceUpdate}s ago`);
                   
-            // Only process if enough time has passed (within 30 seconds of target interval)
-            // This ensures consistent behavior on both iOS and Android
-            // IMPORTANT: For testing, we'll use a shorter interval to allow more frequent updates
-            // In production, this should be LOCATION_UPDATE_INTERVAL - 30000 (30 seconds before target)
-            // For testing, we use 30 seconds to allow updates every 30 seconds minimum (more lenient)
-            const TESTING_MODE = true; // Set to false for production
-            const minInterval = TESTING_MODE ? 30000 : (LOCATION_UPDATE_INTERVAL - 30000); // 30 seconds for testing, 30 seconds for production
-            console.log(`⏱️ [LocationTask] Time since last update: ${timeSinceLastUpdate}ms (${Math.floor(timeSinceLastUpdate / 1000)}s)`);
-            console.log(`⏱️ [LocationTask] Minimum interval required: ${minInterval}ms (${Math.floor(minInterval / 1000)}s)`);
-            console.log(`⏱️ [LocationTask] Testing mode: ${TESTING_MODE}`);
-            
-            if (timeSinceLastUpdate < minInterval) {
-              const remainingMs = minInterval - timeSinceLastUpdate;
-              const remainingMinutes = Math.floor(remainingMs / 60000);
-              const remainingSeconds = Math.floor((remainingMs % 60000) / 1000);
-              console.log(`⏸️ [LocationTask] ⚠️ Update SKIPPED - need to wait ${remainingMinutes}m ${remainingSeconds}s more`);
-              console.log(`⏸️ [LocationTask] This is normal - system sends updates more frequently than our interval`);
-              return; // Skip this update
+            // CRITICAL FOR iOS: Skip time interval check on iOS to ensure task keeps running
+            // iOS may stop calling the task if it returns early too often
+            // For Android, we still check the interval to avoid too frequent updates
+            if (Platform.OS !== 'ios') {
+              // Only process if enough time has passed (within 30 seconds of target interval)
+              // This ensures consistent behavior on Android
+              // IMPORTANT: For testing, we'll use a shorter interval to allow more frequent updates
+              // In production, this should be LOCATION_UPDATE_INTERVAL - 30000 (30 seconds before target)
+              // For testing, we use 30 seconds to allow updates every 30 seconds minimum (more lenient)
+              const TESTING_MODE = true; // Set to false for production
+              const minInterval = TESTING_MODE ? 30000 : (LOCATION_UPDATE_INTERVAL - 30000); // 30 seconds for testing, 30 seconds for production
+              console.log(`⏱️ [LocationTask] Time since last update: ${timeSinceLastUpdate}ms (${Math.floor(timeSinceLastUpdate / 1000)}s)`);
+              console.log(`⏱️ [LocationTask] Minimum interval required: ${minInterval}ms (${Math.floor(minInterval / 1000)}s)`);
+              console.log(`⏱️ [LocationTask] Testing mode: ${TESTING_MODE}`);
+              
+              if (timeSinceLastUpdate < minInterval) {
+                const remainingMs = minInterval - timeSinceLastUpdate;
+                const remainingMinutes = Math.floor(remainingMs / 60000);
+                const remainingSeconds = Math.floor((remainingMs % 60000) / 1000);
+                console.log(`⏸️ [LocationTask] ⚠️ Update SKIPPED - need to wait ${remainingMinutes}m ${remainingSeconds}s more`);
+                console.log(`⏸️ [LocationTask] This is normal - system sends updates more frequently than our interval`);
+                return; // Skip this update (Android only)
+              }
+              
+              console.log(`✅ [LocationTask] ✅ Interval check PASSED - enough time has passed since last update`);
+            } else {
+              console.log(`🍎 [LocationTask] iOS detected - skipping time interval check to keep task active`);
             }
-            
-            console.log(`✅ [LocationTask] ✅ Interval check PASSED - enough time has passed since last update`);
                 } else {
                   console.log(`ℹ️ [LocationTask] No previous update timestamp found, proceeding with update`);
                 }

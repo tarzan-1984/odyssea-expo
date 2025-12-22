@@ -278,26 +278,28 @@ export default function FinalVerifyScreen() {
       console.log('📍 [BackgroundTracking] Platform:', Platform.OS);
       console.log('📍 [BackgroundTracking] App state:', AppState.currentState);
       
-      // IMPORTANT: On Android, when app is in foreground, location updates may come more frequently
-      // We use distanceInterval=0 to accept all updates, then filter by time in locationTask.ts
-      // On iOS, timeInterval may be ignored, so we filter in JavaScript
+      // CRITICAL FOR iOS BACKGROUND UPDATES:
+      // iOS requires distanceInterval to be set (not 0) for background location updates
+      // iOS will NOT call the task in background if distanceInterval is 0
+      // Also, iOS may ignore timeInterval in background, so we rely on distanceInterval
       const locationOptions: Location.LocationTaskOptions = {
-        accuracy: Location.Accuracy.Balanced,
+        accuracy: Platform.OS === 'ios' ? Location.Accuracy.Highest : Location.Accuracy.Balanced, // Higher accuracy for iOS to ensure updates
         timeInterval: LOCATION_UPDATE_INTERVAL, // Request updates every 1 minute
-        // distanceInterval: minimum distance (meters) for a new update
-        // BEHAVIOR ON iOS AND ANDROID:
-        // - iOS: distanceInterval=0 accepts all updates for any movement
-        //   (timeInterval may be ignored by the system)
-        // - Android: distanceInterval=0 behaves similarly
-        //   (Android 8.0+ can throttle update frequency at OS level)
-        // SOLUTION: Use 0 to accept all updates from the system,
-        // then filter by time in locationTask.ts (same logic on iOS and Android)
-        distanceInterval: 0, // Accept all updates; we filter by time ourselves
+        // CRITICAL: iOS requires distanceInterval > 0 for background updates
+        // Use 10 meters for iOS - smaller values may cause iOS to pause updates if device is stationary
+        // Android can use 0 to accept all updates
+        distanceInterval: Platform.OS === 'ios' ? 10 : 0, // iOS needs distanceInterval > 0, use 10m for more reliable background updates
         foregroundService: {
           notificationTitle: 'Location Tracking Active',
           notificationBody: `Tracking your location every ${intervalInMinutes} minute${intervalInMinutes !== 1 ? 's' : ''}`,
           notificationColor: '#292966', // App primary color
         },
+        // iOS-specific settings to ensure background updates work
+        ...(Platform.OS === 'ios' && {
+          pausesUpdatesAutomatically: false, // Don't pause updates automatically
+          activityType: Location.ActivityType.AutomotiveNavigation, // Use automotive navigation for drivers/couriers (better for vehicle tracking)
+          showsBackgroundLocationIndicator: true, // Show location indicator in status bar
+        }),
       };
       
       console.log('📍 [BackgroundTracking] Location options:', {
@@ -610,6 +612,33 @@ export default function FinalVerifyScreen() {
 
     return () => clearInterval(statusInterval);
   }, [automaticLocationSharing, startBackgroundLocationTracking, showPermissionsAssistant]);
+
+  // Add debug logging to check if task is actually being called
+  useEffect(() => {
+    if (Platform.OS !== 'ios' || !automaticLocationSharing) {
+      return;
+    }
+
+    const checkTaskExecution = async () => {
+      const isRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
+      console.log('🔍 [Debug] Task running status:', isRunning);
+      
+      // Check if we can get current location
+      try {
+        const pos = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        console.log('🔍 [Debug] Can get current location:', !!pos, pos ? { lat: pos.coords.latitude, lng: pos.coords.longitude } : null);
+      } catch (error) {
+        console.warn('🔍 [Debug] Cannot get current location:', error);
+      }
+    };
+
+    checkTaskExecution();
+    const interval = setInterval(checkTaskExecution, 30000); // Every 30 seconds
+    
+    return () => clearInterval(interval);
+  }, [automaticLocationSharing]);
 
   const handleUpdateStatus = async () => {
     try {
