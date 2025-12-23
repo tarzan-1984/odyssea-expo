@@ -23,6 +23,20 @@
         "buildType": "apk"
       }
     },
+    "ad-hoc": {
+      "developmentClient": false,
+      "distribution": "internal",
+      "ios": {
+        "simulator": false,
+        "buildConfiguration": "Release"
+      },
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "NODE_ENV": "production"
+      }
+    },
     "production": {
       "developmentClient": false,
       "distribution": "store",

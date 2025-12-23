@@ -29,8 +29,7 @@
         "NSPhotoLibraryAddUsageDescription": "This app may save selected or edited avatar to your library.",
         "UIBackgroundModes": [
           "location",
-          "remote-notification",
-          "processing"
+          "remote-notification"
         ],
         "ITSAppUsesNonExemptEncryption": false
       }
