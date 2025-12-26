@@ -131,6 +131,15 @@ export async function sendLocationUpdateToTMS(
     console.log('[locationApi] Sending location update to TMS API...');
     console.log('[locationApi] URL:', url);
     console.log('[locationApi] Request data:', requestData);
+    
+    fileLogger.warn('locationApi', 'SEND_LOCATION_START', {
+      url,
+      externalId,
+      latitude: latitude.toFixed(6),
+      longitude: longitude.toFixed(6),
+      zipCode,
+      status: statusValue,
+    });
 
     // IMPORTANT: In headless JS (background task), fetch may hang or timeout
     // Use XMLHttpRequest instead - it works better in headless JS on Android
@@ -158,13 +167,30 @@ export async function sendLocationUpdateToTMS(
         try {
           responseData = JSON.parse(xhr.responseText);
           console.log(`[locationApi] ✅ Response parsed successfully`);
+          fileLogger.warn('locationApi', 'RESPONSE_PARSED', {
+            status: xhr.status,
+            duration: fetchDuration,
+            responseLength: xhr.responseText?.length || 0,
+          });
         } catch (parseError) {
           console.warn(`[locationApi] ⚠️ Failed to parse JSON, response: ${xhr.responseText?.substring(0, 200)}`);
+          fileLogger.error('locationApi', 'RESPONSE_PARSE_ERROR', {
+            status: xhr.status,
+            duration: fetchDuration,
+            responsePreview: xhr.responseText?.substring(0, 200),
+            error: parseError instanceof Error ? parseError.message : String(parseError),
+          });
           responseData = { error: 'Invalid JSON response', raw: xhr.responseText?.substring(0, 200) };
         }
         
         if (xhr.status >= 200 && xhr.status < 300) {
           console.log('[locationApi] ✅ Location update sent successfully');
+          fileLogger.warn('locationApi', 'SEND_SUCCESS', {
+            status: xhr.status,
+            duration: fetchDuration,
+            externalId,
+            apiSuccess: responseData?.success || false,
+          });
           if (responseData?.success) {
             console.log('[locationApi] TMS API confirmed success');
           }
@@ -174,6 +200,14 @@ export async function sendLocationUpdateToTMS(
           const errorCode = responseData?.code || 'unknown';
           console.error(`[locationApi] ❌ Failed to send location update: ${xhr.status} (${errorCode})`);
           console.error(`[locationApi] Error message: ${errorMessage}`);
+          fileLogger.error('locationApi', 'SEND_FAILED', {
+            status: xhr.status,
+            errorCode,
+            errorMessage,
+            duration: fetchDuration,
+            externalId,
+            responsePreview: xhr.responseText?.substring(0, 200),
+          });
           resolve(false);
         }
       };
@@ -183,6 +217,11 @@ export async function sendLocationUpdateToTMS(
         resolved = true;
         const fetchDuration = Date.now() - fetchStartTime;
         console.error(`[locationApi] ❌ Request failed after ${fetchDuration}ms: Network error`);
+        fileLogger.error('locationApi', 'NETWORK_ERROR', {
+          duration: fetchDuration,
+          externalId,
+          url,
+        });
         resolve(false);
       };
       
@@ -191,20 +230,44 @@ export async function sendLocationUpdateToTMS(
         resolved = true;
         const fetchDuration = Date.now() - fetchStartTime;
         console.error(`[locationApi] ❌ Request timed out after ${fetchDuration}ms`);
+        fileLogger.error('locationApi', 'REQUEST_TIMEOUT', {
+          duration: fetchDuration,
+          timeout: timeout,
+          externalId,
+          url,
+        });
         resolve(false);
       };
       
       try {
+        fileLogger.warn('locationApi', 'REQUEST_SENDING', {
+          url,
+          externalId,
+          dataSize: JSON.stringify(requestData).length,
+        });
         xhr.send(JSON.stringify(requestData));
       } catch (sendError) {
         if (resolved) return;
         resolved = true;
         console.error(`[locationApi] ❌ Failed to send request:`, sendError);
+        fileLogger.error('locationApi', 'SEND_EXCEPTION', {
+          error: sendError instanceof Error ? sendError.message : String(sendError),
+          stack: sendError instanceof Error ? sendError.stack : undefined,
+          externalId,
+          url,
+        });
         resolve(false);
       }
     });
   } catch (error) {
     console.error('[locationApi] ❌ Error sending location update:', error);
+    fileLogger.error('locationApi', 'SEND_LOCATION_EXCEPTION', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      externalId,
+      latitude: latitude.toFixed(6),
+      longitude: longitude.toFixed(6),
+    });
     return false;
   }
 }

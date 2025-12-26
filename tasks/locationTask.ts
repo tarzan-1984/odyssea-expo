@@ -26,17 +26,22 @@ try {
   TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }: any) => {
   const triggerTime = new Date().toLocaleTimeString();
   const appState = AppState.currentState;
+  const taskStartTime = Date.now();
+  
   console.log(`📍 [LocationTask] ========== TASK TRIGGERED ==========`);
   console.log(`📍 [LocationTask] Time: ${triggerTime}`);
   console.log(`📍 [LocationTask] App State: ${appState} (active=foreground, background/inactive=background)`);
   console.log(`📍 [LocationTask] hasError: ${!!error}`);
   console.log(`📍 [LocationTask] hasData: ${!!data}`);
-  fileLogger.warn('LocationTask', 'TASK TRIGGERED', {
+  console.log(`📍 [LocationTask] Platform: ${Platform.OS}`);
+  
+  fileLogger.warn('LocationTask', 'TASK_TRIGGERED', {
     time: triggerTime,
     appState,
     hasError: !!error,
     hasData: !!data,
     platform: Platform.OS,
+    timestamp: new Date().toISOString(),
   });
   if (error) {
     console.log(`📍 [LocationTask] Error object:`, error);
@@ -55,6 +60,14 @@ try {
     const errorMessage = error?.message || '';
     
     console.warn(`⚠️ [LocationTask] Error received (code ${errorCode}):`, errorMessage);
+    fileLogger.error('LocationTask', 'TASK_ERROR', {
+      errorCode,
+      errorMessage,
+      error: error,
+      platform: Platform.OS,
+      appState,
+      timestamp: new Date().toISOString(),
+    });
     
     // Expected errors (don't log as errors):
     // Code 0: Location unknown (temporary GPS issue) - normal, can retry
@@ -101,6 +114,15 @@ try {
         accuracy: location.coords.accuracy,
         timestamp
       });
+      
+      fileLogger.warn('LocationTask', 'LOCATION_RECEIVED', {
+        latitude: latitude.toFixed(6),
+        longitude: longitude.toFixed(6),
+        accuracy: location.coords.accuracy,
+        timestamp,
+        platform: Platform.OS,
+        appState,
+      });
 
       try {
         // Perform reverse geocoding to get zip, city, state from new coordinates
@@ -111,8 +133,13 @@ try {
         let state = '';
         
         // Try reverse geocoding with timeout (3 seconds max) to prevent blocking
+        const geocodingStartTime = Date.now();
         try {
           console.log(`🌍 [LocationTask] Attempting reverse geocoding for coordinates: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
+          fileLogger.warn('LocationTask', 'GEOCODING_START', {
+            latitude: latitude.toFixed(6),
+            longitude: longitude.toFixed(6),
+          });
           
           // Use reverse geocoding with timeout to prevent blocking
           const reverseGeocodePromise = (async () => {
@@ -146,16 +173,33 @@ try {
             city = geo.city || geo.subregion || geo.district || '';
             state = geo.region ? geo.region.split(' ')[0] : '';
             
-            console.log(`✅ [LocationTask] Reverse geocoding successful:`, {
+            const geocodingDuration = Date.now() - geocodingStartTime;
+            console.log(`✅ [LocationTask] Reverse geocoding successful (${geocodingDuration}ms):`, {
               postalCode: postalCode || 'not found',
               city: city || 'not found',
               state: state || 'not found',
             });
+            
+            fileLogger.warn('LocationTask', 'GEOCODING_SUCCESS', {
+              postalCode: postalCode || 'empty',
+              city: city || 'empty',
+              state: state || 'empty',
+              duration: geocodingDuration,
+            });
           } else {
-            console.warn(`⚠️ [LocationTask] Reverse geocoding returned no results, using fallback`);
+            const geocodingDuration = Date.now() - geocodingStartTime;
+            console.warn(`⚠️ [LocationTask] Reverse geocoding returned no results (${geocodingDuration}ms)`);
+            fileLogger.warn('LocationTask', 'GEOCODING_NO_RESULTS', {
+              duration: geocodingDuration,
+            });
           }
         } catch (geoError) {
-          console.warn(`⚠️ [LocationTask] Reverse geocoding failed (will use fallback):`, geoError);
+          const geocodingDuration = Date.now() - geocodingStartTime;
+          console.warn(`⚠️ [LocationTask] Reverse geocoding failed (${geocodingDuration}ms):`, geoError);
+          fileLogger.error('LocationTask', 'GEOCODING_ERROR', {
+            error: geoError instanceof Error ? geoError.message : String(geoError),
+            duration: geocodingDuration,
+          });
           // Continue execution - don't let geocoding errors block location updates
         }
         
@@ -187,65 +231,9 @@ try {
         if (settings) {
           const parsedSettings = JSON.parse(settings);
           if (parsedSettings.automaticLocationSharing) {
-            // Check last update time to enforce interval
-            // PLATFORM BEHAVIOR:
-            // - iOS: May ignore large timeInterval values (> 5 minutes) for battery optimization
-            // - Android 8.0+: Limits background location updates to a few times per hour
-            // - Both platforms may send updates more frequently than requested
-            // SOLUTION: Manual filtering in JavaScript ensures consistent 1-minute interval on both platforms
-            console.log(`⏱️ [LocationTask] Checking update interval...`);
-            const existingLocationJson = await AsyncStorage.getItem(USER_LOCATION_KEY);
-            const now = Date.now();
-            
-            if (existingLocationJson) {
-              try {
-                const existingLocation = JSON.parse(existingLocationJson);
-                if (existingLocation.lastUpdate) {
-                  const lastUpdate = new Date(existingLocation.lastUpdate).getTime();
-                  const timeSinceLastUpdate = now - lastUpdate;
-                  const minutesSinceUpdate = Math.floor(timeSinceLastUpdate / 60000);
-                  const secondsSinceUpdate = Math.floor((timeSinceLastUpdate % 60000) / 1000);
-                  
-                  console.log(`⏱️ [LocationTask] Last update was ${minutesSinceUpdate}m ${secondsSinceUpdate}s ago`);
-                  
-            // CRITICAL FOR iOS: Skip time interval check on iOS to ensure task keeps running
-            // iOS may stop calling the task if it returns early too often
-            // For Android, we still check the interval to avoid too frequent updates
-            if (Platform.OS !== 'ios') {
-              // Only process if enough time has passed (within 30 seconds of target interval)
-              // This ensures consistent behavior on Android
-              // IMPORTANT: For testing, we'll use a shorter interval to allow more frequent updates
-              // In production, this should be LOCATION_UPDATE_INTERVAL - 30000 (30 seconds before target)
-              // For testing, we use 30 seconds to allow updates every 30 seconds minimum (more lenient)
-              const TESTING_MODE = true; // Set to false for production
-              const minInterval = TESTING_MODE ? 30000 : (LOCATION_UPDATE_INTERVAL - 30000); // 30 seconds for testing, 30 seconds for production
-              console.log(`⏱️ [LocationTask] Time since last update: ${timeSinceLastUpdate}ms (${Math.floor(timeSinceLastUpdate / 1000)}s)`);
-              console.log(`⏱️ [LocationTask] Minimum interval required: ${minInterval}ms (${Math.floor(minInterval / 1000)}s)`);
-              console.log(`⏱️ [LocationTask] Testing mode: ${TESTING_MODE}`);
-              
-              if (timeSinceLastUpdate < minInterval) {
-                const remainingMs = minInterval - timeSinceLastUpdate;
-                const remainingMinutes = Math.floor(remainingMs / 60000);
-                const remainingSeconds = Math.floor((remainingMs % 60000) / 1000);
-                console.log(`⏸️ [LocationTask] ⚠️ Update SKIPPED - need to wait ${remainingMinutes}m ${remainingSeconds}s more`);
-                console.log(`⏸️ [LocationTask] This is normal - system sends updates more frequently than our interval`);
-                return; // Skip this update (Android only)
-              }
-              
-              console.log(`✅ [LocationTask] ✅ Interval check PASSED - enough time has passed since last update`);
-            } else {
-              console.log(`🍎 [LocationTask] iOS detected - skipping time interval check to keep task active`);
-            }
-                } else {
-                  console.log(`ℹ️ [LocationTask] No previous update timestamp found, proceeding with update`);
-                }
-              } catch (parseError) {
-                console.warn(`⚠️ [LocationTask] Failed to parse existing location data:`, parseError);
-                // If parsing fails, continue with update
-              }
-            } else {
-              console.log(`ℹ️ [LocationTask] No existing location data found, proceeding with first update`);
-            }
+            // No time interval check - process all location updates for smooth map display
+            // Both iOS and Android will send updates as frequently as the system allows
+            console.log(`✅ [LocationTask] Processing location update (no time restrictions)`);
             
             const timeMinutes = new Date().toLocaleTimeString();
             console.log(`✅ [LocationTask] ========== PROCEEDING WITH API CALL ==========`);
@@ -265,13 +253,24 @@ try {
               let externalId: string | null = null;
               
               // Try to get externalId from AsyncStorage (cached when app is active)
+              const externalIdStartTime = Date.now();
               try {
                 const cachedExternalId = await AsyncStorage.getItem('@user_external_id');
                 if (cachedExternalId) {
                   externalId = cachedExternalId;
-                  console.log(`✅ [LocationTask] External ID retrieved from cache: ${externalId}`);
+                  const duration = Date.now() - externalIdStartTime;
+                  console.log(`✅ [LocationTask] External ID retrieved from cache (${duration}ms): ${externalId}`);
+                  fileLogger.warn('LocationTask', 'EXTERNAL_ID_FOUND', {
+                    source: 'AsyncStorage',
+                    externalId,
+                    duration,
+                  });
                 } else {
                   console.warn(`⚠️ [LocationTask] External ID not found in cache, trying secureStorage as fallback...`);
+                  fileLogger.warn('LocationTask', 'EXTERNAL_ID_NOT_IN_CACHE', {
+                    source: 'AsyncStorage',
+                  });
+                  
                   // Fallback: try secureStorage (may fail in background on iOS)
                   try {
                     const userJson = await secureStorage.getItemAsync('user');
@@ -281,15 +280,31 @@ try {
                       // Cache it for next time
                       if (externalId) {
                         await AsyncStorage.setItem('@user_external_id', externalId);
-                        console.log(`✅ [LocationTask] External ID retrieved from secureStorage and cached: ${externalId}`);
+                        const duration = Date.now() - externalIdStartTime;
+                        console.log(`✅ [LocationTask] External ID retrieved from secureStorage and cached (${duration}ms): ${externalId}`);
+                        fileLogger.warn('LocationTask', 'EXTERNAL_ID_FOUND', {
+                          source: 'secureStorage',
+                          externalId,
+                          duration,
+                        });
                       }
                     }
                   } catch (secureStorageError) {
-                    console.warn(`⚠️ [LocationTask] SecureStorage not available in background (expected on iOS):`, secureStorageError);
+                    const duration = Date.now() - externalIdStartTime;
+                    console.warn(`⚠️ [LocationTask] SecureStorage not available in background (${duration}ms):`, secureStorageError);
+                    fileLogger.error('LocationTask', 'EXTERNAL_ID_SECURE_STORAGE_ERROR', {
+                      error: secureStorageError instanceof Error ? secureStorageError.message : String(secureStorageError),
+                      duration,
+                    });
                   }
                 }
               } catch (cacheError) {
-                console.warn(`⚠️ [LocationTask] Failed to read from AsyncStorage:`, cacheError);
+                const duration = Date.now() - externalIdStartTime;
+                console.warn(`⚠️ [LocationTask] Failed to read from AsyncStorage (${duration}ms):`, cacheError);
+                fileLogger.error('LocationTask', 'EXTERNAL_ID_ASYNC_STORAGE_ERROR', {
+                  error: cacheError instanceof Error ? cacheError.message : String(cacheError),
+                  duration,
+                });
               }
               
               // Get status from AsyncStorage
@@ -298,9 +313,22 @@ try {
               console.log(`📋 [LocationTask] User status: ${statusValue}`);
               
               console.log(`🔍 [LocationTask] Checking conditions: externalId=${!!externalId}, postalCode=${!!postalCode}`);
+              fileLogger.warn('LocationTask', 'CHECKING_CONDITIONS', {
+                hasExternalId: !!externalId,
+                hasPostalCode: !!postalCode,
+                externalId: externalId || 'missing',
+                postalCode: postalCode || 'empty',
+              });
+              
                 // IMPORTANT: Allow sending even without postalCode if we have externalId
                 // The API might accept empty postal code or we can use a default value
                 if (externalId) {
+                  fileLogger.warn('LocationTask', 'CONDITIONS_MET', {
+                    externalId,
+                    postalCode: postalCode || 'empty',
+                    city: city || 'empty',
+                    state: state || 'empty',
+                  });
                   // Use empty string as default postal code if not available
                   const finalPostalCode = postalCode || '';
                   if (!postalCode) {
@@ -347,7 +375,16 @@ try {
                   
                   // Try to send using native HTTP client
                   let success = false;
+                  let apiError: any = null;
                   try {
+                    fileLogger.warn('LocationTask', 'API_REQUEST_START', {
+                      externalId,
+                      latitude: latitude.toFixed(6),
+                      longitude: longitude.toFixed(6),
+                      postalCode: finalPostalCode,
+                      status: statusValue,
+                    });
+                    
                     success = await sendLocationUpdateToTMS(
                       externalId,
                       latitude,
@@ -357,7 +394,13 @@ try {
                       ''
                     );
                   } catch (fetchError) {
+                    apiError = fetchError;
                     console.warn(`⚠️ [LocationTask] Native HTTP request failed, will queue for retry:`, fetchError);
+                    fileLogger.error('LocationTask', 'API_REQUEST_EXCEPTION', {
+                      error: fetchError instanceof Error ? fetchError.message : String(fetchError),
+                      stack: fetchError instanceof Error ? fetchError.stack : undefined,
+                      externalId,
+                    });
                     success = false;
                   }
                   
@@ -365,24 +408,50 @@ try {
                   
                   if (success) {
                     console.log(`✅ [LocationTask] Native HTTP request successful (took ${apiDuration}ms)`);
+                    fileLogger.warn('LocationTask', 'API_REQUEST_SUCCESS', {
+                      duration: apiDuration,
+                      externalId,
+                      latitude: latitude.toFixed(6),
+                      longitude: longitude.toFixed(6),
+                    });
                     
                     // If successful, try to flush any pending queue items
                     try {
                       await flushLocationQueue();
                     } catch (flushError) {
                       console.warn(`⚠️ [LocationTask] Failed to flush queue:`, flushError);
+                      fileLogger.error('LocationTask', 'QUEUE_FLUSH_ERROR', {
+                        error: flushError instanceof Error ? flushError.message : String(flushError),
+                      });
                     }
                   } else {
                     console.warn(`⚠️ [LocationTask] Native HTTP request failed (took ${apiDuration}ms), adding to queue`);
-                    // Add to queue for retry later
-                    await addToLocationQueue({
+                    fileLogger.error('LocationTask', 'API_REQUEST_FAILED', {
+                      duration: apiDuration,
                       externalId,
-                      latitude,
-                      longitude,
-                      postalCode: finalPostalCode,
-                      status: statusValue,
-                      timestamp: new Date().toISOString(),
+                      error: apiError ? (apiError instanceof Error ? apiError.message : String(apiError)) : 'Unknown error',
+                      latitude: latitude.toFixed(6),
+                      longitude: longitude.toFixed(6),
                     });
+                    
+                    // Add to queue for retry later
+                    try {
+                      await addToLocationQueue({
+                        externalId,
+                        latitude,
+                        longitude,
+                        postalCode: finalPostalCode,
+                        status: statusValue,
+                        timestamp: new Date().toISOString(),
+                      });
+                      fileLogger.warn('LocationTask', 'ADDED_TO_QUEUE', {
+                        externalId,
+                      });
+                    } catch (queueError) {
+                      fileLogger.error('LocationTask', 'QUEUE_ADD_ERROR', {
+                        error: queueError instanceof Error ? queueError.message : String(queueError),
+                      });
+                    }
                   }
 
               // Send location update to our backend (independent of TMS API)
@@ -457,27 +526,47 @@ try {
                   } else {
                     console.warn(`⚠️ [LocationTask] Skipping AsyncStorage save - backend update was not successful`);
                   }
-                } else {
-                  console.warn(`⚠️ [LocationTask] Missing required data for API call:`, {
-                    hasExternalId: !!externalId,
-                    hasPostalCode: !!postalCode,
-                    externalId: externalId || 'not found',
-                    postalCode: postalCode || 'not found'
-                  });
-                }
-            } catch (apiError) {
-              // Handle different types of errors
-              if (apiError instanceof Error) {
-                console.error('❌ [LocationTask] Error sending location update from background task:', apiError.message);
-                // Log stack trace only in development
-                if (__DEV__) {
-                  console.error('❌ [LocationTask] Stack trace:', apiError.stack);
-                }
-              } else {
-                console.error('❌ [LocationTask] Unknown error sending location update:', apiError);
-              }
-              // Don't save coordinates if API call failed - wait for next successful update
-            }
+                        } else {
+                          const totalDuration = Date.now() - taskStartTime;
+                          console.warn(`⚠️ [LocationTask] Missing required data for API call:`, {
+                            hasExternalId: !!externalId,
+                            hasPostalCode: !!postalCode,
+                            externalId: externalId || 'not found',
+                            postalCode: postalCode || 'not found'
+                          });
+                          fileLogger.error('LocationTask', 'MISSING_REQUIRED_DATA', {
+                            hasExternalId: !!externalId,
+                            hasPostalCode: !!postalCode,
+                            externalId: externalId || 'missing',
+                            postalCode: postalCode || 'missing',
+                            totalDuration,
+                          });
+                        }
+                    } catch (apiError) {
+                      const totalDuration = Date.now() - taskStartTime;
+                      // Handle different types of errors
+                      if (apiError instanceof Error) {
+                        console.error('❌ [LocationTask] Error sending location update from background task:', apiError.message);
+                        fileLogger.error('LocationTask', 'TASK_EXCEPTION', {
+                          error: apiError.message,
+                          stack: apiError.stack,
+                          totalDuration,
+                          platform: Platform.OS,
+                        });
+                        // Log stack trace only in development
+                        if (__DEV__) {
+                          console.error('❌ [LocationTask] Stack trace:', apiError.stack);
+                        }
+                      } else {
+                        console.error('❌ [LocationTask] Unknown error sending location update:', apiError);
+                        fileLogger.error('LocationTask', 'TASK_EXCEPTION_UNKNOWN', {
+                          error: String(apiError),
+                          totalDuration,
+                          platform: Platform.OS,
+                        });
+                      }
+                      // Don't save coordinates if API call failed - wait for next successful update
+                    }
           } else {
             console.log(`⏸️ [LocationTask] Automatic location sharing is disabled, stopping background tracking...`);
             await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
@@ -486,14 +575,32 @@ try {
         } else {
           console.warn(`⚠️ [LocationTask] App settings not found in AsyncStorage`);
         }
-      } catch (err) {
-        console.error('❌ [LocationTask] Failed to process location:', err);
-      }
-    } else {
-      console.warn(`⚠️ [LocationTask] No locations in data payload`);
-    }
-  }
-  });
+              } catch (err) {
+                const totalDuration = Date.now() - taskStartTime;
+                console.error('❌ [LocationTask] Failed to process location:', err);
+                fileLogger.error('LocationTask', 'PROCESS_LOCATION_ERROR', {
+                  error: err instanceof Error ? err.message : String(err),
+                  stack: err instanceof Error ? err.stack : undefined,
+                  totalDuration,
+                  platform: Platform.OS,
+                });
+              }
+            } else {
+              console.warn(`⚠️ [LocationTask] No locations in data payload`);
+              fileLogger.warn('LocationTask', 'NO_LOCATIONS_IN_PAYLOAD', {
+                hasData: !!data,
+                dataKeys: data ? Object.keys(data) : [],
+              });
+            }
+          }
+          
+          const totalDuration = Date.now() - taskStartTime;
+          fileLogger.warn('LocationTask', 'TASK_COMPLETED', {
+            totalDuration,
+            platform: Platform.OS,
+            appState,
+          });
+          });
   
   console.log('📍 [LocationTask] ✅ TaskManager.defineTask completed without error');
 } catch (defineError) {

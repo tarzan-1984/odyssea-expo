@@ -1,4 +1,5 @@
 import { NativeModules, Platform } from 'react-native';
+import { fileLogger } from '@/utils/fileLogger';
 
 // Get module dynamically to ensure it's available in background tasks
 const getLocationHttpModule = () => {
@@ -32,10 +33,27 @@ export async function sendLocationUpdateNative(
   apiKey: string,
   requestData: LocationUpdateData
 ): Promise<boolean> {
+  const requestStartTime = Date.now();
   const LocationHttpModule = getLocationHttpModule();
+  
+  console.log('[nativeHttpClient] Starting native HTTP request...');
+  console.log('[nativeHttpClient] Platform:', Platform.OS);
+  console.log('[nativeHttpClient] Module available:', !!LocationHttpModule);
+  
+  fileLogger.warn('nativeHttpClient', 'NATIVE_REQUEST_START', {
+    platform: Platform.OS,
+    moduleAvailable: !!LocationHttpModule,
+    url,
+    hasApiKey: !!apiKey,
+  });
   
   if (Platform.OS !== 'android' || !LocationHttpModule) {
     console.warn('[nativeHttpClient] Native module not available, falling back to fetch');
+    fileLogger.warn('nativeHttpClient', 'FALLBACK_TO_FETCH', {
+      platform: Platform.OS,
+      moduleAvailable: !!LocationHttpModule,
+    });
+    
     // Fallback to fetch if native module not available
     try {
       const response = await fetch(url, {
@@ -46,22 +64,58 @@ export async function sendLocationUpdateNative(
         },
         body: JSON.stringify(requestData),
       });
-      return response.ok;
+      const duration = Date.now() - requestStartTime;
+      const success = response.ok;
+      console.log(`[nativeHttpClient] Fetch fallback ${success ? 'success' : 'failed'} (${duration}ms), status: ${response.status}`);
+      fileLogger.warn('nativeHttpClient', success ? 'FETCH_FALLBACK_SUCCESS' : 'FETCH_FALLBACK_FAILED', {
+        duration,
+        status: response.status,
+        url,
+      });
+      return success;
     } catch (error) {
-      console.error('[nativeHttpClient] Fetch fallback failed:', error);
+      const duration = Date.now() - requestStartTime;
+      console.error(`[nativeHttpClient] Fetch fallback failed (${duration}ms):`, error);
+      fileLogger.error('nativeHttpClient', 'FETCH_FALLBACK_ERROR', {
+        error: error instanceof Error ? error.message : String(error),
+        duration,
+        url,
+      });
       return false;
     }
   }
 
   try {
+    console.log('[nativeHttpClient] Calling native module sendLocationUpdate...');
+    fileLogger.warn('nativeHttpClient', 'CALLING_NATIVE_MODULE', {
+      url,
+      dataSize: JSON.stringify(requestData).length,
+    });
+    
     // LocationHttpModule.sendLocationUpdate uses Promise-based API (React Native Promise)
     // The native module automatically returns a Promise in JavaScript
     const success = await LocationHttpModule.sendLocationUpdate(url, apiKey, requestData as any);
+    const duration = Date.now() - requestStartTime;
+    console.log(`[nativeHttpClient] Native request ${success ? 'successful' : 'failed'} (${duration}ms)`);
+    fileLogger.warn('nativeHttpClient', success ? 'NATIVE_REQUEST_SUCCESS' : 'NATIVE_REQUEST_FAILED', {
+      duration,
+      url,
+      success,
+    });
     return success;
   } catch (error: any) {
+    const duration = Date.now() - requestStartTime;
     const errorMessage = error?.message || error?.toString() || 'Unknown error';
     const errorCode = error?.code || 'unknown';
-    console.error('[nativeHttpClient] Native request failed:', errorCode, errorMessage);
+    console.error(`[nativeHttpClient] Native request failed (${duration}ms):`, errorCode, errorMessage);
+    fileLogger.error('nativeHttpClient', 'NATIVE_REQUEST_EXCEPTION', {
+      errorCode,
+      errorMessage,
+      error: error,
+      duration,
+      url,
+      stack: error?.stack,
+    });
     return false; // Return false instead of throwing
   }
 }

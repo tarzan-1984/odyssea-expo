@@ -5,6 +5,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { View, StyleSheet, LogBox } from 'react-native';
 import { BlurView } from 'expo-blur';
 import * as Location from 'expo-location';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { WebSocketProvider } from '@/context/WebSocketContext';
 import { OnlineStatusProvider } from '@/context/OnlineStatusContext';
@@ -94,6 +95,111 @@ function RootLayoutNav() {
   // Load stored auth and check permissions on mount (first load)
   useEffect(() => {
     const initAuth = async () => {
+      // Check install timestamp FIRST, before loading auth data
+      // This ensures all data is cleared on new installation before auth is loaded
+      try {
+        // Get current timestamp in seconds (Unix timestamp)
+        const currentTimestamp = Math.floor(Date.now() / 1000);
+        
+        // Check saved install timestamp
+        const savedInstallTimestamp = await AsyncStorage.getItem('@app_install_timestamp');
+        
+        // If timestamp is missing - this is a new installation
+        if (!savedInstallTimestamp) {
+          console.log('🔄 [App] First install detected, clearing all data...');
+          
+          // Complete list of all AsyncStorage keys to clear
+          const allKeysToClear = [
+            // Auth & User
+            '@user_external_id',
+            '@user_access_token',
+            '@user_id',
+            '@user_status',
+            '@user_zip',
+            '@user_date',
+            '@user_location',
+            '@pending_location_update',
+            '@location_last_update',
+            '@location_update_queue',
+            
+            // App Settings
+            '@odyssea_app_settings',
+            '@app_first_launch',
+            '@app_version',
+            '@permissions_onboarding_completed',
+            
+            // Navigation & Chat
+            '@pending_chat_navigation',
+            '@chat_opened_rooms',
+          ];
+          
+          // Clear all specified keys
+          await AsyncStorage.multiRemove(allKeysToClear);
+          console.log('✅ [App] Cleared AsyncStorage keys:', allKeysToClear);
+          
+          // Clear messages cache
+          try {
+            const { messagesCacheService } = await import('@/services/MessagesCacheService');
+            await messagesCacheService.clearAllMessages();
+            console.log('✅ [App] Cleared messages cache');
+          } catch (e) {
+            console.warn('⚠️ [App] Failed to clear messages cache:', e);
+          }
+          
+          // Clear chat cache
+          try {
+            const { chatCacheService } = await import('@/services/ChatCacheService');
+            await chatCacheService.clearCache();
+            console.log('✅ [App] Cleared chat cache');
+          } catch (e) {
+            console.warn('⚠️ [App] Failed to clear chat cache:', e);
+          }
+          
+          // Clear secure storage (tokens, user)
+          try {
+            const { secureStorage } = await import('@/utils/secureStorage');
+            await secureStorage.deleteItemAsync('accessToken');
+            await secureStorage.deleteItemAsync('refreshToken');
+            await secureStorage.deleteItemAsync('user');
+            await secureStorage.deleteItemAsync('userLocation');
+            await secureStorage.deleteItemAsync('expoPushToken');
+            console.log('✅ [App] Cleared secure storage');
+          } catch (e) {
+            console.warn('⚠️ [App] Failed to clear secure storage:', e);
+          }
+          
+          // Clear Zustand store (in-memory)
+          try {
+            const { useChatStore } = await import('@/stores/chatStore');
+            useChatStore.getState().reset();
+            console.log('✅ [App] Cleared chat store');
+          } catch (e) {
+            console.warn('⚠️ [App] Failed to clear chat store:', e);
+          }
+          
+          // Clear log file
+          try {
+            const { fileLogger } = await import('@/utils/fileLogger');
+            await fileLogger.clearLogs();
+            console.log('✅ [App] Cleared log file');
+          } catch (e) {
+            console.warn('⚠️ [App] Failed to clear logs:', e);
+          }
+          
+          // Save install timestamp
+          await AsyncStorage.setItem('@app_install_timestamp', currentTimestamp.toString());
+          console.log(`✅ [App] Saved install timestamp: ${currentTimestamp} (${new Date(currentTimestamp * 1000).toLocaleString()})`);
+        } else {
+          const savedTimestamp = parseInt(savedInstallTimestamp, 10);
+          const daysSinceInstall = Math.floor((currentTimestamp - savedTimestamp) / 86400);
+          console.log(`✅ [App] Install timestamp found: ${savedTimestamp} (${daysSinceInstall} days ago)`);
+          console.log(`✅ [App] No cleanup needed - app was installed on ${new Date(savedTimestamp * 1000).toLocaleString()}`);
+        }
+      } catch (error) {
+        console.error('❌ [App] Error checking install timestamp:', error);
+      }
+      
+      // Now load stored auth data (after potential cleanup)
       await loadStoredAuth();
       // Initial checks for location services and background permission
       await checkLocationEnabled();
