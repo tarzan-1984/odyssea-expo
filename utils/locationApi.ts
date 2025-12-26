@@ -184,15 +184,18 @@ export async function sendLocationUpdateToTMS(
         }
         
         if (xhr.status >= 200 && xhr.status < 300) {
-          console.log('[locationApi] ✅ Location update sent successfully');
-          fileLogger.warn('locationApi', 'SEND_SUCCESS', {
+          console.log('[locationApi] ✅✅✅ TMS API: Location update sent successfully ✅✅✅');
+          console.log(`[locationApi] TMS API: HTTP ${xhr.status}, duration ${fetchDuration}ms, externalId=${externalId}`);
+          fileLogger.warn('locationApi', 'TMS_SEND_SUCCESS', {
             status: xhr.status,
             duration: fetchDuration,
             externalId,
             apiSuccess: responseData?.success || false,
           });
           if (responseData?.success) {
-            console.log('[locationApi] TMS API confirmed success');
+            console.log('[locationApi] ✅ TMS API: WordPress confirmed success in response');
+          } else {
+            console.log('[locationApi] ⚠️ TMS API: WordPress response received but success flag not set');
           }
           resolve(true);
         } else {

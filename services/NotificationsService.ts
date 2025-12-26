@@ -165,9 +165,11 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 				
 				// Get projectId from app.json
 				let projectId = Constants.expoConfig?.extra?.eas?.projectId;
+				console.log('[NotificationsService] ProjectId from Constants.expoConfig:', projectId);
 				
 				// Fallback: hardcoded projectId from app.json if not found
 				if (!projectId) {
+					console.log('[NotificationsService] ProjectId not found in Constants, using fallback...');
 					projectId = 'd95b9117-4914-4642-ae1d-a6d37a32ec26';
 				}
 				
@@ -176,16 +178,35 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 					return null;
 				}
 				
+				console.log('[NotificationsService] Using projectId:', projectId);
+				console.log('[NotificationsService] Calling Notifications.getExpoPushTokenAsync...');
+				
 				try {
 					const tokenResult = await Notifications.getExpoPushTokenAsync({ projectId });
+					console.log('[NotificationsService] getExpoPushTokenAsync returned:', {
+						hasData: !!tokenResult?.data,
+						dataType: typeof tokenResult?.data,
+						fullResult: tokenResult,
+					});
+					
 					token = tokenResult?.data;
 					if (token) {
-						console.log('[NotificationsService] ✅ Expo push token obtained:', token.substring(0, 20) + '...');
+						console.log('[NotificationsService] ✅✅✅ Expo push token obtained successfully ✅✅✅');
+						console.log('[NotificationsService] ✅ Token (first 30 chars):', token.substring(0, 30) + '...');
+						console.log('[NotificationsService] ✅ Full token length:', token.length);
 					} else {
-						console.warn('[NotificationsService] ⚠️ Expo push token is null or undefined');
+						console.error('[NotificationsService] ❌ Expo push token is null or undefined');
+						console.error('[NotificationsService] ❌ tokenResult:', JSON.stringify(tokenResult, null, 2));
 					}
 				} catch (tokenError: any) {
-					console.error('[NotificationsService] ❌ Error getting Expo push token:', tokenError?.message);
+					console.error('[NotificationsService] ❌❌❌ EXCEPTION getting Expo push token ❌❌❌');
+					console.error('[NotificationsService] Error message:', tokenError?.message);
+					console.error('[NotificationsService] Error code:', tokenError?.code);
+					console.error('[NotificationsService] Error name:', tokenError?.name);
+					console.error('[NotificationsService] Full error:', tokenError);
+					if (tokenError?.stack) {
+						console.error('[NotificationsService] Error stack:', tokenError.stack);
+					}
 					return null;
 				}
 			}

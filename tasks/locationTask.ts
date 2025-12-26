@@ -370,22 +370,24 @@ try {
                   
                   // IMPORTANT: In headless JS, fetch/XMLHttpRequest may not work
                   // Use native HTTP client (OkHttp) - it works reliably in headless JS
-                  console.log(`📤 [LocationTask] Sending location update using native HTTP client...`);
-                  const apiStartTime = Date.now();
+                  console.log(`📤 [LocationTask] Sending location update to TMS API using native HTTP client...`);
+                  const tmsApiStartTime = Date.now();
                   
-                  // Try to send using native HTTP client
-                  let success = false;
-                  let apiError: any = null;
+                  // Try to send to TMS using native HTTP client
+                  let tmsSuccess = false;
+                  let tmsError: any = null;
                   try {
-                    fileLogger.warn('LocationTask', 'API_REQUEST_START', {
+                    fileLogger.warn('LocationTask', 'TMS_API_REQUEST_START', {
                       externalId,
                       latitude: latitude.toFixed(6),
                       longitude: longitude.toFixed(6),
                       postalCode: finalPostalCode,
                       status: statusValue,
+                      timestamp: new Date().toISOString(),
                     });
+                    console.log(`📤 [LocationTask] TMS API request started for externalId: ${externalId}`);
                     
-                    success = await sendLocationUpdateToTMS(
+                    tmsSuccess = await sendLocationUpdateToTMS(
                       externalId,
                       latitude,
                       longitude,
@@ -394,25 +396,32 @@ try {
                       ''
                     );
                   } catch (fetchError) {
-                    apiError = fetchError;
-                    console.warn(`⚠️ [LocationTask] Native HTTP request failed, will queue for retry:`, fetchError);
-                    fileLogger.error('LocationTask', 'API_REQUEST_EXCEPTION', {
+                    tmsError = fetchError;
+                    const tmsDuration = Date.now() - tmsApiStartTime;
+                    console.warn(`⚠️ [LocationTask] TMS API request exception (took ${tmsDuration}ms):`, fetchError);
+                    fileLogger.error('LocationTask', 'TMS_API_REQUEST_EXCEPTION', {
                       error: fetchError instanceof Error ? fetchError.message : String(fetchError),
                       stack: fetchError instanceof Error ? fetchError.stack : undefined,
-                      externalId,
-                    });
-                    success = false;
-                  }
-                  
-                  const apiDuration = Date.now() - apiStartTime;
-                  
-                  if (success) {
-                    console.log(`✅ [LocationTask] Native HTTP request successful (took ${apiDuration}ms)`);
-                    fileLogger.warn('LocationTask', 'API_REQUEST_SUCCESS', {
-                      duration: apiDuration,
+                      duration: tmsDuration,
                       externalId,
                       latitude: latitude.toFixed(6),
                       longitude: longitude.toFixed(6),
+                    });
+                    tmsSuccess = false;
+                  }
+                  
+                  const tmsApiDuration = Date.now() - tmsApiStartTime;
+                  
+                  if (tmsSuccess) {
+                    console.log(`✅ [LocationTask] ✅✅✅ TMS API REQUEST SUCCESSFUL ✅✅✅ (took ${tmsApiDuration}ms)`);
+                    console.log(`✅ [LocationTask] TMS API: Location update sent successfully to WordPress TMS`);
+                    console.log(`✅ [LocationTask] TMS API: externalId=${externalId}, lat=${latitude.toFixed(6)}, lng=${longitude.toFixed(6)}, zip=${finalPostalCode || 'empty'}`);
+                    fileLogger.warn('LocationTask', 'TMS_API_REQUEST_SUCCESS', {
+                      duration: tmsApiDuration,
+                      externalId,
+                      latitude: latitude.toFixed(6),
+                      longitude: longitude.toFixed(6),
+                      postalCode: finalPostalCode || 'empty',
                     });
                     
                     // If successful, try to flush any pending queue items
@@ -425,13 +434,15 @@ try {
                       });
                     }
                   } else {
-                    console.warn(`⚠️ [LocationTask] Native HTTP request failed (took ${apiDuration}ms), adding to queue`);
-                    fileLogger.error('LocationTask', 'API_REQUEST_FAILED', {
-                      duration: apiDuration,
+                    console.warn(`⚠️ [LocationTask] TMS API request failed (took ${tmsApiDuration}ms), adding to queue`);
+                    console.warn(`⚠️ [LocationTask] TMS API: Failed to send location update to WordPress TMS`);
+                    fileLogger.error('LocationTask', 'TMS_API_REQUEST_FAILED', {
+                      duration: tmsApiDuration,
                       externalId,
-                      error: apiError ? (apiError instanceof Error ? apiError.message : String(apiError)) : 'Unknown error',
+                      error: tmsError ? (tmsError instanceof Error ? tmsError.message : String(tmsError)) : 'Unknown error',
                       latitude: latitude.toFixed(6),
                       longitude: longitude.toFixed(6),
+                      postalCode: finalPostalCode || 'empty',
                     });
                     
                     // Add to queue for retry later
@@ -444,28 +455,36 @@ try {
                         status: statusValue,
                         timestamp: new Date().toISOString(),
                       });
-                      fileLogger.warn('LocationTask', 'ADDED_TO_QUEUE', {
+                      fileLogger.warn('LocationTask', 'TMS_ADDED_TO_QUEUE', {
                         externalId,
                       });
+                      console.log(`📦 [LocationTask] TMS API: Added failed request to queue for retry`);
                     } catch (queueError) {
-                      fileLogger.error('LocationTask', 'QUEUE_ADD_ERROR', {
+                      fileLogger.error('LocationTask', 'TMS_QUEUE_ADD_ERROR', {
                         error: queueError instanceof Error ? queueError.message : String(queueError),
                       });
+                      console.error(`❌ [LocationTask] TMS API: Failed to add to queue:`, queueError);
                     }
                   }
 
               // Send location update to our backend (independent of TMS API)
+              // This request is completely independent - TMS success/failure does not affect it
               let backendUpdateSuccess = false;
+              const backendStartTime = Date.now();
               try {
+                fileLogger.warn('LocationTask', 'BACKEND_API_REQUEST_START', {
+                  externalId,
+                  latitude: latitude.toFixed(6),
+                  longitude: longitude.toFixed(6),
+                  zip: finalPostalCode,
+                  city: city || 'empty',
+                  state: state || 'empty',
+                  tmsSuccess: tmsSuccess, // Log TMS status for reference, but don't depend on it
+                });
+                console.log(`📤 [LocationTask] Sending location update to our backend API (independent of TMS)...`);
+                console.log(`📤 [LocationTask] Backend API: TMS status=${tmsSuccess ? 'SUCCESS' : 'FAILED'} (does not affect this request)`);
+                
                 if (sendLocationUpdateToBackendUser) {
-                  fileLogger.warn('LocationTask', 'Preparing to send location to backend', {
-                    latitude,
-                    longitude,
-                    zip: finalPostalCode,
-                    city: city || 'empty',
-                    state: state || 'empty',
-                  });
-                  
                   backendUpdateSuccess = await sendLocationUpdateToBackendUser({
                     location: undefined, // Skip location string in background
                     city: city || undefined,
@@ -476,19 +495,46 @@ try {
                     lastUpdateIso: timestamp,
                   });
                   
+                  const backendDuration = Date.now() - backendStartTime;
+                  
                   if (backendUpdateSuccess) {
-                    fileLogger.warn('LocationTask', 'Backend location update sent successfully');
-                    console.log(`✅ [LocationTask] Backend location update sent successfully`);
+                    fileLogger.warn('LocationTask', 'BACKEND_API_REQUEST_SUCCESS', {
+                      duration: backendDuration,
+                      externalId,
+                      latitude: latitude.toFixed(6),
+                      longitude: longitude.toFixed(6),
+                    });
+                    console.log(`✅ [LocationTask] ✅✅✅ BACKEND API REQUEST SUCCESSFUL ✅✅✅ (took ${backendDuration}ms)`);
+                    console.log(`✅ [LocationTask] Backend API: Location update sent successfully to our database`);
+                    console.log(`✅ [LocationTask] Backend API: externalId=${externalId}, lat=${latitude.toFixed(6)}, lng=${longitude.toFixed(6)}, zip=${finalPostalCode || 'empty'}`);
                   } else {
-                    fileLogger.error('LocationTask', 'Backend location update failed');
-                    console.warn(`⚠️ [LocationTask] Backend location update failed`);
+                    fileLogger.error('LocationTask', 'BACKEND_API_REQUEST_FAILED', {
+                      duration: backendDuration,
+                      externalId,
+                      latitude: latitude.toFixed(6),
+                      longitude: longitude.toFixed(6),
+                    });
+                    console.warn(`⚠️ [LocationTask] Backend API request failed (took ${backendDuration}ms)`);
+                    console.warn(`⚠️ [LocationTask] Backend API: Failed to send location update to our database`);
                   }
+                } else {
+                  fileLogger.error('LocationTask', 'BACKEND_API_FUNCTION_NOT_AVAILABLE', {
+                    externalId,
+                  });
+                  console.warn('⚠️ [LocationTask] Backend API: sendLocationUpdateToBackendUser function not available');
                 }
               } catch (backendError) {
-                fileLogger.error('LocationTask', 'Failed to send location to backend', {
+                const backendDuration = Date.now() - backendStartTime;
+                fileLogger.error('LocationTask', 'BACKEND_API_REQUEST_EXCEPTION', {
                   error: backendError instanceof Error ? backendError.message : String(backendError),
+                  stack: backendError instanceof Error ? backendError.stack : undefined,
+                  duration: backendDuration,
+                  externalId,
+                  latitude: latitude.toFixed(6),
+                  longitude: longitude.toFixed(6),
                 });
-                console.warn('⚠️ [LocationTask] Failed to send location to backend users endpoint:', backendError);
+                console.warn(`⚠️ [LocationTask] Backend API request exception (took ${backendDuration}ms):`, backendError);
+                console.warn('⚠️ [LocationTask] Backend API: Exception while sending location update to our database');
                 backendUpdateSuccess = false;
               }
                   
@@ -645,12 +691,15 @@ async function addToLocationQueue(update: {
 }
 
 /**
- * Flush location queue - try to send all pending updates
+ * Flush location queue - try to send all pending updates to TMS
  */
 export async function flushLocationQueue(): Promise<void> {
   try {
+    fileLogger.warn('LocationTask', 'QUEUE_FLUSH_START');
+    
     const queueJson = await AsyncStorage.getItem(LOCATION_QUEUE_KEY);
     if (!queueJson) {
+      fileLogger.warn('LocationTask', 'QUEUE_FLUSH_NO_QUEUE');
       return; // No queue
     }
     
@@ -664,10 +713,14 @@ export async function flushLocationQueue(): Promise<void> {
     }> = JSON.parse(queueJson);
     
     if (queue.length === 0) {
+      fileLogger.warn('LocationTask', 'QUEUE_FLUSH_EMPTY');
       return; // Empty queue
     }
     
-    console.log(`🔄 [LocationTask] Flushing queue (${queue.length} items)...`);
+    console.log(`🔄 [LocationTask] Flushing TMS queue (${queue.length} items)...`);
+    fileLogger.warn('LocationTask', 'QUEUE_FLUSH_PROCESSING', {
+      queueSize: queue.length,
+    });
     
     // Import location API
     const locationApiModule = require('@/utils/locationApi');
@@ -676,10 +729,20 @@ export async function flushLocationQueue(): Promise<void> {
     const successful: number[] = [];
     const failed: number[] = [];
     
-    // Try to send each queued update
+    // Try to send each queued update to TMS
     for (let i = 0; i < queue.length; i++) {
       const update = queue[i];
       try {
+        fileLogger.warn('LocationTask', 'QUEUE_ITEM_SENDING', {
+          index: i + 1,
+          total: queue.length,
+          externalId: update.externalId,
+          latitude: update.latitude.toFixed(6),
+          longitude: update.longitude.toFixed(6),
+        });
+        console.log(`📤 [LocationTask] TMS Queue: Sending item ${i + 1}/${queue.length} to TMS API...`);
+        
+        const itemStartTime = Date.now();
         const success = await sendLocationUpdateToTMS(
           update.externalId,
           update.latitude,
@@ -688,17 +751,38 @@ export async function flushLocationQueue(): Promise<void> {
           update.status as any,
           ''
         );
+        const itemDuration = Date.now() - itemStartTime;
         
         if (success) {
           successful.push(i);
-          console.log(`✅ [LocationTask] Queued update ${i + 1}/${queue.length} sent successfully`);
+          fileLogger.warn('LocationTask', 'QUEUE_ITEM_SUCCESS', {
+            index: i + 1,
+            total: queue.length,
+            duration: itemDuration,
+            externalId: update.externalId,
+          });
+          console.log(`✅ [LocationTask] ✅✅✅ TMS Queue: Item ${i + 1}/${queue.length} sent successfully to TMS API ✅✅✅ (took ${itemDuration}ms)`);
+          console.log(`✅ [LocationTask] TMS Queue: externalId=${update.externalId}, lat=${update.latitude.toFixed(6)}, lng=${update.longitude.toFixed(6)}`);
         } else {
           failed.push(i);
-          console.warn(`⚠️ [LocationTask] Queued update ${i + 1}/${queue.length} failed`);
+          fileLogger.error('LocationTask', 'QUEUE_ITEM_FAILED', {
+            index: i + 1,
+            total: queue.length,
+            duration: itemDuration,
+            externalId: update.externalId,
+          });
+          console.warn(`⚠️ [LocationTask] TMS Queue: Item ${i + 1}/${queue.length} failed (took ${itemDuration}ms)`);
         }
       } catch (error) {
         failed.push(i);
-        console.warn(`⚠️ [LocationTask] Queued update ${i + 1}/${queue.length} error:`, error);
+        fileLogger.error('LocationTask', 'QUEUE_ITEM_EXCEPTION', {
+          index: i + 1,
+          total: queue.length,
+          externalId: update.externalId,
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined,
+        });
+        console.warn(`⚠️ [LocationTask] TMS Queue: Item ${i + 1}/${queue.length} error:`, error);
       }
     }
     
@@ -707,16 +791,32 @@ export async function flushLocationQueue(): Promise<void> {
       const remainingQueue = queue.filter((_, index) => !successful.includes(index));
       if (remainingQueue.length > 0) {
         await AsyncStorage.setItem(LOCATION_QUEUE_KEY, JSON.stringify(remainingQueue));
-        console.log(`📦 [LocationTask] Queue updated: ${remainingQueue.length} items remaining`);
+        fileLogger.warn('LocationTask', 'QUEUE_FLUSH_UPDATED', {
+          remaining: remainingQueue.length,
+          sent: successful.length,
+        });
+        console.log(`📦 [LocationTask] TMS Queue: Updated - ${remainingQueue.length} items remaining, ${successful.length} sent successfully`);
       } else {
         await AsyncStorage.removeItem(LOCATION_QUEUE_KEY);
-        console.log(`✅ [LocationTask] Queue cleared (all items sent)`);
+        fileLogger.warn('LocationTask', 'QUEUE_FLUSH_CLEARED', {
+          sent: successful.length,
+        });
+        console.log(`✅ [LocationTask] TMS Queue: Cleared - all ${successful.length} items sent successfully`);
       }
     }
     
-    console.log(`📊 [LocationTask] Queue flush complete: ${successful.length} sent, ${failed.length} failed`);
+    fileLogger.warn('LocationTask', 'QUEUE_FLUSH_COMPLETE', {
+      successful: successful.length,
+      failed: failed.length,
+      total: queue.length,
+    });
+    console.log(`📊 [LocationTask] TMS Queue flush complete: ${successful.length} sent successfully, ${failed.length} failed, ${queue.length} total`);
   } catch (error) {
-    console.error(`❌ [LocationTask] Failed to flush queue:`, error);
+    fileLogger.error('LocationTask', 'QUEUE_FLUSH_EXCEPTION', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    console.error(`❌ [LocationTask] TMS Queue: Failed to flush queue:`, error);
   }
 }
 
