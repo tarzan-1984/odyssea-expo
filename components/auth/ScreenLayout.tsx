@@ -114,13 +114,13 @@ const styles = StyleSheet.create({
 		alignItems: 'center',
 	},
 	headerTitle: {
-		fontSize: fp(20),
+		fontSize: fp(18),
 		fontFamily: fonts["700"],
 		color: colors.neutral.white,
 		flex: 1,
 	},
 	headerButtonText: {
-		fontSize: fp(20),
+		fontSize: fp(18),
 		fontFamily: fonts["400"],
 		color: colors.neutral.white,
 	},
