@@ -73,7 +73,7 @@ export default function ProfileScreen() {
     // Ask for media library permission
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
-      alert('Please allow access to Photos to select an avatar.');
+      alert('Please allow access to Photos to select an photo.');
       return;
     }
 
@@ -180,11 +180,11 @@ export default function ProfileScreen() {
             <View style={styles.controlsWrap}>
               {pickedAvatar ? (
                 <TouchableOpacity style={[styles.uploadButton, isUploading && styles.uploadButtonDisabled]} activeOpacity={0.8} onPress={handleSetAvatar} disabled={isUploading}>
-                  <Text style={styles.uploadButtonText}>{isUploading ? 'Uploading...' : 'Set avatar'}</Text>
+                  <Text style={styles.uploadButtonText}>{isUploading ? 'Uploading...' : 'Set Photo'}</Text>
                 </TouchableOpacity>
               ) : (
                  <TouchableOpacity style={[styles.uploadButton, isUploading && styles.uploadButtonDisabled]} activeOpacity={0.8} onPress={handlePickAvatar} disabled={isUploading}>
-                   <Text style={styles.uploadButtonText}>Upload avatar</Text>
+                   <Text style={styles.uploadButtonText}>Upload Photo</Text>
                  </TouchableOpacity>
                )}
             </View>

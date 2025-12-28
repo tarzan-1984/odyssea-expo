@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Dimensions, ActivityIndicator } from 'react-native';
 import ScreenLayout from '@/components/auth/ScreenLayout';
@@ -8,6 +8,7 @@ import ArrowRight from "@/icons/ArrowRight";
 import QuestionIcon from "@/icons/QuestionIcon";
 import ShowPassword from "@/icons/ShowPassword";
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { secureStorage } from '@/utils/secureStorage';
 
 /**
  * EnterPasswordScreen - Password input screen
@@ -28,6 +29,22 @@ export default function EnterPasswordScreen() {
   // Use userEmail from authState if available, otherwise use email from route params
   // Ensure userEmail is always a string (route params can be string | string[])
   const userEmail = authState.userEmail || (Array.isArray(email) ? email[0] : email) || '';
+
+  // Load saved password from secureStorage on mount
+  useEffect(() => {
+    const loadSavedPassword = async () => {
+      try {
+        const savedPassword = await secureStorage.getItemAsync('savedPassword');
+        if (savedPassword && !password) {
+          setPassword(savedPassword);
+          console.log('💾 [EnterPasswordScreen] Loaded saved password from secureStorage');
+        }
+      } catch (error) {
+        console.warn('⚠️ [EnterPasswordScreen] Failed to load saved password:', error);
+      }
+    };
+    loadSavedPassword();
+  }, []);
 
   // Simple password validation
   const validatePassword = (password: string): boolean => {

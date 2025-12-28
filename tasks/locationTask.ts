@@ -312,12 +312,57 @@ try {
               const statusValue = savedStatus || 'available'; // Default to 'available' if not set
               console.log(`📋 [LocationTask] User status: ${statusValue}`);
               
-              console.log(`🔍 [LocationTask] Checking conditions: externalId=${!!externalId}, postalCode=${!!postalCode}`);
+              // Get user role from AsyncStorage (cached when app is active)
+              let userRole: string | null = null;
+              try {
+                const cachedRole = await AsyncStorage.getItem('@user_role');
+                if (cachedRole) {
+                  userRole = cachedRole;
+                  console.log(`📋 [LocationTask] User role retrieved from cache: ${userRole}`);
+                  fileLogger.warn('LocationTask', 'USER_ROLE_FOUND', {
+                    source: 'AsyncStorage',
+                    role: userRole,
+                  });
+                } else {
+                  // Fallback: try secureStorage (may fail in background on iOS)
+                  try {
+                    const userJson = await secureStorage.getItemAsync('user');
+                    if (userJson) {
+                      const user = JSON.parse(userJson);
+                      userRole = user?.role || null;
+                      if (userRole) {
+                        await AsyncStorage.setItem('@user_role', userRole);
+                        console.log(`📋 [LocationTask] User role retrieved from secureStorage and cached: ${userRole}`);
+                        fileLogger.warn('LocationTask', 'USER_ROLE_FOUND', {
+                          source: 'secureStorage',
+                          role: userRole,
+                        });
+                      }
+                    }
+                  } catch (secureStorageError) {
+                    console.warn(`⚠️ [LocationTask] SecureStorage not available for role in background:`, secureStorageError);
+                    fileLogger.error('LocationTask', 'USER_ROLE_SECURE_STORAGE_ERROR', {
+                      error: secureStorageError instanceof Error ? secureStorageError.message : String(secureStorageError),
+                    });
+                  }
+                }
+              } catch (cacheError) {
+                console.warn(`⚠️ [LocationTask] Failed to read user role from AsyncStorage:`, cacheError);
+                fileLogger.error('LocationTask', 'USER_ROLE_ASYNC_STORAGE_ERROR', {
+                  error: cacheError instanceof Error ? cacheError.message : String(cacheError),
+                });
+              }
+              
+              const isDriver = userRole === 'DRIVER';
+              
+              console.log(`🔍 [LocationTask] Checking conditions: externalId=${!!externalId}, postalCode=${!!postalCode}, userRole=${userRole || 'not found'}, isDriver=${isDriver}`);
               fileLogger.warn('LocationTask', 'CHECKING_CONDITIONS', {
                 hasExternalId: !!externalId,
                 hasPostalCode: !!postalCode,
                 externalId: externalId || 'missing',
                 postalCode: postalCode || 'empty',
+                userRole: userRole || 'not found',
+                isDriver,
               });
               
                 // IMPORTANT: Allow sending even without postalCode if we have externalId
@@ -368,121 +413,142 @@ try {
                   console.log(`📤 [LocationTask] Longitude: ${longitude.toFixed(6)}`);
                   console.log(`📤 [LocationTask] ==========================================`);
                   
-                  // IMPORTANT: In headless JS, fetch/XMLHttpRequest may not work
-                  // Use native HTTP client (OkHttp) - it works reliably in headless JS
-                  console.log(`📤 [LocationTask] Sending location update to TMS API using native HTTP client...`);
-                  const tmsApiStartTime = Date.now();
-                  
-                  // Try to send to TMS using native HTTP client
+                  // Send location update to TMS API (only for DRIVER role)
                   let tmsSuccess = false;
                   let tmsError: any = null;
-                  try {
-                    fileLogger.warn('LocationTask', 'TMS_API_REQUEST_START', {
-                      externalId,
-                      latitude: latitude.toFixed(6),
-                      longitude: longitude.toFixed(6),
-                      postalCode: finalPostalCode,
-                      status: statusValue,
-                      timestamp: new Date().toISOString(),
-                    });
-                    console.log(`📤 [LocationTask] TMS API request started for externalId: ${externalId}`);
-                    
-                    tmsSuccess = await sendLocationUpdateToTMS(
-                      externalId,
-                      latitude,
-                      longitude,
-                      finalPostalCode,
-                      statusValue as any,
-                      ''
-                    );
-                  } catch (fetchError) {
-                    tmsError = fetchError;
-                    const tmsDuration = Date.now() - tmsApiStartTime;
-                    console.warn(`⚠️ [LocationTask] TMS API request exception (took ${tmsDuration}ms):`, fetchError);
-                    fileLogger.error('LocationTask', 'TMS_API_REQUEST_EXCEPTION', {
-                      error: fetchError instanceof Error ? fetchError.message : String(fetchError),
-                      stack: fetchError instanceof Error ? fetchError.stack : undefined,
-                      duration: tmsDuration,
-                      externalId,
-                      latitude: latitude.toFixed(6),
-                      longitude: longitude.toFixed(6),
-                    });
-                    tmsSuccess = false;
-                  }
+                  const tmsApiStartTime = Date.now();
                   
-                  const tmsApiDuration = Date.now() - tmsApiStartTime;
-                  
-                  if (tmsSuccess) {
-                    console.log(`✅ [LocationTask] ✅✅✅ TMS API REQUEST SUCCESSFUL ✅✅✅ (took ${tmsApiDuration}ms)`);
-                    console.log(`✅ [LocationTask] TMS API: Location update sent successfully to WordPress TMS`);
-                    console.log(`✅ [LocationTask] TMS API: externalId=${externalId}, lat=${latitude.toFixed(6)}, lng=${longitude.toFixed(6)}, zip=${finalPostalCode || 'empty'}`);
-                    fileLogger.warn('LocationTask', 'TMS_API_REQUEST_SUCCESS', {
-                      duration: tmsApiDuration,
-                      externalId,
-                      latitude: latitude.toFixed(6),
-                      longitude: longitude.toFixed(6),
-                      postalCode: finalPostalCode || 'empty',
-                    });
+                  if (isDriver) {
+                    // IMPORTANT: In headless JS, fetch/XMLHttpRequest may not work
+                    // Use native HTTP client (OkHttp) - it works reliably in headless JS
+                    console.log(`📤 [LocationTask] Sending location update to TMS API using native HTTP client...`);
+                    console.log(`📤 [LocationTask] TMS API request started for externalId: ${externalId} (user is DRIVER)`);
                     
-                    // If successful, try to flush any pending queue items
                     try {
-                      await flushLocationQueue();
-                    } catch (flushError) {
-                      console.warn(`⚠️ [LocationTask] Failed to flush queue:`, flushError);
-                      fileLogger.error('LocationTask', 'QUEUE_FLUSH_ERROR', {
-                        error: flushError instanceof Error ? flushError.message : String(flushError),
+                      fileLogger.warn('LocationTask', 'TMS_API_REQUEST_START', {
+                        externalId,
+                        latitude: latitude.toFixed(6),
+                        longitude: longitude.toFixed(6),
+                        postalCode: finalPostalCode,
+                        status: statusValue,
+                        userRole,
+                        isDriver,
+                        timestamp: new Date().toISOString(),
                       });
-                    }
-                  } else {
-                    console.warn(`⚠️ [LocationTask] TMS API request failed (took ${tmsApiDuration}ms), adding to queue`);
-                    console.warn(`⚠️ [LocationTask] TMS API: Failed to send location update to WordPress TMS`);
-                    fileLogger.error('LocationTask', 'TMS_API_REQUEST_FAILED', {
-                      duration: tmsApiDuration,
-                      externalId,
-                      error: tmsError ? (tmsError instanceof Error ? tmsError.message : String(tmsError)) : 'Unknown error',
-                      latitude: latitude.toFixed(6),
-                      longitude: longitude.toFixed(6),
-                      postalCode: finalPostalCode || 'empty',
-                    });
-                    
-                    // Add to queue for retry later
-                    try {
-                      await addToLocationQueue({
+                      
+                      tmsSuccess = await sendLocationUpdateToTMS(
                         externalId,
                         latitude,
                         longitude,
-                        postalCode: finalPostalCode,
-                        status: statusValue,
-                        timestamp: new Date().toISOString(),
-                      });
-                      fileLogger.warn('LocationTask', 'TMS_ADDED_TO_QUEUE', {
+                        finalPostalCode,
+                        statusValue as any,
+                        ''
+                      );
+                    } catch (fetchError) {
+                      tmsError = fetchError;
+                      const tmsDuration = Date.now() - tmsApiStartTime;
+                      console.warn(`⚠️ [LocationTask] TMS API request exception (took ${tmsDuration}ms):`, fetchError);
+                      fileLogger.error('LocationTask', 'TMS_API_REQUEST_EXCEPTION', {
+                        error: fetchError instanceof Error ? fetchError.message : String(fetchError),
+                        stack: fetchError instanceof Error ? fetchError.stack : undefined,
+                        duration: tmsDuration,
                         externalId,
+                        latitude: latitude.toFixed(6),
+                        longitude: longitude.toFixed(6),
+                        userRole,
+                        isDriver,
                       });
-                      console.log(`📦 [LocationTask] TMS API: Added failed request to queue for retry`);
-                    } catch (queueError) {
-                      fileLogger.error('LocationTask', 'TMS_QUEUE_ADD_ERROR', {
-                        error: queueError instanceof Error ? queueError.message : String(queueError),
-                      });
-                      console.error(`❌ [LocationTask] TMS API: Failed to add to queue:`, queueError);
+                      tmsSuccess = false;
                     }
+                    
+                    const tmsApiDuration = Date.now() - tmsApiStartTime;
+                    
+                    if (tmsSuccess) {
+                      console.log(`✅ [LocationTask] ✅✅✅ TMS API REQUEST SUCCESSFUL ✅✅✅ (took ${tmsApiDuration}ms)`);
+                      console.log(`✅ [LocationTask] TMS API: Location update sent successfully to WordPress TMS`);
+                      console.log(`✅ [LocationTask] TMS API: externalId=${externalId}, lat=${latitude.toFixed(6)}, lng=${longitude.toFixed(6)}, zip=${finalPostalCode || 'empty'}`);
+                      fileLogger.warn('LocationTask', 'TMS_API_REQUEST_SUCCESS', {
+                        duration: tmsApiDuration,
+                        externalId,
+                        latitude: latitude.toFixed(6),
+                        longitude: longitude.toFixed(6),
+                        postalCode: finalPostalCode || 'empty',
+                        userRole,
+                        isDriver,
+                      });
+                      
+                      // If successful, try to flush any pending queue items
+                      try {
+                        await flushLocationQueue();
+                      } catch (flushError) {
+                        console.warn(`⚠️ [LocationTask] Failed to flush queue:`, flushError);
+                        fileLogger.error('LocationTask', 'QUEUE_FLUSH_ERROR', {
+                          error: flushError instanceof Error ? flushError.message : String(flushError),
+                        });
+                      }
+                    } else {
+                      console.warn(`⚠️ [LocationTask] TMS API request failed (took ${tmsApiDuration}ms), adding to queue`);
+                      console.warn(`⚠️ [LocationTask] TMS API: Failed to send location update to WordPress TMS`);
+                      fileLogger.error('LocationTask', 'TMS_API_REQUEST_FAILED', {
+                        duration: tmsApiDuration,
+                        externalId,
+                        error: tmsError ? (tmsError instanceof Error ? tmsError.message : String(tmsError)) : 'Unknown error',
+                        latitude: latitude.toFixed(6),
+                        longitude: longitude.toFixed(6),
+                        postalCode: finalPostalCode || 'empty',
+                        userRole,
+                        isDriver,
+                      });
+                      
+                      // Add to queue for retry later
+                      try {
+                        await addToLocationQueue({
+                          externalId,
+                          latitude,
+                          longitude,
+                          postalCode: finalPostalCode,
+                          status: statusValue,
+                          timestamp: new Date().toISOString(),
+                        });
+                        fileLogger.warn('LocationTask', 'TMS_ADDED_TO_QUEUE', {
+                          externalId,
+                        });
+                        console.log(`📦 [LocationTask] TMS API: Added failed request to queue for retry`);
+                      } catch (queueError) {
+                        fileLogger.error('LocationTask', 'TMS_QUEUE_ADD_ERROR', {
+                          error: queueError instanceof Error ? queueError.message : String(queueError),
+                        });
+                        console.error(`❌ [LocationTask] TMS API: Failed to add to queue:`, queueError);
+                      }
+                    }
+                  } else {
+                    console.log(`ℹ️ [LocationTask] Skipping TMS API call - user is not DRIVER (role: ${userRole || 'not found'})`);
+                    fileLogger.warn('LocationTask', 'SKIPPING_TMS_NOT_DRIVER', {
+                      userRole: userRole || 'not found',
+                      isDriver,
+                      externalId: externalId || 'missing',
+                    });
                   }
 
-              // Send location update to our backend (independent of TMS API)
-              // This request is completely independent - TMS success/failure does not affect it
+              // Send location update to our backend (for ALL users, independent of TMS API and user role)
+              // This request is completely independent - TMS success/failure and user role do not affect it
               let backendUpdateSuccess = false;
               const backendStartTime = Date.now();
-              try {
-                fileLogger.warn('LocationTask', 'BACKEND_API_REQUEST_START', {
-                  externalId,
-                  latitude: latitude.toFixed(6),
-                  longitude: longitude.toFixed(6),
-                  zip: finalPostalCode,
-                  city: city || 'empty',
-                  state: state || 'empty',
-                  tmsSuccess: tmsSuccess, // Log TMS status for reference, but don't depend on it
-                });
-                console.log(`📤 [LocationTask] Sending location update to our backend API (independent of TMS)...`);
-                console.log(`📤 [LocationTask] Backend API: TMS status=${tmsSuccess ? 'SUCCESS' : 'FAILED'} (does not affect this request)`);
+              
+              if (externalId) {
+                try {
+                  fileLogger.warn('LocationTask', 'BACKEND_API_REQUEST_START', {
+                    externalId,
+                    latitude: latitude.toFixed(6),
+                    longitude: longitude.toFixed(6),
+                    zip: finalPostalCode,
+                    city: city || 'empty',
+                    state: state || 'empty',
+                    userRole: userRole || 'not found',
+                    tmsSuccess: tmsSuccess, // Log TMS status for reference, but don't depend on it
+                  });
+                  console.log(`📤 [LocationTask] Sending location update to our backend API (for all users, independent of TMS and role)...`);
+                  console.log(`📤 [LocationTask] Backend API: TMS status=${tmsSuccess ? 'SUCCESS' : 'SKIPPED/FAILED'}, User role=${userRole || 'not found'} (does not affect this request)`);
                 
                 if (sendLocationUpdateToBackendUser) {
                   backendUpdateSuccess = await sendLocationUpdateToBackendUser({
@@ -532,11 +598,18 @@ try {
                   externalId,
                   latitude: latitude.toFixed(6),
                   longitude: longitude.toFixed(6),
+                  userRole: userRole || 'not found',
                 });
                 console.warn(`⚠️ [LocationTask] Backend API request exception (took ${backendDuration}ms):`, backendError);
                 console.warn('⚠️ [LocationTask] Backend API: Exception while sending location update to our database');
                 backendUpdateSuccess = false;
               }
+            } else {
+              console.warn(`⚠️ [LocationTask] Skipping backend API call - externalId not found`);
+              fileLogger.warn('LocationTask', 'SKIPPING_BACKEND_NO_EXTERNAL_ID', {
+                userRole: userRole || 'not found',
+              });
+            }
                   
                   // Save coordinates and time only after successful backend update
                   if (backendUpdateSuccess) {

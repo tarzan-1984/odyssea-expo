@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Dimensions, Image, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { colors, typography, spacing, borderRadius, shadows, fonts, rem, fp, br } from '@/lib';
@@ -6,6 +6,7 @@ import ArrowRight from '@/icons/ArrowRight';
 import ScreenLayout from '@/components/auth/ScreenLayout';
 import { useAuth } from '@/context/AuthContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { secureStorage } from '@/utils/secureStorage';
 
 const { width } = Dimensions.get('window');
 
@@ -20,6 +21,22 @@ export default function WelcomeScreen() {
   const [localError, setLocalError] = useState<string | null>(null);
   const { authState, checkEmailAndGeneratePassword, clearError } = useAuth();
   const insets = useSafeAreaInsets();
+
+  // Load saved email from secureStorage on mount
+  useEffect(() => {
+    const loadSavedEmail = async () => {
+      try {
+        const savedEmail = await secureStorage.getItemAsync('savedEmail');
+        if (savedEmail && !email) {
+          setEmail(savedEmail);
+          console.log('💾 [WelcomeScreen] Loaded saved email from secureStorage');
+        }
+      } catch (error) {
+        console.warn('⚠️ [WelcomeScreen] Failed to load saved email:', error);
+      }
+    };
+    loadSavedEmail();
+  }, []);
 
   // Simple email validation
   const validateEmail = (email: string): boolean => {

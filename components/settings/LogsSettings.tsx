@@ -36,25 +36,25 @@ export default function LogsSettings() {
       const filePath = await fileLogger.getLogFilePath();
       
       if (!filePath) {
-        Alert.alert('Ошибка', 'Файл логов не найден');
+        Alert.alert('Error', 'Log file not found');
         return;
       }
 
       const isAvailable = await Sharing.isAvailableAsync();
       if (!isAvailable) {
-        Alert.alert('Ошибка', 'Функция "Поделиться" недоступна на этом устройстве');
+        Alert.alert('Error', 'Sharing is not available on this device');
         return;
       }
 
       await Sharing.shareAsync(filePath, {
         mimeType: 'text/plain',
-        dialogTitle: 'Поделиться логами',
+        dialogTitle: 'Share logs',
       });
       
       await loadFileSize();
     } catch (error) {
       console.error('[LogsSettings] Failed to share logs:', error);
-      Alert.alert('Ошибка', 'Не удалось поделиться файлом логов');
+      Alert.alert('Error', 'Failed to share log file');
     } finally {
       setIsLoading(false);
     }
@@ -62,22 +62,22 @@ export default function LogsSettings() {
 
   const handleClearLogs = async () => {
     Alert.alert(
-      'Очистить логи',
-      'Вы уверены, что хотите очистить все логи?',
+      'Clear logs',
+      'Are you sure you want to clear all logs?',
       [
-        { text: 'Отмена', style: 'cancel' },
+        { text: 'Cancel', style: 'cancel' },
         {
-          text: 'Очистить',
+          text: 'Clear',
           style: 'destructive',
           onPress: async () => {
             setIsLoading(true);
             try {
               await fileLogger.clearLogs();
               await loadFileSize();
-              Alert.alert('Успешно', 'Логи очищены');
+              Alert.alert('Success', 'Logs cleared');
             } catch (error) {
               console.error('[LogsSettings] Failed to clear logs:', error);
-              Alert.alert('Ошибка', 'Не удалось очистить логи');
+              Alert.alert('Error', 'Failed to clear logs');
             } finally {
               setIsLoading(false);
             }
@@ -89,10 +89,10 @@ export default function LogsSettings() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Логирование</Text>
+      <Text style={styles.title}>Logging</Text>
       
       <View style={styles.infoContainer}>
-        <Text style={styles.infoText}>Размер файла логов: {formatFileSize(fileSize)}</Text>
+        <Text style={styles.infoText}>Log file size: {formatFileSize(fileSize)}</Text>
       </View>
 
       <TouchableOpacity
@@ -103,7 +103,7 @@ export default function LogsSettings() {
         {isLoading ? (
           <ActivityIndicator color={colors.primary.white} />
         ) : (
-          <Text style={styles.buttonText}>Поделиться логами</Text>
+          <Text style={styles.buttonText}>Share logs</Text>
         )}
       </TouchableOpacity>
 
@@ -115,7 +115,7 @@ export default function LogsSettings() {
         {isLoading ? (
           <ActivityIndicator color={colors.primary.white} />
         ) : (
-          <Text style={styles.buttonText}>Очистить логи</Text>
+          <Text style={styles.buttonText}>Clear logs</Text>
         )}
       </TouchableOpacity>
     </View>

@@ -112,6 +112,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       const result = await authApi.login(email, password);
       
+      // Save email and password to secureStorage after successful login
+      // These will persist across app restarts and only be cleared on app reinstall
+      if (result.success) {
+        try {
+          await secureStorage.setItemAsync('savedEmail', email);
+          await secureStorage.setItemAsync('savedPassword', password);
+          console.log('💾 [AuthContext] Email and password saved to secureStorage for next login');
+        } catch (storeError) {
+          console.warn('⚠️ [AuthContext] Failed to save email/password to secureStorage:', storeError);
+        }
+      }
+      
       setAuthState(prev => ({
         ...prev,
         isLoading: false,
@@ -180,6 +192,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               console.log('💾 [AuthContext] User ID cached in AsyncStorage for background tasks');
             } catch (cacheError) {
               console.warn('⚠️ [AuthContext] Failed to cache userId:', cacheError);
+            }
+          }
+          if (user?.role) {
+            try {
+              await AsyncStorage.setItem('@user_role', user.role);
+              console.log('💾 [AuthContext] User role cached in AsyncStorage for background tasks');
+            } catch (cacheError) {
+              console.warn('⚠️ [AuthContext] Failed to cache user role:', cacheError);
             }
           }
           console.log('💾 [AuthContext] Tokens and user saved (Face ID can now unlock this session)');
@@ -340,6 +360,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             console.warn('⚠️ [AuthContext] Failed to cache userId:', cacheError);
           }
         }
+        if (user?.role) {
+          try {
+            await AsyncStorage.setItem('@user_role', user.role);
+            console.log('💾 [AuthContext] User role cached in AsyncStorage for background tasks');
+          } catch (cacheError) {
+            console.warn('⚠️ [AuthContext] Failed to cache user role:', cacheError);
+          }
+        }
         
         console.log('✅ [AuthContext] Found stored auth data');
         console.log('👤 [AuthContext] User:', user.email);
@@ -473,6 +501,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     
     try {
       // Clear secure storage (user data, tokens, location, push token)
+      // NOTE: savedEmail and savedPassword are NOT deleted here - they persist for next login
+      // They will only be deleted on app reinstall (checked in _layout.tsx)
       await secureStorage.deleteItemAsync('accessToken');
       await secureStorage.deleteItemAsync('refreshToken');
       await secureStorage.deleteItemAsync('user');
@@ -482,6 +512,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await AsyncStorage.removeItem('@user_external_id');
       await AsyncStorage.removeItem('@user_access_token');
       await AsyncStorage.removeItem('@user_id');
+      await AsyncStorage.removeItem('@user_role');
       console.log('💾 [AuthContext] Cleared secure storage (including push token)');
       
       // Clear chat messages cache

@@ -94,7 +94,7 @@ export const fp = (size: number): number => {
     // For more aggressive: use scale * 0.4 + 0.6 for even softer base, or adjust coefficients
     // More aggressive approach: scale = 1 / (scale * 0.6 + 0.4)
     // This ensures text on larger screens is reduced enough to maintain proportions
-    scale = 1 / (scale * 0.4 + 0.8);
+    scale = 1 / (scale * 0.2 + 0.5);
   }
   // If scale === 1.0 (base device), keep it as is
   

@@ -155,7 +155,7 @@ function RootLayoutNav() {
             console.warn('⚠️ [App] Failed to clear chat cache:', e);
           }
           
-          // Clear secure storage (tokens, user)
+          // Clear secure storage (tokens, user, saved email/password)
           try {
             const { secureStorage } = await import('@/utils/secureStorage');
             await secureStorage.deleteItemAsync('accessToken');
@@ -163,7 +163,9 @@ function RootLayoutNav() {
             await secureStorage.deleteItemAsync('user');
             await secureStorage.deleteItemAsync('userLocation');
             await secureStorage.deleteItemAsync('expoPushToken');
-            console.log('✅ [App] Cleared secure storage');
+            await secureStorage.deleteItemAsync('savedEmail');
+            await secureStorage.deleteItemAsync('savedPassword');
+            console.log('✅ [App] Cleared secure storage (including saved email/password)');
           } catch (e) {
             console.warn('⚠️ [App] Failed to clear secure storage:', e);
           }

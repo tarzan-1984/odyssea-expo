@@ -45,6 +45,35 @@ export default function VerifyAccountCodeScreen() {
   }, [successMessage, fadeAnim]);
 
   const handleCodeChange = (value: string, index: number) => {
+    // Handle paste: if value length > 1, it means user pasted text
+    if (value.length > 1) {
+      // Extract only digits from pasted text
+      const digits = value.replace(/\D/g, '').slice(0, 6);
+      
+      // Fill code array starting from first input (index 0)
+      const newCode = ['', '', '', '', '', ''];
+      for (let i = 0; i < digits.length && i < 6; i++) {
+        newCode[i] = digits[i];
+      }
+      
+      setCode(newCode);
+      
+      // Use setTimeout to ensure state is updated before focusing
+      setTimeout(() => {
+        if (digits.length === 6) {
+          // If all 6 digits are filled, blur to hide keyboard
+          inputRefs.current[5]?.blur();
+        } else if (digits.length > 0) {
+          // Focus on the next empty field after the last filled one
+          const nextIndex = Math.min(digits.length, 5);
+          inputRefs.current[nextIndex]?.focus();
+        }
+      }, 0);
+      
+      return;
+    }
+    
+    // Normal single character input
     const newCode = [...code];
     newCode[index] = value;
     setCode(newCode);
@@ -186,9 +215,10 @@ export default function VerifyAccountCodeScreen() {
                 onChangeText={(value) => handleCodeChange(value, index)}
                 onKeyPress={({ nativeEvent }) => handleKeyPress(nativeEvent.key, index)}
                 keyboardType="numeric"
-                maxLength={1}
+                maxLength={6}
                 textAlign="center"
                 autoFocus={index === 0}
+                contextMenuHidden={false}
               />
             ))}
           </View>

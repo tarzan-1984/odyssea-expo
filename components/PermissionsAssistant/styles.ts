@@ -10,7 +10,7 @@ export default StyleSheet.create({
 	title: {
 		paddingTop: rem(30),
 		textAlign: 'center',
-		fontSize: fp(25),
+		fontSize: fp(22),
 		fontWeight: "bold",
 		marginBottom: rem(30),
 		color: colors.neutral.white,
@@ -25,7 +25,7 @@ export default StyleSheet.create({
 		backgroundColor: colors.primary.green,
 	},
 	label: {
-		fontSize: fp(16),
+		fontSize: fp(14),
 		fontFamily: fonts["600"],
 		color: colors.primary.blue
 	},
@@ -43,7 +43,7 @@ export default StyleSheet.create({
 	},
 	buttonText: {
 		color: "#fff",
-		fontSize: fp(18),
+		fontSize: fp(16),
 		fontFamily: fonts["500"],
 	},
 	hint: {
@@ -60,7 +60,7 @@ export default StyleSheet.create({
 	},
 	autostartWarningText: {
 		color: colors.neutral.white, // White text
-		fontSize: fp(16),
+		fontSize: fp(14),
 		fontFamily: fonts["700"], // Bold
 		fontWeight: 'bold',
 		textAlign: 'center',

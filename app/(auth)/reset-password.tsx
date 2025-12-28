@@ -75,10 +75,10 @@ export default function ResetPasswordScreen() {
   };
 
   return (
-    <ScreenLayout headerTitle={'Reset password'} headerButtonText={'Enter password'} onHeaderButtonPress={() => router.back()}>
+    <ScreenLayout headerTitle={'Reset password'} headerButtonText={'Cancel'} onHeaderButtonPress={() => router.back()}>
       <View style={[styles.container, (success || localError) && styles.containerWithMessage]}>
         
-        <Text style={styles.title}>Please confirm your email address and we will send you an updated password.</Text>
+        <Text style={styles.title}>Confirm your email to get an updated password.</Text>
         
         {/* Show success message */}
         {success && (
