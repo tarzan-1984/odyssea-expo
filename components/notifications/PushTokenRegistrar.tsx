@@ -57,6 +57,12 @@ export default function PushTokenRegistrar() {
         }
         if (!token) {
           console.error('[PushTokenRegistrar] ❌ Failed to get push token (token is null)');
+          console.error('[PushTokenRegistrar] This may be due to:');
+          console.error('[PushTokenRegistrar] 1. Push Notifications capability not enabled in Xcode (iOS)');
+          console.error('[PushTokenRegistrar] 2. Notification permissions not granted');
+          console.error('[PushTokenRegistrar] 3. Running on simulator (push tokens only work on physical devices)');
+          console.error('[PushTokenRegistrar] 4. Provisioning profile issues (iOS)');
+          console.error('[PushTokenRegistrar] Token registration will be retried automatically when app restarts or when user logs in again.');
           return;
         }
         console.log('[PushTokenRegistrar] ✅ Push token received:', token.substring(0, 20) + '...');

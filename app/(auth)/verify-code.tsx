@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { View, Text, TouchableOpacity, StyleSheet, TextInput, Dimensions, ActivityIndicator, Alert, Animated } from 'react-native';
 import ScreenLayout from '@/components/auth/ScreenLayout';
@@ -21,6 +21,7 @@ export default function VerifyAccountCodeScreen() {
   const [isVerifying, setIsVerifying] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [hasAutoSubmitted, setHasAutoSubmitted] = useState(false);
   const inputRefs = useRef<TextInput[]>([]);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const { authState, resendOtp, verifyOtp } = useAuth();
@@ -45,6 +46,11 @@ export default function VerifyAccountCodeScreen() {
   }, [successMessage, fadeAnim]);
 
   const handleCodeChange = (value: string, index: number) => {
+    // Clear error message when user starts typing
+    if (errorMessage) {
+      setErrorMessage(null);
+    }
+    
     // Handle paste: if value length > 1, it means user pasted text
     if (value.length > 1) {
       // Extract only digits from pasted text
@@ -57,6 +63,7 @@ export default function VerifyAccountCodeScreen() {
       }
       
       setCode(newCode);
+      setHasAutoSubmitted(false); // Reset auto-submit flag
       
       // Use setTimeout to ensure state is updated before focusing
       setTimeout(() => {
@@ -77,6 +84,7 @@ export default function VerifyAccountCodeScreen() {
     const newCode = [...code];
     newCode[index] = value;
     setCode(newCode);
+    setHasAutoSubmitted(false); // Reset auto-submit flag when code changes
 
     // Auto-focus next input
     if (value && index < 5) {
@@ -90,11 +98,17 @@ export default function VerifyAccountCodeScreen() {
     }
   };
 
-  const handleSendCode = async () => {
+  const handleSendCode = useCallback(async () => {
     const fullCode = code.join('');
     
     if (fullCode.length !== 6) {
       setErrorMessage('Please enter all 6 digits');
+      setHasAutoSubmitted(false);
+      return;
+    }
+
+    // Prevent multiple submissions
+    if (isVerifying || hasAutoSubmitted) {
       return;
     }
 
@@ -103,10 +117,12 @@ export default function VerifyAccountCodeScreen() {
     
     if (!userEmail) {
       setErrorMessage('Email not found. Please try again.');
+      setHasAutoSubmitted(false);
       return;
     }
     
     setIsVerifying(true);
+    setHasAutoSubmitted(true); // Mark as submitted to prevent duplicate calls
     setErrorMessage(null);
     setSuccessMessage(null);
 
@@ -124,20 +140,43 @@ export default function VerifyAccountCodeScreen() {
       } else {
         console.error('❌ [VerifyCode] OTP verification failed:', result.error);
         setErrorMessage(result.error || 'Invalid OTP code. Please try again.');
+        // Don't reset hasAutoSubmitted here - keep it true to prevent auto-submit loop
+        // It will be reset when user changes the code in handleCodeChange
       }
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Verification failed. Please try again.';
       console.error('❌ [VerifyCode] OTP verification error:', errorMsg);
       setErrorMessage(errorMsg);
+      // Don't reset hasAutoSubmitted here - keep it true to prevent auto-submit loop
+      // It will be reset when user changes the code in handleCodeChange
     } finally {
       setIsVerifying(false);
     }
-  };
+  }, [code, isVerifying, hasAutoSubmitted, authState.userEmail, contact, verifyOtp, router]);
+
+  // Auto-submit when code is complete
+  useEffect(() => {
+    const fullCode = code.join('');
+    const isCodeComplete = fullCode.length === 6;
+    
+    // Auto-submit when code is complete and not already submitting/verified
+    // Don't auto-submit if there's an error message (user needs to see the error first)
+    if (isCodeComplete && !isVerifying && !hasAutoSubmitted && !errorMessage) {
+      // Small delay to ensure state is updated
+      const timer = setTimeout(() => {
+        handleSendCode();
+      }, 100);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [code, isVerifying, hasAutoSubmitted, errorMessage, handleSendCode]);
 
   const handleResendCode = async () => {
     
     setIsResending(true);
     setSuccessMessage(null); // Clear previous message
+    setHasAutoSubmitted(false); // Reset auto-submit flag when resending
+    setCode(['', '', '', '', '', '']); // Clear code fields
     
     try {
       const result = await resendOtp();
@@ -151,6 +190,11 @@ export default function VerifyAccountCodeScreen() {
         setTimeout(() => {
           setSuccessMessage(null);
         }, 5000);
+        
+        // Focus on first input after resending
+        setTimeout(() => {
+          inputRefs.current[0]?.focus();
+        }, 100);
       } else {
         Alert.alert(
           'Error',
@@ -182,7 +226,7 @@ export default function VerifyAccountCodeScreen() {
     <ScreenLayout headerTitle={'Verify account'} headerButtonText={'Cancel'} onHeaderButtonPress={() => router.back()} footer={Dots} >
         <View style={styles.content}>
           <Text style={styles.title}>Verify Account</Text>
-          <Text style={styles.subtitle}>Please Enter Your One-Time Verification Code.</Text>
+          <Text style={styles.subtitle}>Please Enter Your One-Time Verification Code That Was Sent To Your Email.</Text>
           
           {/* Success message banner */}
           {successMessage && (
@@ -225,6 +269,18 @@ export default function VerifyAccountCodeScreen() {
           
           <TouchableOpacity
             style={[styles.button, (!isCodeComplete || isVerifying) && styles.buttonDisabled]}
+            onPress={handleResendCode}
+            disabled={isResending}
+          >
+            {isResending ? (
+              <ActivityIndicator color={colors.primary.blue} size="small" />
+            ) : (
+               <Text style={styles.buttonText}>Resend code</Text>
+             )}
+          </TouchableOpacity>
+          
+         {/* <TouchableOpacity
+            style={[styles.button, (!isCodeComplete || isVerifying) && styles.buttonDisabled]}
             onPress={handleSendCode}
             disabled={!isCodeComplete || isVerifying}
           >
@@ -233,9 +289,9 @@ export default function VerifyAccountCodeScreen() {
             ) : (
               <Text style={styles.buttonText}>Send code</Text>
             )}
-          </TouchableOpacity>
+          </TouchableOpacity>*/}
           
-          <View style={styles.resendWrap}>
+         {/* <View style={styles.resendWrap}>
             <Text style={styles.resendWrapText}>Didn't get a code?</Text>
             
             <TouchableOpacity 
@@ -249,7 +305,7 @@ export default function VerifyAccountCodeScreen() {
                 <Text style={styles.resendText}>Resend code</Text>
               )}
             </TouchableOpacity>
-          </View>
+          </View>*/}
         </View>
     </ScreenLayout>
   );
@@ -272,7 +328,7 @@ const styles = StyleSheet.create({
     paddingTop: rem(70),
   },
   title: {
-    fontSize: fp(20),
+    fontSize: fp(24),
     fontFamily: fonts["700"],
     color: colors.neutral.white,
     textAlign: 'center',
@@ -280,7 +336,7 @@ const styles = StyleSheet.create({
     lineHeight: fp(35),
   },
   subtitle: {
-    fontSize: fp(16),
+    fontSize: fp(20),
     color: colors.neutral.white,
     textAlign: 'center',
     marginBottom: rem(35),

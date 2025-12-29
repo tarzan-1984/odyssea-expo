@@ -12,8 +12,11 @@ import { OnlineStatusProvider } from '@/context/OnlineStatusContext';
 import { useLocationPermission } from '@/hooks/useLocationPermission';
 import LocationPermissionModal from '@/components/common/LocationPermissionModal';
 // Import background location task to register it
+// CRITICAL: This import must happen at the top level to ensure task registration
+// The task is registered when this module is imported
 import '@/tasks/locationTask';
-import { flushLocationQueue } from '@/tasks/locationTask';
+import { flushLocationQueue, LOCATION_TASK_NAME } from '@/tasks/locationTask';
+import * as TaskManager from 'expo-task-manager';
 // Ensure notifications handler is always registered regardless of auth flow
 import '@/services/NotificationsService';
 import PushTokenRegistrar from '@/components/notifications/PushTokenRegistrar';
@@ -92,6 +95,82 @@ function RootLayoutNav() {
     checkPendingNavigation();
   }, [isReady, authState.isAuthenticated, router]);
 
+  // Verify task registration on mount and try to re-register if needed
+  // NOTE: On Android, isTaskRegisteredAsync may return false even if task is defined
+  // The task will be registered dynamically when Location.startLocationUpdatesAsync is called
+  useEffect(() => {
+    const verifyTaskRegistration = async () => {
+      // Only log, don't show errors - this is informational
+      console.log('🔍 [RootLayout] Starting task registration verification...');
+      console.log('🔍 [RootLayout] Task name:', LOCATION_TASK_NAME);
+      console.log('🔍 [RootLayout] TaskManager available:', typeof TaskManager !== 'undefined');
+      console.log('🔍 [RootLayout] TaskManager.defineTask available:', typeof TaskManager.defineTask !== 'undefined');
+      console.log('🔍 [RootLayout] TaskManager.isTaskRegisteredAsync available:', typeof TaskManager.isTaskRegisteredAsync !== 'undefined');
+      
+      // Check immediately (task should be registered from top-level import)
+      let isRegistered = await TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME);
+      console.log('🔍 [RootLayout] Immediate check (0ms):', isRegistered);
+      
+      // Wait a bit for task to register (if it hasn't already)
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      isRegistered = await TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME);
+      console.log('🔍 [RootLayout] Check after 1s:', isRegistered);
+      
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      isRegistered = await TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME);
+      console.log('🔍 [RootLayout] Check after 2s:', isRegistered);
+      
+      if (!isRegistered) {
+        // On Android, this is often a false negative - task may still work
+        // Only log as warning, not error, especially if user is not logged in
+        const { Platform } = require('react-native');
+        if (Platform.OS === 'android') {
+          console.log('ℹ️ [RootLayout] Task not registered according to isTaskRegisteredAsync (Android)');
+          console.log('ℹ️ [RootLayout] This is normal on Android - task will be registered dynamically when startLocationUpdatesAsync is called');
+          console.log('ℹ️ [RootLayout] TaskManager object:', Object.keys(TaskManager));
+        } else {
+          console.warn('⚠️ [RootLayout] Task not registered after 2s (iOS)');
+          console.warn('⚠️ [RootLayout] TaskManager object:', Object.keys(TaskManager));
+        }
+        
+        // Try to re-import and register the task (informational only)
+        try {
+          console.log('🔄 [RootLayout] Attempting to re-import locationTask...');
+          // Force re-import by using dynamic import
+          const locationTaskModule = await import('@/tasks/locationTask');
+          console.log('🔄 [RootLayout] locationTask module imported:', Object.keys(locationTaskModule));
+          
+          // Wait a bit more for registration
+          await new Promise(resolve => setTimeout(resolve, 2000));
+          
+          isRegistered = await TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME);
+          if (isRegistered) {
+            console.log('✅ [RootLayout] Task registered after re-import:', LOCATION_TASK_NAME);
+          } else {
+            // Only log as info/warning, not error - this is expected behavior on Android
+            if (Platform.OS === 'android') {
+              console.log('ℹ️ [RootLayout] Task still not registered according to isTaskRegisteredAsync (Android)');
+              console.log('ℹ️ [RootLayout] This is normal - task will be registered when startLocationUpdatesAsync is called');
+            } else {
+              console.warn('⚠️ [RootLayout] Task still NOT registered after re-import (iOS):', LOCATION_TASK_NAME);
+              console.warn('⚠️ [RootLayout] This may require app restart on iOS.');
+            }
+          }
+        } catch (reimportError) {
+          // Only log as warning, not error
+          console.warn('⚠️ [RootLayout] Failed to re-import locationTask:', reimportError);
+          if (reimportError instanceof Error) {
+            console.warn('⚠️ [RootLayout] Error message:', reimportError.message);
+          }
+        }
+      } else {
+        console.log('✅ [RootLayout] Location task is registered:', LOCATION_TASK_NAME);
+      }
+    };
+    
+    verifyTaskRegistration();
+  }, []);
+  
   // Load stored auth and check permissions on mount (first load)
   useEffect(() => {
     const initAuth = async () => {

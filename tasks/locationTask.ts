@@ -21,8 +21,18 @@ console.log('📍 [LocationTask] ========== REGISTERING TASK ==========');
 console.log('📍 [LocationTask] Task name:', LOCATION_TASK_NAME);
 console.log('📍 [LocationTask] TaskManager available:', typeof TaskManager !== 'undefined');
 console.log('📍 [LocationTask] defineTask available:', typeof TaskManager.defineTask !== 'undefined');
+console.log('📍 [LocationTask] Platform:', Platform.OS);
+console.log('📍 [LocationTask] App State:', AppState.currentState);
+
+// Check if task is already registered (should be false on first import)
+TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME).then((isRegistered) => {
+  console.log('📍 [LocationTask] Task already registered before defineTask?', isRegistered);
+}).catch((err) => {
+  console.warn('📍 [LocationTask] Error checking registration before defineTask:', err);
+});
 
 try {
+  console.log('📍 [LocationTask] Calling TaskManager.defineTask...');
   TaskManager.defineTask(LOCATION_TASK_NAME, async ({ data, error }: any) => {
   const triggerTime = new Date().toLocaleTimeString();
   const appState = AppState.currentState;
@@ -353,9 +363,13 @@ try {
                 });
               }
               
-              const isDriver = userRole === 'DRIVER';
+              // CRITICAL: Only DRIVER role should send to TMS
+              // Normalize role: trim whitespace and convert to uppercase for comparison
+              const normalizedRole = userRole ? userRole.trim().toUpperCase() : null;
+              const isDriver = normalizedRole === 'DRIVER';
               
               console.log(`🔍 [LocationTask] Checking conditions: externalId=${!!externalId}, postalCode=${!!postalCode}, userRole=${userRole || 'not found'}, isDriver=${isDriver}`);
+              console.log(`🔍 [LocationTask] Role check: userRole="${userRole}", isDriver=${isDriver}, will send to TMS: ${isDriver}`);
               fileLogger.warn('LocationTask', 'CHECKING_CONDITIONS', {
                 hasExternalId: !!externalId,
                 hasPostalCode: !!postalCode,
@@ -363,6 +377,7 @@ try {
                 postalCode: postalCode || 'empty',
                 userRole: userRole || 'not found',
                 isDriver,
+                willSendToTMS: isDriver,
               });
               
                 // IMPORTANT: Allow sending even without postalCode if we have externalId
@@ -419,12 +434,24 @@ try {
                   const tmsApiStartTime = Date.now();
                   
                   if (isDriver) {
-                    // IMPORTANT: In headless JS, fetch/XMLHttpRequest may not work
-                    // Use native HTTP client (OkHttp) - it works reliably in headless JS
-                    console.log(`📤 [LocationTask] Sending location update to TMS API using native HTTP client...`);
-                    console.log(`📤 [LocationTask] TMS API request started for externalId: ${externalId} (user is DRIVER)`);
-                    
-                    try {
+                    // Double-check role before sending (safety check)
+                    if (normalizedRole !== 'DRIVER') {
+                      console.error(`❌ [LocationTask] CRITICAL: isDriver is true but normalizedRole is not DRIVER!`);
+                      console.error(`❌ [LocationTask] normalizedRole: "${normalizedRole}", userRole: "${userRole}"`);
+                      fileLogger.error('LocationTask', 'ROLE_MISMATCH', {
+                        userRole,
+                        normalizedRole,
+                        isDriver,
+                      });
+                      // Don't send to TMS if role doesn't match
+                      console.log(`ℹ️ [LocationTask] Skipping TMS API call due to role mismatch`);
+                    } else {
+                      // IMPORTANT: In headless JS, fetch/XMLHttpRequest may not work
+                      // Use native HTTP client (OkHttp) - it works reliably in headless JS
+                      console.log(`📤 [LocationTask] Sending location update to TMS API using native HTTP client...`);
+                      console.log(`📤 [LocationTask] TMS API request started for externalId: ${externalId} (user is DRIVER, role verified)`);
+                      
+                      try {
                       fileLogger.warn('LocationTask', 'TMS_API_REQUEST_START', {
                         externalId,
                         latitude: latitude.toFixed(6),
@@ -521,12 +548,16 @@ try {
                         console.error(`❌ [LocationTask] TMS API: Failed to add to queue:`, queueError);
                       }
                     }
+                    } // End of else block for normalizedRole === 'DRIVER' check
                   } else {
-                    console.log(`ℹ️ [LocationTask] Skipping TMS API call - user is not DRIVER (role: ${userRole || 'not found'})`);
+                    console.log(`ℹ️ [LocationTask] ⚠️ SKIPPING TMS API CALL - user is NOT DRIVER ⚠️`);
+                    console.log(`ℹ️ [LocationTask] User role: "${userRole || 'not found'}", isDriver: ${isDriver}`);
+                    console.log(`ℹ️ [LocationTask] TMS API will NOT be called for externalId: ${externalId}`);
                     fileLogger.warn('LocationTask', 'SKIPPING_TMS_NOT_DRIVER', {
                       userRole: userRole || 'not found',
                       isDriver,
                       externalId: externalId || 'missing',
+                      reason: 'User role is not DRIVER',
                     });
                   }
 
@@ -722,6 +753,17 @@ try {
           });
   
   console.log('📍 [LocationTask] ✅ TaskManager.defineTask completed without error');
+  
+  // Verify registration immediately after defineTask
+  TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME).then((isRegistered) => {
+    if (isRegistered) {
+      console.log('📍 [LocationTask] ✅✅✅ Task successfully registered and verified ✅✅✅');
+    } else {
+      console.warn('📍 [LocationTask] ⚠️ Task defined but not yet registered (may need time to propagate)');
+    }
+  }).catch((err) => {
+    console.warn('📍 [LocationTask] ⚠️ Error verifying registration after defineTask:', err);
+  });
 } catch (defineError) {
   console.error('❌ [LocationTask] ❌❌❌ ERROR REGISTERING TASK ❌❌❌');
   console.error('❌ [LocationTask] Error:', defineError);
@@ -729,11 +771,14 @@ try {
     console.error('❌ [LocationTask] Error message:', defineError.message);
     console.error('❌ [LocationTask] Error stack:', defineError.stack);
   }
-  throw defineError; // Re-throw to prevent silent failure
+  // Don't throw - allow app to continue even if task registration fails
+  // The task may still work on some devices
+  console.error('❌ [LocationTask] Task registration failed, but continuing app initialization...');
 }
 
 // Log task registration (synchronous check)
 console.log('📍 [LocationTask] Task definition completed, name:', LOCATION_TASK_NAME);
+console.log('📍 [LocationTask] ========== END OF TASK REGISTRATION ==========');
 
 /**
  * Add location update to queue for retry
@@ -765,10 +810,55 @@ async function addToLocationQueue(update: {
 
 /**
  * Flush location queue - try to send all pending updates to TMS
+ * IMPORTANT: Only sends to TMS if user role is DRIVER
  */
 export async function flushLocationQueue(): Promise<void> {
   try {
     fileLogger.warn('LocationTask', 'QUEUE_FLUSH_START');
+    
+    // Check user role first - only DRIVER role should send to TMS
+    let userRole: string | null = null;
+    try {
+      const cachedRole = await AsyncStorage.getItem('@user_role');
+      if (cachedRole) {
+        userRole = cachedRole;
+        console.log(`📋 [LocationTask] Queue flush: User role retrieved from cache: ${userRole}`);
+      } else {
+        // Fallback: try secureStorage
+        try {
+          const { secureStorage } = require('@/utils/secureStorage');
+          const userJson = await secureStorage.getItemAsync('user');
+          if (userJson) {
+            const user = JSON.parse(userJson);
+            userRole = user?.role || null;
+            if (userRole) {
+              await AsyncStorage.setItem('@user_role', userRole);
+              console.log(`📋 [LocationTask] Queue flush: User role retrieved from secureStorage and cached: ${userRole}`);
+            }
+          }
+        } catch (secureStorageError) {
+          console.warn(`⚠️ [LocationTask] Queue flush: SecureStorage not available:`, secureStorageError);
+        }
+      }
+    } catch (cacheError) {
+      console.warn(`⚠️ [LocationTask] Queue flush: Failed to read user role:`, cacheError);
+    }
+    
+    // Normalize role: trim whitespace and convert to uppercase for comparison
+    const normalizedRole = userRole ? userRole.trim().toUpperCase() : null;
+    const isDriver = normalizedRole === 'DRIVER';
+    console.log(`🔍 [LocationTask] Queue flush: userRole="${userRole || 'not found'}" (normalized: "${normalizedRole || 'null'}"), isDriver=${isDriver}`);
+    
+    // If user is not DRIVER, clear the queue (don't send to TMS)
+    if (!isDriver) {
+      console.log(`ℹ️ [LocationTask] Queue flush: User is not DRIVER (role: ${userRole || 'not found'}), clearing TMS queue`);
+      fileLogger.warn('LocationTask', 'QUEUE_FLUSH_SKIPPED_NOT_DRIVER', {
+        userRole: userRole || 'not found',
+        isDriver,
+      });
+      await AsyncStorage.removeItem(LOCATION_QUEUE_KEY);
+      return;
+    }
     
     const queueJson = await AsyncStorage.getItem(LOCATION_QUEUE_KEY);
     if (!queueJson) {
@@ -790,9 +880,11 @@ export async function flushLocationQueue(): Promise<void> {
       return; // Empty queue
     }
     
-    console.log(`🔄 [LocationTask] Flushing TMS queue (${queue.length} items)...`);
+    console.log(`🔄 [LocationTask] Flushing TMS queue (${queue.length} items) for DRIVER role...`);
     fileLogger.warn('LocationTask', 'QUEUE_FLUSH_PROCESSING', {
       queueSize: queue.length,
+      userRole,
+      isDriver,
     });
     
     // Import location API
@@ -802,7 +894,7 @@ export async function flushLocationQueue(): Promise<void> {
     const successful: number[] = [];
     const failed: number[] = [];
     
-    // Try to send each queued update to TMS
+    // Try to send each queued update to TMS (only for DRIVER role)
     for (let i = 0; i < queue.length; i++) {
       const update = queue[i];
       try {
@@ -812,8 +904,10 @@ export async function flushLocationQueue(): Promise<void> {
           externalId: update.externalId,
           latitude: update.latitude.toFixed(6),
           longitude: update.longitude.toFixed(6),
+          userRole,
+          isDriver,
         });
-        console.log(`📤 [LocationTask] TMS Queue: Sending item ${i + 1}/${queue.length} to TMS API...`);
+        console.log(`📤 [LocationTask] TMS Queue: Sending item ${i + 1}/${queue.length} to TMS API (user is DRIVER)...`);
         
         const itemStartTime = Date.now();
         const success = await sendLocationUpdateToTMS(

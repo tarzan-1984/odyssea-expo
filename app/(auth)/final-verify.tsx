@@ -219,7 +219,7 @@ export default function FinalVerifyScreen() {
         const { status } = await Location.requestForegroundPermissionsAsync();
         if (status !== 'granted') {
           console.warn('📍 [BackgroundTracking] Foreground permission not granted');
-          alert('Background location updates require location permission. Please enable location access in app settings.');
+          // Alert removed - error logged only
           return;
         }
         console.log('📍 [BackgroundTracking] ✅ Foreground permission granted');
@@ -234,7 +234,7 @@ export default function FinalVerifyScreen() {
         const { status: backgroundStatus } = await Location.requestBackgroundPermissionsAsync();
         if (backgroundStatus !== 'granted') {
           console.warn('📍 [BackgroundTracking] Background permission not granted');
-          alert('To enable automatic background location updates, set Location permission to "Always".\n\nSettings → Privacy & Security → Location Services → odysseaexpo → Select "Always"');
+          // Alert removed - error logged only
           return;
         }
         console.log('📍 [BackgroundTracking] ✅ Background permission granted');
@@ -316,12 +316,20 @@ export default function FinalVerifyScreen() {
       console.log('📍 [BackgroundTracking] - Foreground:', finalForegroundCheck.status);
       console.log('📍 [BackgroundTracking] - Background:', finalBackgroundCheck.status);
       
-      if (finalForegroundCheck.status !== 'granted' || finalBackgroundCheck.status !== 'granted') {
-        console.error('❌ [BackgroundTracking] Permissions not fully granted!');
-        console.error('❌ [BackgroundTracking] Foreground:', finalForegroundCheck.status);
-        console.error('❌ [BackgroundTracking] Background:', finalBackgroundCheck.status);
+      if (finalForegroundCheck.status !== 'granted') {
+        console.error('❌ [BackgroundTracking] Foreground permission not granted:', finalForegroundCheck.status);
+        // Alert removed - error logged only
         return;
       }
+      
+      if (finalBackgroundCheck.status !== 'granted') {
+        console.error('❌ [BackgroundTracking] Background permission not granted:', finalBackgroundCheck.status);
+        console.error('❌ [BackgroundTracking] Background location requires "Always" permission on Android');
+        // Alert removed - error logged only
+        return;
+      }
+      
+      console.log('📍 [BackgroundTracking] ✅ All permissions verified before starting location updates');
       
       // Check location services are enabled
       const providerStatus = await Location.getProviderStatusAsync();
@@ -331,13 +339,180 @@ export default function FinalVerifyScreen() {
         return;
       }
       
+      // CRITICAL: Check if task is registered BEFORE starting
+      // On Android, task registration might take a moment, so we'll retry a few times
+      let taskRegistered = false;
+      console.log('📍 [BackgroundTracking] Checking if task is registered...');
+      console.log('📍 [BackgroundTracking] TaskManager available:', typeof TaskManager !== 'undefined');
+      console.log('📍 [BackgroundTracking] TaskManager.isTaskRegisteredAsync available:', typeof TaskManager.isTaskRegisteredAsync !== 'undefined');
+      
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        taskRegistered = await TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME);
+        console.log(`📍 [BackgroundTracking] Registration check attempt ${attempt}/5:`, taskRegistered);
+        
+        if (taskRegistered) {
+          console.log(`📍 [BackgroundTracking] ✅ Task is registered (attempt ${attempt}/5)`);
+          break;
+        }
+        
+        if (attempt < 5) {
+          console.log(`📍 [BackgroundTracking] ⏳ Task not registered yet, waiting 500ms before retry ${attempt + 1}/5...`);
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
+      }
+      
+      // IMPORTANT: On both Android and iOS, isTaskRegisteredAsync may return false even if task is defined
+      // The task will be registered dynamically when Location.startLocationUpdatesAsync is called
+      // So we should try to start even if isTaskRegisteredAsync returns false
+      // If task is truly not registered, startLocationUpdatesAsync will throw an error which we'll handle
+      if (!taskRegistered) {
+        console.warn('⚠️ [BackgroundTracking] isTaskRegisteredAsync returned false after 5 attempts');
+        console.warn('⚠️ [BackgroundTracking] Task name:', LOCATION_TASK_NAME);
+        console.warn('⚠️ [BackgroundTracking] Platform:', Platform.OS);
+        
+        if (Platform.OS === 'android') {
+          console.warn('⚠️ [BackgroundTracking] On Android, isTaskRegisteredAsync may return false even if task is defined.');
+          console.warn('⚠️ [BackgroundTracking] Task will be registered dynamically when startLocationUpdatesAsync is called.');
+          console.warn('⚠️ [BackgroundTracking] Proceeding with startLocationUpdatesAsync anyway...');
+        } else {
+          // On iOS, this can also be a false negative - task may be defined but not yet visible
+          console.warn('⚠️ [BackgroundTracking] On iOS, isTaskRegisteredAsync may return false even if task is defined.');
+          console.warn('⚠️ [BackgroundTracking] Task may be registered but not yet visible to isTaskRegisteredAsync.');
+          console.warn('⚠️ [BackgroundTracking] Proceeding with startLocationUpdatesAsync - will handle error if task is truly not registered...');
+        }
+        // Don't return for either platform - continue to try starting location updates
+        // If task is truly not registered, startLocationUpdatesAsync will throw an error
+      } else {
+        console.log('📍 [BackgroundTracking] ✅ Task is registered, proceeding with start...');
+      }
+      
+      // CRITICAL: On Android 12+, verify notification permission is granted
+      if (Platform.OS === 'android') {
+        const androidVersion = Platform.Version;
+        if (androidVersion >= 31) { // Android 12+
+          const notificationStatus = await Notifications.getPermissionsAsync();
+          if (notificationStatus.status !== 'granted') {
+            console.error('❌ [BackgroundTracking] Android 12+ requires notification permission for foreground service!');
+            console.error('❌ [BackgroundTracking] Current notification status:', notificationStatus.status);
+            fileLogger.error('BackgroundTracking', 'NOTIFICATION_PERMISSION_REQUIRED', {
+              androidVersion,
+              notificationStatus: notificationStatus.status,
+            });
+            // Alert removed - error logged only
+            return;
+          }
+          console.log('📍 [BackgroundTracking] ✅ Notification permission verified for Android 12+');
+        }
+      }
+      
       // Start location updates
+      // NOTE: On both Android and iOS, even if isTaskRegisteredAsync returns false, 
+      // startLocationUpdatesAsync may still work if task was defined via TaskManager.defineTask
       console.log('📍 [BackgroundTracking] Calling startLocationUpdatesAsync...');
+      console.log('📍 [BackgroundTracking] Task registration status before start:', taskRegistered);
+      console.log('📍 [BackgroundTracking] If false, task will be registered dynamically (or error will be thrown if truly not registered)');
+      
       try {
         await Location.startLocationUpdatesAsync(LOCATION_TASK_NAME, locationOptions);
-        console.log('📍 [BackgroundTracking] startLocationUpdatesAsync completed without error');
+        console.log('📍 [BackgroundTracking] ✅✅✅ startLocationUpdatesAsync completed successfully!');
+        console.log('📍 [BackgroundTracking] Location tracking has been started');
+        
+        // Verify task is now registered (should be true after start on both platforms)
+        const nowRegistered = await TaskManager.isTaskRegisteredAsync(LOCATION_TASK_NAME);
+        console.log('📍 [BackgroundTracking] Task registration status after start:', nowRegistered);
+        if (nowRegistered && !taskRegistered) {
+          console.log('📍 [BackgroundTracking] ✅ Task was registered dynamically during start');
+        }
       } catch (startError) {
         console.error('❌ [BackgroundTracking] startLocationUpdatesAsync threw an error:', startError);
+        console.error('❌ [BackgroundTracking] Error type:', typeof startError);
+        console.error('❌ [BackgroundTracking] Error instanceof Error:', startError instanceof Error);
+        
+        if (startError instanceof Error) {
+          console.error('❌ [BackgroundTracking] Error message:', startError.message);
+          console.error('❌ [BackgroundTracking] Error stack:', startError.stack);
+        } else {
+          console.error('❌ [BackgroundTracking] Error (not Error instance):', JSON.stringify(startError));
+        }
+        
+        // Re-check permissions to see if they're actually granted
+        const recheckForeground = await Location.getForegroundPermissionsAsync();
+        const recheckBackground = await Location.getBackgroundPermissionsAsync();
+        console.error('❌ [BackgroundTracking] Permission re-check after error:');
+        console.error('❌ [BackgroundTracking] - Foreground:', recheckForeground.status);
+        console.error('❌ [BackgroundTracking] - Background:', recheckBackground.status);
+        
+        // More detailed error handling for Android
+        if (Platform.OS === 'android' && startError instanceof Error) {
+          const errorMessage = startError.message.toLowerCase();
+          console.error('❌ [BackgroundTracking] Error message (lowercase):', errorMessage);
+          
+          if (errorMessage.includes('notification') || errorMessage.includes('foreground')) {
+            console.error('❌ [BackgroundTracking] Foreground service notification error - check notification permission');
+            fileLogger.error('BackgroundTracking', 'FOREGROUND_SERVICE_NOTIFICATION_ERROR', {
+              error: startError.message,
+              androidVersion: Platform.Version,
+              foregroundPermission: recheckForeground.status,
+              backgroundPermission: recheckBackground.status,
+            });
+            // Alert removed - error logged only
+          } else if (errorMessage.includes('permission') || errorMessage.includes('denied')) {
+            console.error('❌ [BackgroundTracking] Location permission error');
+            console.error('❌ [BackgroundTracking] Current permissions - Foreground:', recheckForeground.status, 'Background:', recheckBackground.status);
+            fileLogger.error('BackgroundTracking', 'LOCATION_PERMISSION_ERROR', {
+              error: startError.message,
+              foregroundPermission: recheckForeground.status,
+              backgroundPermission: recheckBackground.status,
+            });
+            // Alert removed - error logged only
+          } else if (errorMessage.includes('task') || errorMessage.includes('registered') || errorMessage.includes('not found') || errorMessage.includes('undefined')) {
+            console.error('❌ [BackgroundTracking] Task registration error - task is truly not registered');
+            console.error('❌ [BackgroundTracking] This means TaskManager.defineTask was not executed or failed');
+            fileLogger.error('BackgroundTracking', 'TASK_REGISTRATION_ERROR', {
+              error: startError.message,
+              taskName: LOCATION_TASK_NAME,
+              foregroundPermission: recheckForeground.status,
+              backgroundPermission: recheckBackground.status,
+            });
+            // Alert removed - error logged only
+          } else {
+            console.error('❌ [BackgroundTracking] Unknown error:', errorMessage);
+            fileLogger.error('BackgroundTracking', 'UNKNOWN_START_ERROR', {
+              error: startError.message,
+              stack: startError.stack,
+              foregroundPermission: recheckForeground.status,
+              backgroundPermission: recheckBackground.status,
+            });
+            // Alert removed - error logged only
+          }
+        } else if (startError instanceof Error) {
+          // iOS error handling
+          const errorMessage = startError.message.toLowerCase();
+          if (errorMessage.includes('task') || errorMessage.includes('registered') || errorMessage.includes('not found') || errorMessage.includes('undefined')) {
+            console.error('❌ [BackgroundTracking] Task registration error on iOS - task is truly not registered');
+            fileLogger.error('BackgroundTracking', 'TASK_REGISTRATION_ERROR_IOS', {
+              error: startError.message,
+              platform: Platform.OS,
+            });
+            // Alert removed - error logged only
+          } else {
+            console.error('❌ [BackgroundTracking] Unknown error:', errorMessage);
+            fileLogger.error('BackgroundTracking', 'UNKNOWN_START_ERROR', {
+              error: startError.message,
+              platform: Platform.OS,
+            });
+            // Alert removed - error logged only
+          }
+        } else {
+          // Non-Error instance
+          console.error('❌ [BackgroundTracking] Unknown error type:', typeof startError);
+          fileLogger.error('BackgroundTracking', 'UNKNOWN_START_ERROR_TYPE', {
+            error: String(startError),
+            errorType: typeof startError,
+          });
+          // Alert removed - error logged only
+        }
+        
         throw startError; // Re-throw to be caught by outer catch
       }
       
@@ -380,10 +555,51 @@ export default function FinalVerifyScreen() {
     } catch (error) {
       console.error('❌ [BackgroundTracking] ========== ERROR STARTING TASK ==========');
       console.error('❌ [BackgroundTracking] Failed to start background tracking:', error);
+      
       if (error instanceof Error) {
         console.error('❌ [BackgroundTracking] Error message:', error.message);
         console.error('❌ [BackgroundTracking] Error stack:', error.stack);
+        console.error('❌ [BackgroundTracking] Error name:', error.name);
+        
+        // Log specific error details for debugging
+        const errorDetails = {
+          message: error.message,
+          name: error.name,
+          stack: error.stack,
+          platform: Platform.OS,
+          androidVersion: Platform.OS === 'android' ? Platform.Version : null,
+        };
+        console.error('❌ [BackgroundTracking] Full error details:', JSON.stringify(errorDetails, null, 2));
+        
+        // Try to provide user-friendly error message
+        let userMessage = 'Failed to start background location tracking.';
+        if (error.message.includes('notification')) {
+          userMessage = 'Notification permission is required. Please enable notifications in app settings.';
+        } else if (error.message.includes('permission')) {
+          userMessage = 'Location permission is required. Please grant location permission in app settings.';
+        } else if (error.message.includes('task') || error.message.includes('registered')) {
+          userMessage = 'Location tracking service is not initialized. Please restart the app.';
+        }
+        
+        // Log to file for debugging
+        fileLogger.error('BackgroundTracking', 'START_FAILED', {
+          error: error.message,
+          stack: error.stack,
+          name: error.name,
+          platform: Platform.OS,
+          androidVersion: Platform.OS === 'android' ? Platform.Version : null,
+        });
+        
+        // Alert removed - error logged only
+      } else {
+        console.error('❌ [BackgroundTracking] Unknown error type:', typeof error, error);
+        fileLogger.error('BackgroundTracking', 'START_FAILED_UNKNOWN', {
+          errorType: typeof error,
+          error: String(error),
+          platform: Platform.OS,
+        });
       }
+      
       console.error('❌ [BackgroundTracking] =========================================');
     }
   }, []);

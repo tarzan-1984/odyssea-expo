@@ -148,7 +148,7 @@ export async function sendLocationUpdateToTMS(
     
     return new Promise<boolean>((resolve) => {
       const xhr = new XMLHttpRequest();
-      const timeout = 10000; // 10 seconds
+      const timeout = 30000; // 30 seconds (increased from 10s to handle slow TMS API responses)
       
       xhr.timeout = timeout;
       xhr.open('POST', url, true);
@@ -232,12 +232,17 @@ export async function sendLocationUpdateToTMS(
         if (resolved) return;
         resolved = true;
         const fetchDuration = Date.now() - fetchStartTime;
-        console.error(`[locationApi] ❌ Request timed out after ${fetchDuration}ms`);
+        console.error(`[locationApi] ❌ Request timed out after ${fetchDuration}ms (timeout limit: ${timeout}ms)`);
+        console.error(`[locationApi] TMS API server is taking too long to respond. This may indicate:`);
+        console.error(`[locationApi] 1. Network connectivity issues`);
+        console.error(`[locationApi] 2. TMS server is overloaded or slow`);
+        console.error(`[locationApi] 3. Request will be retried via queue when connection improves`);
         fileLogger.error('locationApi', 'REQUEST_TIMEOUT', {
           duration: fetchDuration,
           timeout: timeout,
           externalId,
           url,
+          note: 'Request will be retried via queue',
         });
         resolve(false);
       };
