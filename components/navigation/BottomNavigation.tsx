@@ -86,10 +86,10 @@ export default function BottomNavigation({ currentRoute }: BottomNavigationProps
       />
       
       <NavItem
-        icon={<SettingsIcon width={20} height={20} color={currentRoute === '/settings' ? colors.primary.blue : '#8E8E93'} />}
+        icon={<SettingsIcon width={20} height={20} color="#8E8E93" />}
         label=""
         route="/settings"
-        isActive={currentRoute === '/settings'}
+        isActive={false}
         isLast
       />
     </View>

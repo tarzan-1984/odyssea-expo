@@ -14,10 +14,16 @@ import {
 } from "./utils";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocationPermission } from "@/hooks/useLocationPermission";
+import { useAuth } from "@/context/AuthContext";
 
 export default function PermissionsAssistant({ onComplete }: { onComplete: () => void }) {
 	const insets = useSafeAreaInsets();
+	const { authState } = useAuth();
 	const { openLocationSettings, openAppSettings, openAppLocationPermissionSettings } = useLocationPermission();
+	
+	// Check user role
+	const userRole = authState.user?.role?.trim().toUpperCase();
+	const isDriver = userRole === 'DRIVER';
 	const [locationAlways, setLocationAlways] = useState(false);
 	const [notificationsAllowed, setNotificationsAllowed] = useState(false);
   const [gpsEnabled, setGpsEnabled] = useState<boolean>(false);
@@ -30,57 +36,69 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
 	const appState = useRef(AppState.currentState);
 	
 	const checkPermissions = useCallback(async () => {
-		// Check location permissions - different logic for Android and iOS
-		let hasLocationAlways = false;
+		// Check user role
+		const userRole = authState.user?.role?.trim().toUpperCase();
+		const isDriver = userRole === 'DRIVER';
 		
-		if (Platform.OS === "android") {
-			// For Android: check both foreground and background permissions
-			const fg = await Location.getForegroundPermissionsAsync();
-			const bg = await Location.getBackgroundPermissionsAsync();
-			hasLocationAlways = fg.granted && bg.granted;
-		} else {
-			// For iOS: check both foreground and background permissions with scope
-			const fg = await Location.getForegroundPermissionsAsync();
-			const bg = await Location.getBackgroundPermissionsAsync();
+		// Only check location permissions for DRIVER users
+		if (isDriver) {
+			// Check location permissions - different logic for Android and iOS
+			let hasLocationAlways = false;
 			
-			// On iOS, need both: status === 'granted' AND scope === 'always'
-			// The scope is directly on bg object, not in bg.ios.scope
-			// Also check 'granted' property as fallback
-			const fgGranted = fg.status === 'granted' || fg.granted;
-			const bgGranted = bg.status === 'granted' || bg.granted;
-			// Check scope directly on bg object (not ios.scope) - this is the correct way for iOS
-			const iosScopeAlways = (bg as any).scope === 'always';
+			if (Platform.OS === "android") {
+				// For Android: check both foreground and background permissions
+				const fg = await Location.getForegroundPermissionsAsync();
+				const bg = await Location.getBackgroundPermissionsAsync();
+				hasLocationAlways = fg.granted && bg.granted;
+			} else {
+				// For iOS: check both foreground and background permissions with scope
+				const fg = await Location.getForegroundPermissionsAsync();
+				const bg = await Location.getBackgroundPermissionsAsync();
+				
+				// On iOS, need both: status === 'granted' AND scope === 'always'
+				// The scope is directly on bg object, not in bg.ios.scope
+				// Also check 'granted' property as fallback
+				const fgGranted = fg.status === 'granted' || fg.granted;
+				const bgGranted = bg.status === 'granted' || bg.granted;
+				// Check scope directly on bg object (not ios.scope) - this is the correct way for iOS
+				const iosScopeAlways = (bg as any).scope === 'always';
+				
+				hasLocationAlways = fgGranted && bgGranted && iosScopeAlways;
+			}
 			
-			hasLocationAlways = fgGranted && bgGranted && iosScopeAlways;
-		}
-		
-		setLocationAlways(hasLocationAlways);
-		
-		// Check GPS enabled - for both Android and iOS
-		if (Platform.OS === "android") {
-			const providers = await Location.getProviderStatusAsync();
-			const gpsAvailable = Boolean(providers.gpsAvailable);
-			setGpsEnabled(gpsAvailable);
+			setLocationAlways(hasLocationAlways);
+			
+			// Check GPS enabled - for both Android and iOS
+			if (Platform.OS === "android") {
+				const providers = await Location.getProviderStatusAsync();
+				const gpsAvailable = Boolean(providers.gpsAvailable);
+				setGpsEnabled(gpsAvailable);
+			} else {
+				// For iOS, check if Location Services are enabled globally
+				const providers = await Location.getProviderStatusAsync();
+				const locationServicesEnabled = Boolean(providers.locationServicesEnabled);
+				setGpsEnabled(locationServicesEnabled);
+			}
+			
+			// Check battery optimization status - only for Android
+			if (Platform.OS === "android") {
+				const batteryOptimized = await checkBatteryOptimizationStatus();
+				setOpenBatterySettings(batteryOptimized);
+			} else {
+				// For iOS, battery optimization doesn't exist
+				setOpenBatterySettings(true);
+			}
 		} else {
-			// For iOS, check if Location Services are enabled globally
-			const providers = await Location.getProviderStatusAsync();
-			const locationServicesEnabled = Boolean(providers.locationServicesEnabled);
-			setGpsEnabled(locationServicesEnabled);
-		}
-		
-		// Check notifications
-		const notif = await Notifications.getPermissionsAsync();
-		setNotificationsAllowed(notif.granted);
-		
-		// Check battery optimization status - only for Android
-		if (Platform.OS === "android") {
-			const batteryOptimized = await checkBatteryOptimizationStatus();
-			setOpenBatterySettings(batteryOptimized);
-		} else {
-			// For iOS, battery optimization doesn't exist
+			// For non-DRIVER users, set location-related states to true (not required)
+			setLocationAlways(true);
+			setGpsEnabled(true);
 			setOpenBatterySettings(true);
 		}
-	}, []);
+		
+		// Check notifications - for all users
+		const notif = await Notifications.getPermissionsAsync();
+		setNotificationsAllowed(notif.granted);
+	}, [authState.user?.role]);
 	
 	const requestLocation = async () => {
 		try {
@@ -231,16 +249,17 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
 	
   const effectiveAutoStart = isMiuiBrand ? true : autoStartEnabled;
 
-	// For iOS, check location, notifications, and GPS (Location Services)
-	// For Android, check all settings including GPS, battery and autostart
-	// Only require battery and autostart if they are available on this device
-	const allGranted = Platform.OS === "ios"
-		? locationAlways && notificationsAllowed && gpsEnabled
-		: locationAlways &&
-		  notificationsAllowed &&
-		  gpsEnabled &&
-		  (batteryAvailable ? batterySettings : true) && // If unavailable, consider it granted
-		  (autoStartAvailable ? effectiveAutoStart : true); // If unavailable, consider it granted
+	// For non-DRIVER users, only check notifications
+	// For DRIVER users, check all permissions
+	const allGranted = isDriver
+		? (Platform.OS === "ios"
+			? locationAlways && notificationsAllowed && gpsEnabled
+			: locationAlways &&
+			  notificationsAllowed &&
+			  gpsEnabled &&
+			  (batteryAvailable ? batterySettings : true) && // If unavailable, consider it granted
+			  (autoStartAvailable ? effectiveAutoStart : true)) // If unavailable, consider it granted
+		: notificationsAllowed; // For non-DRIVER, only notifications are required
 	
 	return (
 		<View style={[styles.container, { paddingTop: insets.top }]}>
@@ -250,38 +269,81 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
       >
         <Text style={styles.title}>Mandatory system settings</Text>
         
-        {/* Autostart Warning - Show for specific brands */}
-        {Platform.OS === "android" && requiresAutostartWarningState && (
-          <View style={styles.autostartWarning}>
-            <Text style={styles.autostartWarningText}>
-              For the app to work properly, you must enable autostart in background mode in settings
-            </Text>
-          </View>
+        {/* For DRIVER users: show all settings */}
+        {isDriver && (
+          <>
+            {/* Autostart Warning - Show for specific brands (only for DRIVER) */}
+            {Platform.OS === "android" && requiresAutostartWarningState && (
+              <View style={styles.autostartWarning}>
+                <Text style={styles.autostartWarningText}>
+                  For the app to work properly, you must enable autostart in background mode in settings
+                </Text>
+              </View>
+            )}
+            
+            {/* GPS Enabled - Show for both Android and iOS (First in list) */}
+            <TouchableOpacity
+              style={[styles.block, gpsEnabled && styles.completeBlock]}
+              onPress={gotoGpsSettings}
+            >
+              <Text style={styles.label}>Turn on GPS</Text>
+              <Text style={styles.status}>
+                {gpsEnabled ? "✓ Enabled" : "Open Settings"}
+              </Text>
+            </TouchableOpacity>
+            
+            {/* Location Always */}
+            <TouchableOpacity
+              style={[styles.block, locationAlways && styles.completeBlock]}
+              onPress={requestLocation}
+            >
+              <Text style={styles.label}>Always allow location detection</Text>
+              <Text style={styles.status}>
+                {locationAlways ? "✓ Allowed" : "Click to allow"}
+              </Text>
+            </TouchableOpacity>
+            
+            {/* Battery Optimization - Only show if available on this device */}
+            {Platform.OS === "android" && batteryAvailable && (
+              <TouchableOpacity
+                style={[styles.block, batterySettings && styles.completeBlock]}
+                onPress={handleBattery}
+              >
+                <Text style={styles.label}>Remove battery limitation</Text>
+                <Text style={styles.status}>Necessary for stable operation</Text>
+              </TouchableOpacity>
+            )}
+            
+            {/* Auto Start - Only show if available on this device */}
+            {Platform.OS === "android" && autoStartAvailable && (
+              <View>
+                {/* For non‑Xiaomi/Redmi/POCO devices show interactive auto‑start option */}
+                {!isMiuiBrand && (
+                  <TouchableOpacity
+                    style={[styles.block, autoStartEnabled && styles.completeBlock]}
+                    onPress={handleAutoStartPress}
+                  >
+                    <Text style={styles.label}>Allow background autostart (required for stable operation)</Text>
+                    <Text style={styles.status}>
+                      {autoStartEnabled ? "✓ Marked as enabled" : "Click and enable autorun."}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* Xiaomi / Redmi / POCO specific manual instructions only */}
+                {isMiuiBrand && (
+                  <Text style={styles.hint}>
+                    📌 On Xiaomi / Redmi / POCO phones:{"\n"}
+                    Open → Settings → Applications → Autostart →{"\n"}
+                    Find the Odysseia app and enable it
+                  </Text>
+                )}
+              </View>
+            )}
+          </>
         )}
         
-        {/* GPS Enabled - Show for both Android and iOS (First in list) */}
-        <TouchableOpacity
-          style={[styles.block, gpsEnabled && styles.completeBlock]}
-          onPress={gotoGpsSettings}
-        >
-          <Text style={styles.label}>Turn on GPS</Text>
-          <Text style={styles.status}>
-            {gpsEnabled ? "✓ Enabled" : "Open Settings"}
-          </Text>
-        </TouchableOpacity>
-        
-        {/* Location Always */}
-        <TouchableOpacity
-          style={[styles.block, locationAlways && styles.completeBlock]}
-          onPress={requestLocation}
-        >
-          <Text style={styles.label}>Always allow location detection</Text>
-          <Text style={styles.status}>
-            {locationAlways ? "✓ Allowed" : "Click to allow"}
-          </Text>
-        </TouchableOpacity>
-        
-        {/* Notifications */}
+        {/* Notifications - Show for all users */}
         <TouchableOpacity
           style={[styles.block, notificationsAllowed && styles.completeBlock]}
           onPress={requestNotifications}
@@ -291,44 +353,6 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
             {notificationsAllowed ? "✓ Allowed" : "Click to allow"}
           </Text>
         </TouchableOpacity>
-        
-        {/* Battery Optimization - Only show if available on this device */}
-        {Platform.OS === "android" && batteryAvailable && (
-          <TouchableOpacity
-            style={[styles.block, batterySettings && styles.completeBlock]}
-            onPress={handleBattery}
-          >
-            <Text style={styles.label}>Remove battery limitation</Text>
-            <Text style={styles.status}>Necessary for stable operation</Text>
-          </TouchableOpacity>
-        )}
-        
-        {/* Auto Start - Only show if available on this device */}
-        {Platform.OS === "android" && autoStartAvailable && (
-          <View>
-            {/* For non‑Xiaomi/Redmi/POCO devices show interactive auto‑start option */}
-            {!isMiuiBrand && (
-              <TouchableOpacity
-                style={[styles.block, autoStartEnabled && styles.completeBlock]}
-                onPress={handleAutoStartPress}
-              >
-                <Text style={styles.label}>Allow background autostart (required for stable operation)</Text>
-                <Text style={styles.status}>
-                  {autoStartEnabled ? "✓ Marked as enabled" : "Click and enable autorun."}
-                </Text>
-              </TouchableOpacity>
-            )}
-
-            {/* Xiaomi / Redmi / POCO specific manual instructions only */}
-            {isMiuiBrand && (
-              <Text style={styles.hint}>
-                📌 On Xiaomi / Redmi / POCO phones:{"\n"}
-                Open → Settings → Applications → Autostart →{"\n"}
-                Find the Odysseia app and enable it
-              </Text>
-            )}
-          </View>
-        )}
         
         <TouchableOpacity
           style={[styles.button, !allGranted && styles.buttonDisabled]}

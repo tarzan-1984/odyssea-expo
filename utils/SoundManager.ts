@@ -1,4 +1,5 @@
 import { Audio } from 'expo-av';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 let isInitialized = false;
 let soundObject: Audio.Sound | null = null;
@@ -23,8 +24,28 @@ async function ensureInitialized(): Promise<void> {
 	isInitialized = true;
 }
 
+async function areNotificationsEnabled(): Promise<boolean> {
+	try {
+		const settingsStr = await AsyncStorage.getItem('@odyssea_app_settings');
+		if (settingsStr) {
+			const settings = JSON.parse(settingsStr);
+			return settings.notificationsEnabled !== false; // Default to true if not set
+		}
+		return true; // Default to enabled
+	} catch {
+		return true; // Default to enabled on error
+	}
+}
+
 export async function playIncomingMessageSound(): Promise<void> {
 	try {
+		// Check if notifications are enabled in settings
+		const enabled = await areNotificationsEnabled();
+		if (!enabled) {
+			if (__DEV__) console.log('[SoundManager] Notifications disabled in settings, skipping sound');
+			return;
+		}
+
 		if (__DEV__) console.log('[SoundManager] playIncomingMessageSound() called');
 		await ensureInitialized();
 		if (__DEV__) console.log('[SoundManager] after ensureInitialized');

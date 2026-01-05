@@ -4,6 +4,7 @@ import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getActiveChatRoomId } from '@/services/ActiveChatService';
 import { useChatStore } from '@/stores/chatStore';
 import { getChatAvatarSource, getChatDisplayName } from '@/utils/chatAvatarUtils';
@@ -31,10 +32,36 @@ function getNotificationAvatar(chatRoomId: string | undefined, currentUserId?: s
   }
 }
 
+async function areNotificationsEnabled(): Promise<boolean> {
+	try {
+		const settingsStr = await AsyncStorage.getItem('@odyssea_app_settings');
+		if (settingsStr) {
+			const settings = JSON.parse(settingsStr);
+			return settings.notificationsEnabled !== false; // Default to true if not set
+		}
+		return true; // Default to enabled
+	} catch {
+		return true; // Default to enabled on error
+	}
+}
+
 // Foreground behavior: show alert + play sound (newer SDKs also require banner/list on iOS)
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
     try {
+      // Check if notifications are enabled in settings
+      const notificationsEnabled = await areNotificationsEnabled();
+      if (!notificationsEnabled) {
+        console.log('[NotificationsService] Notifications disabled in settings, suppressing notification');
+        return {
+          shouldPlaySound: false,
+          shouldSetBadge: false,
+          shouldShowBanner: false,
+          shouldShowList: false,
+          shouldShowAlert: false,
+        };
+      }
+
       const data = notification?.request?.content?.data as any;
       const incomingChatId = data?.chatRoomId as string | undefined;
       const activeId = getActiveChatRoomId();

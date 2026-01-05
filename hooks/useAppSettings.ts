@@ -5,10 +5,12 @@ const SETTINGS_STORAGE_KEY = '@odyssea_app_settings';
 
 export interface AppSettings {
   automaticLocationSharing: boolean;
+  notificationsEnabled: boolean; // New setting
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
   automaticLocationSharing: true, // Active by default
+  notificationsEnabled: true, // Notifications enabled by default
 };
 
 export const useAppSettings = () => {
@@ -69,6 +71,14 @@ export const useAppSettings = () => {
     [saveSettings]
   );
 
+  // Update notifications enabled
+  const setNotificationsEnabled = useCallback(
+    async (enabled: boolean) => {
+      await saveSettings({ notificationsEnabled: enabled });
+    },
+    [saveSettings]
+  );
+
   // Load settings on mount
   useEffect(() => {
     loadSettings();
@@ -79,6 +89,8 @@ export const useAppSettings = () => {
     isLoading,
     automaticLocationSharing: settings.automaticLocationSharing,
     setAutomaticLocationSharing,
+    notificationsEnabled: settings.notificationsEnabled,
+    setNotificationsEnabled,
     updateSettings: saveSettings,
   };
 };

@@ -3,6 +3,9 @@ import { secureStorage } from '@/utils/secureStorage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authApi, CheckEmailResponse, LoginResponse, OtpVerificationResponse } from '@/services/authApi';
 import { registerForPushNotificationsAsync, registerPushTokenToBackend } from '@/services/NotificationsService';
+import { syncDriversForMapAfterLogin } from '@/services/DriversMapService';
+import * as Location from 'expo-location';
+import * as Notifications from 'expo-notifications';
 
 // User interface
 export interface User {
@@ -218,6 +221,98 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           password: null, // Clear password after successful auth
           error: null,
         }));
+
+        // Request location permissions immediately after successful login
+        // Only for DRIVER role users
+        const userRole = user?.role?.trim().toUpperCase();
+        if (userRole === 'DRIVER') {
+          console.log('📍 [AuthContext] User is DRIVER, requesting location permissions...');
+          
+          // Request permissions with a small delay to ensure UI is ready
+          setTimeout(async () => {
+            try {
+              // Step 1: Request foreground permission first
+              const foregroundStatus = await Location.getForegroundPermissionsAsync();
+              if (foregroundStatus.status !== 'granted') {
+                console.log('📍 [AuthContext] Requesting foreground location permission...');
+                const { status: foregroundResult } = await Location.requestForegroundPermissionsAsync();
+                
+                if (foregroundResult === 'granted') {
+                  console.log('✅ [AuthContext] Foreground permission granted, requesting background permission...');
+                  
+                  // Step 2: Immediately request background permission (Always)
+                  // This will show the second dialog asking for "Always" permission
+                  const { status: backgroundResult } = await Location.requestBackgroundPermissionsAsync();
+                  
+                  if (backgroundResult === 'granted') {
+                    console.log('✅ [AuthContext] Background permission (Always) granted');
+                  } else {
+                    console.log('⚠️ [AuthContext] Background permission not granted:', backgroundResult);
+                  }
+                } else {
+                  console.log('⚠️ [AuthContext] Foreground permission not granted:', foregroundResult);
+                }
+              } else {
+                // Foreground already granted, check and request background
+                console.log('✅ [AuthContext] Foreground permission already granted, checking background...');
+                const backgroundStatus = await Location.getBackgroundPermissionsAsync();
+                
+                if (backgroundStatus.status !== 'granted') {
+                  console.log('📍 [AuthContext] Requesting background permission (Always)...');
+                  const { status: backgroundResult } = await Location.requestBackgroundPermissionsAsync();
+                  
+                  if (backgroundResult === 'granted') {
+                    console.log('✅ [AuthContext] Background permission (Always) granted');
+                  } else {
+                    console.log('⚠️ [AuthContext] Background permission not granted:', backgroundResult);
+                  }
+                } else {
+                  console.log('✅ [AuthContext] Background permission (Always) already granted');
+                }
+              }
+            } catch (permissionError) {
+              console.error('❌ [AuthContext] Error requesting location permissions:', permissionError);
+            }
+          }, 500); // Small delay to ensure UI is ready
+        } else {
+          console.log('⏸️ [AuthContext] User is not DRIVER, skipping location permission request');
+          console.log('🗺️ [AuthContext] Starting drivers sync for map (non-DRIVER user)...');
+
+          // Start background drivers sync for non-DRIVER users.
+          // This will fetch drivers for map with pagination and cache them in AsyncStorage.
+          setTimeout(() => {
+            console.log('🗺️ [AuthContext] Executing drivers sync after 2s delay...');
+            syncDriversForMapAfterLogin(accessToken)
+              .then(() => {
+                console.log('✅ [AuthContext] Drivers sync completed successfully');
+              })
+              .catch((error) => {
+                console.error('❌ [AuthContext] Failed to sync drivers for map after login:', error);
+              });
+          }, 2000);
+        }
+
+        // Request notification permissions for ALL users (any role)
+        // This should happen immediately after login
+        console.log('🔔 [AuthContext] Requesting notification permissions for all users...');
+        setTimeout(async () => {
+          try {
+            const notificationStatus = await Notifications.getPermissionsAsync();
+            if (notificationStatus.status !== 'granted') {
+              console.log('🔔 [AuthContext] Requesting notification permission...');
+              const { status } = await Notifications.requestPermissionsAsync();
+              if (status === 'granted') {
+                console.log('✅ [AuthContext] Notification permission granted');
+              } else {
+                console.log('⚠️ [AuthContext] Notification permission not granted:', status);
+              }
+            } else {
+              console.log('✅ [AuthContext] Notification permission already granted');
+            }
+          } catch (notificationError) {
+            console.error('❌ [AuthContext] Error requesting notification permissions:', notificationError);
+          }
+        }, 300); // Small delay to ensure UI is ready
 
         // Register push token after successful authentication
         try {

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import * as Sharing from 'expo-sharing';
 import { fileLogger } from '@/utils/fileLogger';
-import { colors } from '@/lib';
+import { colors, fonts } from '@/lib';
 import { rem, fp } from '@/lib';
 
 export default function LogsSettings() {
@@ -89,64 +89,91 @@ export default function LogsSettings() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Logging</Text>
+      <View style={styles.headerRow}>
+        <Text style={styles.title}>Logging</Text>
+        <View style={styles.buttonsRow}>
+          <TouchableOpacity
+            style={[styles.button, styles.shareButton, isLoading && styles.buttonDisabled]}
+            onPress={handleShareLogs}
+            disabled={isLoading}
+          >
+            {isLoading ? (
+              <ActivityIndicator color={colors.primary.white} size="small" />
+            ) : (
+              <Text style={styles.buttonText}>Share logs</Text>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.button, styles.clearButton, isLoading && styles.buttonDisabled]}
+            onPress={handleClearLogs}
+            disabled={isLoading}
+          >
+            {isLoading ? (
+              <ActivityIndicator color={colors.primary.white} size="small" />
+            ) : (
+              <Text style={styles.buttonText}>Clear logs</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </View>
       
       <View style={styles.infoContainer}>
         <Text style={styles.infoText}>Log file size: {formatFileSize(fileSize)}</Text>
       </View>
-
-      <TouchableOpacity
-        style={[styles.button, styles.shareButton, isLoading && styles.buttonDisabled]}
-        onPress={handleShareLogs}
-        disabled={isLoading}
-      >
-        {isLoading ? (
-          <ActivityIndicator color={colors.primary.white} />
-        ) : (
-          <Text style={styles.buttonText}>Share logs</Text>
-        )}
-      </TouchableOpacity>
-
-      <TouchableOpacity
-        style={[styles.button, styles.clearButton, isLoading && styles.buttonDisabled]}
-        onPress={handleClearLogs}
-        disabled={isLoading}
-      >
-        {isLoading ? (
-          <ActivityIndicator color={colors.primary.white} />
-        ) : (
-          <Text style={styles.buttonText}>Clear logs</Text>
-        )}
-      </TouchableOpacity>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    padding: rem(20),
+    padding: rem(16),
+    backgroundColor: 'white',
+    marginBottom: rem(12),
+    borderRadius: rem(8),
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: rem(12),
   },
   title: {
+    fontFamily: fonts['700'],
     fontSize: fp(18),
-    fontWeight: 'bold',
-    marginBottom: rem(15),
-    color: colors.primary.violet,
+    color: colors.primary.blue,
+    flex: 1,
+  },
+  buttonsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rem(8),
   },
   infoContainer: {
-    marginBottom: rem(15),
-    padding: rem(10),
-    backgroundColor: colors.primary.white,
-    borderRadius: rem(8),
+    marginTop: 0,
+    marginBottom: 0,
+    padding: 0,
+    backgroundColor: 'transparent',
   },
   infoText: {
     fontSize: fp(14),
     color: colors.primary.gray,
   },
   button: {
-    padding: rem(15),
+    paddingVertical: rem(10),
+    paddingHorizontal: rem(16),
     borderRadius: rem(8),
     alignItems: 'center',
-    marginBottom: rem(10),
+    justifyContent: 'center',
+    minWidth: rem(90),
   },
   shareButton: {
     backgroundColor: colors.primary.blue,
@@ -158,8 +185,8 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   buttonText: {
-    color: colors.primary.white,
-    fontSize: fp(16),
+    color: '#FFFFFF',
+    fontSize: fp(13),
     fontWeight: '600',
   },
 });

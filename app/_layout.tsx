@@ -359,12 +359,22 @@ function RootLayoutNav() {
   }, [authState.isAuthenticated, segments, isReady, router]);
 
   // Request permission when needed (if not already requested)
-  // This ensures the permission appears in app settings even if user denies
+  // This is a fallback in case permissions were not requested during login
+  // Only for DRIVER role users
   useEffect(() => {
     if (!isReady) return;
     
+    // Check user role - only request permissions for DRIVER
+    const userRole = authState.user?.role?.trim().toUpperCase();
+    if (userRole !== 'DRIVER') {
+      console.log('⏸️ [RootLayoutNav] User is not DRIVER, skipping location permission request...');
+      return;
+    }
+    
     const shouldShowModal = isLocationEnabled === false || backgroundPermissionGranted === false;
     
+    // Only request if permissions were not already requested during login
+    // This is a fallback in case login flow didn't request permissions
     if (shouldShowModal && !hasRequestedPermissionRef.current) {
       const requestPermission = async () => {
         try {
@@ -376,9 +386,15 @@ function RootLayoutNav() {
           if (!foreground) {
             hasRequestedPermissionRef.current = true;
             await requestForegroundPermission();
+            // Immediately request background after foreground
             await requestBackgroundPermission();
             await checkBackgroundPermission();
           } else {
+            // Check if background is needed
+            const backgroundStatus = await Location.getBackgroundPermissionsAsync();
+            if (backgroundStatus.status !== 'granted') {
+              await requestBackgroundPermission();
+            }
             // Permission was already requested (granted or denied)
             // Entry should already exist in app settings
             hasRequestedPermissionRef.current = true;
@@ -391,7 +407,7 @@ function RootLayoutNav() {
       
       requestPermission();
     }
-  }, [isReady, isLocationEnabled, backgroundPermissionGranted, requestForegroundPermission, requestBackgroundPermission, checkBackgroundPermission]);
+  }, [isReady, isLocationEnabled, backgroundPermissionGranted, authState.user?.role, requestForegroundPermission, requestBackgroundPermission, checkBackgroundPermission]);
 
   // Show modal if location services are disabled or background access is not granted
   const FORCE_SHOW_MODAL = false;

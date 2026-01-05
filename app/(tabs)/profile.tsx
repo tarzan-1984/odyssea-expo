@@ -21,6 +21,8 @@ export default function ProfileScreen() {
   const router = useRouter();
   const { authState, updateUserLocation, clearUserLocation, updateUserAvatar, resetAuthState } = useAuth();
   const user = authState.user;
+  const userRole = user?.role?.trim().toUpperCase();
+  const isDriver = userRole === 'DRIVER';
   const firstName = user?.firstName || 'User';
   const lastName = user?.lastName || '';
   const initials = `${firstName[0]}${lastName ? lastName[0] : firstName[0]}`.toUpperCase();
@@ -249,31 +251,33 @@ export default function ProfileScreen() {
                     </View>
                   </View>
                   
-                  <View style={styles.infoSection}>
-                    <Text style={styles.infoSectionTitle}>Emergency contact</Text>
-                    
-                    <View style={styles.infoSectionWrap}>
-                      <View style={styles.infoItem} >
-                        <Text style={styles.infoTitle}>Name</Text>
-                        <Text style={styles.infoValue}>{userDetails?.organized_data?.contact?.emergency_contact?.name || '-'}</Text>
+                  {isDriver && (
+                    <>
+                      <View style={styles.infoSection}>
+                        <Text style={styles.infoSectionTitle}>Emergency contact</Text>
+                        
+                        <View style={styles.infoSectionWrap}>
+                          <View style={styles.infoItem} >
+                            <Text style={styles.infoTitle}>Name</Text>
+                            <Text style={styles.infoValue}>{userDetails?.organized_data?.contact?.emergency_contact?.name || '-'}</Text>
+                          </View>
+                          
+                          <View style={styles.infoItem} >
+                            <Text style={styles.infoTitle}>Phone</Text>
+                            <Text style={styles.infoValue}>{userDetails?.organized_data?.contact?.emergency_contact?.phone || '-'}</Text>
+                          </View>
+                          
+                          <View style={styles.infoItem} >
+                            <Text style={styles.infoTitle}>Relation</Text>
+                            <Text style={styles.infoValue}>{userDetails?.organized_data?.contact?.emergency_contact?.relation || '-'}</Text>
+                          </View>
+                        </View>
                       </View>
                       
-                      <View style={styles.infoItem} >
-                        <Text style={styles.infoTitle}>Phone</Text>
-                        <Text style={styles.infoValue}>{userDetails?.organized_data?.contact?.emergency_contact?.phone || '-'}</Text>
-                      </View>
-                      
-                      <View style={styles.infoItem} >
-                        <Text style={styles.infoTitle}>Relation</Text>
-                        <Text style={styles.infoValue}>{userDetails?.organized_data?.contact?.emergency_contact?.relation || '-'}</Text>
-                      </View>
-                    </View>
-                  </View>
-                  
-                  <View style={styles.infoSection}>
-                    <Text style={styles.infoSectionTitle}>Vehicle</Text>
-                    
-                    <View style={styles.infoSectionWrap}>
+                      <View style={styles.infoSection}>
+                        <Text style={styles.infoSectionTitle}>Vehicle</Text>
+                        
+                        <View style={styles.infoSectionWrap}>
                       <View style={styles.infoItem} >
                         <Text style={styles.infoTitle}>Type</Text>
                         <Text style={styles.infoValue}>{userDetails?.organized_data?.vehicle?.type?.label || '-'}</Text>
@@ -312,122 +316,124 @@ export default function ProfileScreen() {
                       <View style={styles.infoItem} >
                         <Text style={styles.infoTitle}>Vin</Text>
                         <Text style={styles.infoValue}>{userDetails?.organized_data?.vehicle?.vin || '-'}</Text>
-                      </View>
-                    </View>
-                  </View>
-                  
-                  <View style={styles.infoSection}>
-                    <Text style={styles.infoSectionTitle}>Equipment</Text>
-                    
-                    <View style={styles.infoSectionWrap}>
-                      {userDetails?.organized_data?.vehicle?.equipment?.side_door &&
-                        <View style={styles.infoItem} >
-                          <Text style={styles.infoTitle}>Side door</Text>
                         </View>
-                      }
-                      
-                      {userDetails?.organized_data?.vehicle?.vehicle?.equipment?.load_bars &&
-                        <View style={styles.infoItem} >
-                          <Text style={styles.infoTitle}>Load bars</Text>
                         </View>
-                      }
-                      
-                      {userDetails?.organized_data?.vehicle?.equipment?.printer &&
-                        <View style={styles.infoItem} >
-                          <Text style={styles.infoTitle}>Printer</Text>
-                        </View>
-                      }
-                      
-                      {userDetails?.organized_data?.vehicle?.equipment?.sleeper &&
-                        <View style={styles.infoItem} >
-                          <Text style={styles.infoTitle}>Sleeper</Text>
-                        </View>
-                      }
-                      
-                      {userDetails?.organized_data?.vehicle?.equipment?.e_tracks  &&
-                        <View style={styles.infoItem} >
-                          <Text style={styles.infoTitle}>E-tracks</Text>
-                        </View>
-                      }
-                      
-                      {userDetails?.organized_data?.vehicle?.equipment?.pallet_jack  &&
-                        <View style={styles.infoItem} >
-                          <Text style={styles.infoTitle}>Pallet jack</Text>
-                        </View>
-                      }
-                      
-                      {userDetails?.organized_data?.vehicle?.equipment?.lift_gate  &&
-                        <View style={styles.infoItem} >
-                          <Text style={styles.infoTitle}>Lift gate</Text>
-                        </View>
-                      }
-                      
-                      {userDetails?.organized_data?.vehicle?.equipment?.dolly &&
-                        <View style={styles.infoItem} >
-                          <Text style={styles.infoTitle}>Dolly</Text>
-                        </View>
-                      }
-                      
-                      {userDetails?.organized_data?.vehicle?.equipment?.ramp &&
-                        <View style={styles.infoItem} >
-                          <Text style={styles.infoTitle}>Ramp</Text>
-                        </View>
-                      }
-                    
-                    </View>
-                  </View>
-                  
-                  <View style={styles.infoSection}>
-                    <Text style={styles.infoSectionTitle}>Statistics</Text>
-                    
-                    <View style={styles.infoSectionWrap}>
-                      <View style={styles.infoItem} >
-                        <Text style={styles.infoTitle}>All notifications</Text>
-                        <Text style={styles.infoValue}>{userDetails?.organized_data?.statistics?.notifications?.all_notifications || '-'}</Text>
                       </View>
                       
-                      <View style={styles.infoItem} >
-                        <Text style={styles.infoTitle}>Total notifications</Text>
-                        <Text style={styles.infoValue}>{userDetails?.organized_data?.statistics?.notifications?.total_count || '-'}</Text>
+                      <View style={styles.infoSection}>
+                        <Text style={styles.infoSectionTitle}>Equipment</Text>
+                        
+                        <View style={styles.infoSectionWrap}>
+                          {userDetails?.organized_data?.vehicle?.equipment?.side_door &&
+                            <View style={styles.infoItem} >
+                              <Text style={styles.infoTitle}>Side door</Text>
+                            </View>
+                          }
+                          
+                          {userDetails?.organized_data?.vehicle?.vehicle?.equipment?.load_bars &&
+                            <View style={styles.infoItem} >
+                              <Text style={styles.infoTitle}>Load bars</Text>
+                            </View>
+                          }
+                          
+                          {userDetails?.organized_data?.vehicle?.equipment?.printer &&
+                            <View style={styles.infoItem} >
+                              <Text style={styles.infoTitle}>Printer</Text>
+                            </View>
+                          }
+                          
+                          {userDetails?.organized_data?.vehicle?.equipment?.sleeper &&
+                            <View style={styles.infoItem} >
+                              <Text style={styles.infoTitle}>Sleeper</Text>
+                            </View>
+                          }
+                          
+                          {userDetails?.organized_data?.vehicle?.equipment?.e_tracks  &&
+                            <View style={styles.infoItem} >
+                              <Text style={styles.infoTitle}>E-tracks</Text>
+                            </View>
+                          }
+                          
+                          {userDetails?.organized_data?.vehicle?.equipment?.pallet_jack  &&
+                            <View style={styles.infoItem} >
+                              <Text style={styles.infoTitle}>Pallet jack</Text>
+                            </View>
+                          }
+                          
+                          {userDetails?.organized_data?.vehicle?.equipment?.lift_gate  &&
+                            <View style={styles.infoItem} >
+                              <Text style={styles.infoTitle}>Lift gate</Text>
+                            </View>
+                          }
+                          
+                          {userDetails?.organized_data?.vehicle?.equipment?.dolly &&
+                            <View style={styles.infoItem} >
+                              <Text style={styles.infoTitle}>Dolly</Text>
+                            </View>
+                          }
+                          
+                          {userDetails?.organized_data?.vehicle?.equipment?.ramp &&
+                            <View style={styles.infoItem} >
+                              <Text style={styles.infoTitle}>Ramp</Text>
+                            </View>
+                          }
+                        
+                        </View>
                       </View>
                       
-                      <View style={styles.infoItem} >
-                        <Text style={styles.infoTitle}>Average rating</Text>
-                        <Text style={styles.infoValue}>{userDetails?.organized_data?.statistics?.rating?.average_rating || '-'}</Text>
+                      <View style={styles.infoSection}>
+                        <Text style={styles.infoSectionTitle}>Statistics</Text>
+                        
+                        <View style={styles.infoSectionWrap}>
+                          <View style={styles.infoItem} >
+                            <Text style={styles.infoTitle}>All notifications</Text>
+                            <Text style={styles.infoValue}>{userDetails?.organized_data?.statistics?.notifications?.all_notifications || '-'}</Text>
+                          </View>
+                          
+                          <View style={styles.infoItem} >
+                            <Text style={styles.infoTitle}>Total notifications</Text>
+                            <Text style={styles.infoValue}>{userDetails?.organized_data?.statistics?.notifications?.total_count || '-'}</Text>
+                          </View>
+                          
+                          <View style={styles.infoItem} >
+                            <Text style={styles.infoTitle}>Average rating</Text>
+                            <Text style={styles.infoValue}>{userDetails?.organized_data?.statistics?.rating?.average_rating || '-'}</Text>
+                          </View>
+                          
+                          <View style={styles.infoItem} >
+                            <Text style={styles.infoTitle}>Total ratings</Text>
+                            <Text style={styles.infoValue}>{userDetails?.organized_data?.statistics?.rating?.total_ratings || '-'}</Text>
+                          </View>
+                        </View>
                       </View>
                       
-                      <View style={styles.infoItem} >
-                        <Text style={styles.infoTitle}>Total ratings</Text>
-                        <Text style={styles.infoValue}>{userDetails?.organized_data?.statistics?.rating?.total_ratings || '-'}</Text>
+                      <View style={styles.infoSection}>
+                        <Text style={styles.infoSectionTitle}>Current location</Text>
+                        
+                        <View style={styles.infoSectionWrap}>
+                          <View style={styles.infoItem} >
+                            <Text style={styles.infoTitle}>City</Text>
+                            <Text style={styles.infoValue}>{userDetails?.organized_data?.current_location.city || '-'}</Text>
+                          </View>
+                          
+                          <View style={styles.infoItem} >
+                            <Text style={styles.infoTitle}>Coordinates (lat / lng)</Text>
+                            <Text style={styles.infoValue}>{userDetails?.organized_data?.current_location.coordinates.lat || '-'} / {userDetails?.organized_data?.current_location.coordinates.lng || '-'}</Text>
+                          </View>
+                          
+                          <View style={styles.infoItem} >
+                            <Text style={styles.infoTitle}>State</Text>
+                            <Text style={styles.infoValue}>{userDetails?.organized_data?.current_location.state || '-'}</Text>
+                          </View>
+                          
+                          <View style={styles.infoItem} >
+                            <Text style={styles.infoTitle}>Zipcode</Text>
+                            <Text style={styles.infoValue}>{userDetails?.organized_data?.current_location.zipcode || '-'}</Text>
+                          </View>
+                        </View>
                       </View>
-                    </View>
-                  </View>
-                  
-                  <View style={styles.infoSection}>
-                    <Text style={styles.infoSectionTitle}>Current location</Text>
-                    
-                    <View style={styles.infoSectionWrap}>
-                      <View style={styles.infoItem} >
-                        <Text style={styles.infoTitle}>City</Text>
-                        <Text style={styles.infoValue}>{userDetails?.organized_data?.current_location.city || '-'}</Text>
-                      </View>
-                      
-                      <View style={styles.infoItem} >
-                        <Text style={styles.infoTitle}>Coordinates (lat / lng)</Text>
-                        <Text style={styles.infoValue}>{userDetails?.organized_data?.current_location.coordinates.lat || '-'} / {userDetails?.organized_data?.current_location.coordinates.lng || '-'}</Text>
-                      </View>
-                      
-                      <View style={styles.infoItem} >
-                        <Text style={styles.infoTitle}>State</Text>
-                        <Text style={styles.infoValue}>{userDetails?.organized_data?.current_location.state || '-'}</Text>
-                      </View>
-                      
-                      <View style={styles.infoItem} >
-                        <Text style={styles.infoTitle}>Zipcode</Text>
-                        <Text style={styles.infoValue}>{userDetails?.organized_data?.current_location.zipcode || '-'}</Text>
-                      </View>
-                    </View>
-                  </View>
+                    </>
+                  )}
                 </>
               ) : null}
             </View>
@@ -561,7 +567,7 @@ const styles = StyleSheet.create({
   screenTitle: {
     color: colors.neutral.white,
     fontFamily: fonts["700"],
-    fontSize: fp(20),
+    fontSize: fp(24),
     textTransform: 'capitalize',
   },
   screenWrap: {
@@ -595,7 +601,7 @@ const styles = StyleSheet.create({
   logoutText: {
     color: colors.neutral.white,
     fontFamily: fonts["700"],
-    fontSize: fp(12),
+    fontSize: fp(16),
   },
   logoutOverlay: {
     position: 'absolute',
