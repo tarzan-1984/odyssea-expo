@@ -4,6 +4,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image, Alert, ActionSheetIOS, Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+import { openLocalFile } from '@/utils/fileOpener';
 import { colors, fonts, fp, rem } from '@/lib';
 import FileIcon from '@/icons/FileIcon';
 import FileViewerModal from '@/components/modals/FileViewerModal';
@@ -53,26 +54,16 @@ export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender,
 	const [downloadedFileUri, setDownloadedFileUri] = useState<string | null>(null);
 
 	const handleOpenFile = async (fileUri: string) => {
-		// For PDF and DOCX, open with system app
-		if (isPdf || ext === 'doc' || ext === 'docx') {
-			try {
-				const { openLocalFile } = await import('@/utils/fileOpener');
-				await openLocalFile(fileUri, name);
-			} catch (error) {
-				console.error('Failed to open file with system app:', error);
-				Alert.alert(
-					'Error',
-					'Failed to open file. Please try using Share to open it in another app.',
-					[{ text: 'OK' }]
-				);
-			}
-		} else if (isText || isImage) {
-			// For text files and images, open in viewer modal
-			setDownloadedFileUri(fileUri);
-			setViewerVisible(true);
-		} else {
-			// For other files, use Share Sheet which has "Open in..." option
-			await handleShare(fileUri);
+		// For all files (except images and PDF which open in modal), open with system app
+		try {
+			await openLocalFile(fileUri, name);
+		} catch (error) {
+			console.error('Failed to open file with system app:', error);
+			Alert.alert(
+				'Error',
+				'Failed to open file. Please try using Share to open it in another app.',
+				[{ text: 'OK' }]
+			);
 		}
 	};
 
@@ -116,8 +107,8 @@ export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender,
 			if (downloadResult.status === 200) {
 				const downloadedUri = downloadResult.uri;
 				
-				// For images, directly open in viewer modal (which has Share button)
-				if (isImage) {
+				// For images and PDF, directly open in viewer modal
+				if (isImage || isPdf) {
 					setDownloadedFileUri(downloadedUri);
 					setViewerVisible(true);
 				} else {
