@@ -111,6 +111,43 @@ try {
   if (data) {
     const { locations } = data as LocationUpdateData;
     if (locations && locations.length > 0) {
+      // CRITICAL: Check if automatic location sharing is enabled BEFORE processing location
+      // This prevents errors when task is stopped while async operations are running
+      const settings = await AsyncStorage.getItem('@odyssea_app_settings');
+      if (settings) {
+        const parsedSettings = JSON.parse(settings);
+        if (!parsedSettings.automaticLocationSharing) {
+          console.log(`⏸️ [LocationTask] Automatic location sharing is disabled, stopping background tracking...`);
+          try {
+            // Check if task is still running before trying to stop
+            const isRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
+            if (isRunning) {
+              await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+              console.log(`✅ [LocationTask] Background tracking stopped`);
+            } else {
+              console.log(`ℹ️ [LocationTask] Background tracking already stopped`);
+            }
+          } catch (stopError) {
+            // Ignore errors when stopping - task may already be stopped
+            console.log(`ℹ️ [LocationTask] Task may already be stopped, ignoring stop error`);
+          }
+          return; // Exit early - don't process location
+        }
+      } else {
+        // If settings not found, assume disabled and stop tracking
+        console.warn(`⚠️ [LocationTask] App settings not found in AsyncStorage, stopping tracking for safety`);
+        try {
+          const isRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
+          if (isRunning) {
+            await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+            console.log(`✅ [LocationTask] Background tracking stopped (settings not found)`);
+          }
+        } catch (stopError) {
+          // Ignore errors
+        }
+        return; // Exit early
+      }
+
       const location = locations[locations.length - 1];
       const { latitude, longitude } = location.coords;
       // Local device time string without timezone suffix (exactly what user sees)
@@ -236,27 +273,53 @@ try {
           longitude: longitude.toFixed(6),
         });
 
-        // Check if automatic location sharing is still enabled
-        const settings = await AsyncStorage.getItem('@odyssea_app_settings');
-        if (settings) {
-          const parsedSettings = JSON.parse(settings);
-          if (parsedSettings.automaticLocationSharing) {
-            // No time interval check - process all location updates for smooth map display
-            // Both iOS and Android will send updates as frequently as the system allows
-            console.log(`✅ [LocationTask] Processing location update (no time restrictions)`);
-            
-            const timeMinutes = new Date().toLocaleTimeString();
-            console.log(`✅ [LocationTask] ========== PROCEEDING WITH API CALL ==========`);
-            console.log(`✅ [LocationTask] Time: ${timeMinutes}`);
-            console.log(`✅ [LocationTask] Latitude: ${latitude.toFixed(6)}`);
-            console.log(`✅ [LocationTask] Longitude: ${longitude.toFixed(6)}`);
-            console.log(`✅ [LocationTask] ============================================`);
-            
-            // Try to send location update to API directly from background task
-            // This ensures updates are sent even when app is closed
-            // Works on both iOS and Android
-            console.log(`🌐 [LocationTask] Preparing to send location update to API...`);
+        // Double-check if automatic location sharing is still enabled (user might have disabled it during geocoding)
+        const settingsCheck = await AsyncStorage.getItem('@odyssea_app_settings');
+        if (settingsCheck) {
+          const parsedSettingsCheck = JSON.parse(settingsCheck);
+          if (!parsedSettingsCheck.automaticLocationSharing) {
+            console.log(`⏸️ [LocationTask] Automatic location sharing was disabled during processing, stopping...`);
             try {
+              const isRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
+              if (isRunning) {
+                await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+                console.log(`✅ [LocationTask] Background tracking stopped`);
+              }
+            } catch (stopError) {
+              // Ignore errors
+            }
+            return; // Exit early - don't send location update
+          }
+        } else {
+          // Settings not found - stop tracking
+          console.warn(`⚠️ [LocationTask] App settings not found during processing, stopping tracking`);
+          try {
+            const isRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
+            if (isRunning) {
+              await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+            }
+          } catch (stopError) {
+            // Ignore errors
+          }
+          return; // Exit early
+        }
+
+        // No time interval check - process all location updates for smooth map display
+        // Both iOS and Android will send updates as frequently as the system allows
+        console.log(`✅ [LocationTask] Processing location update (no time restrictions)`);
+        
+        const timeMinutes = new Date().toLocaleTimeString();
+        console.log(`✅ [LocationTask] ========== PROCEEDING WITH API CALL ==========`);
+        console.log(`✅ [LocationTask] Time: ${timeMinutes}`);
+        console.log(`✅ [LocationTask] Latitude: ${latitude.toFixed(6)}`);
+        console.log(`✅ [LocationTask] Longitude: ${longitude.toFixed(6)}`);
+        console.log(`✅ [LocationTask] ============================================`);
+        
+        // Try to send location update to API directly from background task
+        // This ensures updates are sent even when app is closed
+        // Works on both iOS and Android
+        console.log(`🌐 [LocationTask] Preparing to send location update to API...`);
+        try {
               // IMPORTANT: In background/headless JS, secureStorage may not work (requires user interaction on iOS)
               // Use AsyncStorage instead - we cache externalId there when app is active
               console.log(`🔍 [LocationTask] Retrieving user data from AsyncStorage (cached for background use)...`);
@@ -717,19 +780,22 @@ try {
                       }
                       // Don't save coordinates if API call failed - wait for next successful update
                     }
-          } else {
-            console.log(`⏸️ [LocationTask] Automatic location sharing is disabled, stopping background tracking...`);
-            await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
-            console.log(`✅ [LocationTask] Background tracking stopped`);
-          }
-        } else {
-          console.warn(`⚠️ [LocationTask] App settings not found in AsyncStorage`);
-        }
               } catch (err) {
                 const totalDuration = Date.now() - taskStartTime;
+                
+                // Check if error is due to task being stopped (expected when user disables location sharing)
+                const errorMessage = err instanceof Error ? err.message : String(err);
+                const isTaskNotFoundError = errorMessage.includes("not found") || errorMessage.includes("Task 'background-location-task'");
+                
+                if (isTaskNotFoundError) {
+                  // This is expected when task is stopped - don't log as error
+                  console.log(`ℹ️ [LocationTask] Task was stopped during processing (expected when location sharing is disabled)`);
+                  return; // Exit silently
+                }
+                
                 console.error('❌ [LocationTask] Failed to process location:', err);
                 fileLogger.error('LocationTask', 'PROCESS_LOCATION_ERROR', {
-                  error: err instanceof Error ? err.message : String(err),
+                  error: errorMessage,
                   stack: err instanceof Error ? err.stack : undefined,
                   totalDuration,
                   platform: Platform.OS,

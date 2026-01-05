@@ -546,7 +546,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   avatarText: {
-    fontSize: fp(14),
+    fontSize: fp(15),
     fontFamily: fonts['700'],
     color: colors.neutral.black,
   },
@@ -581,13 +581,13 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   name: {
-    fontSize: fp(13),
+    fontSize: fp(16),
     fontFamily: fonts['600'],
     color: colors.primary.blue,
     marginBottom: rem(10),
   },
   timestamp: {
-    fontSize: fp(8),
+    fontSize: fp(10),
     fontFamily: fonts['400'],
     color: 'rgba(41, 41, 102, 0.7)',
     flexShrink: 0,
@@ -600,7 +600,7 @@ const styles = StyleSheet.create({
   },
   lastMessage: {
     flex: 1,
-    fontSize: fp(11),
+    fontSize: fp(13),
     fontFamily: fonts['400'],
     color: colors.primary.blue,
     minWidth: 0,
@@ -625,13 +625,13 @@ const styles = StyleSheet.create({
     marginBottom: rem(8),
   },
   roleTagText: {
-    fontSize: fp(8),
+    fontSize: fp(10),
     fontFamily: fonts['600'],
     color: 'rgba(96, 102, 197, 1)',
     textTransform: 'uppercase'
   },
   unreadBadgeText: {
-    fontSize: 8,
+    fontSize: 10,
     textAlign: 'center',
     lineHeight: 8,
     includeFontPadding: false,

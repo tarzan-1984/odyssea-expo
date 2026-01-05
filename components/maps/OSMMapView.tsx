@@ -48,8 +48,8 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
         anchor: marker.anchor || { x: 0.5, y: 0.5 },
       }));
 
-      // Custom car marker icon HTML (red car with pin) - simplified version
-      const carMarkerHtml = '<div style="width:40px;height:40px;position:relative;"><svg width="40" height="40" viewBox="0 0 40 40"><path d="M20 2C15.26 2 11.4 5.86 11.4 10.6C11.4 12.92 12.69 15.19 14.87 17.37L20 22.5L25.13 17.37C27.31 15.19 28.6 12.92 28.6 10.6C28.6 5.86 24.74 2 20 2Z" fill="#F73E3E" stroke="#000" stroke-width="0.5"/><path d="M12 28L28 28L28 32L12 32Z" fill="#F73E3E" stroke="#000" stroke-width="0.5"/><path d="M10 26L30 26L30 28L10 28Z" fill="#F73E3E" stroke="#000" stroke-width="0.5"/><circle cx="15" cy="30" r="2" fill="#2F4859"/><circle cx="25" cy="30" r="2" fill="#2F4859"/></svg></div>';
+      // Custom location pin marker icon: red teardrop with dark blue outline and light pink center
+      const locationMarkerHtml = '<div style="width:34px;height:46px;position:relative;"><svg width="34" height="46" viewBox="0 0 92.25 122.88"><path d="M49.1,122.34a2.75,2.75,0,0,1-3.12.1A109.7,109.7,0,0,1,19,98.35C9.15,86,3,72.33.83,59.16-1.33,45.79.69,32.94,7.34,22.49A45.14,45.14,0,0,1,17.39,11.35C26.77,3.87,37.49-.08,48.16,0c10.29.08,20.43,3.92,29.2,11.91a43,43,0,0,1,7.79,9.49c7.15,11.77,8.69,26.8,5.55,42a92.52,92.52,0,0,1-41.6,58.92Zm-3-98.58a23,23,0,1,1-22.94,23A23,23,0,0,1,46.13,23.76Z" fill="#ef4136" stroke="#1E3A5F" stroke-width="2" fill-rule="evenodd"/><circle cx="46.13" cy="46.76" r="12" fill="#F5D5D5" stroke="#1E3A5F" stroke-width="1.5"/></svg></div>';
 
       const script = `
         (function() {
@@ -62,14 +62,14 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
             
             // Add new markers
             var markersData = ${JSON.stringify(markersData)};
-            var carMarkerHtml = ${JSON.stringify(carMarkerHtml)};
+            var locationMarkerHtml = ${JSON.stringify(locationMarkerHtml)};
             markersData.forEach(function(markerData) {
               var marker = L.marker([markerData.lat, markerData.lng], {
                 icon: L.divIcon({
                   className: 'custom-marker',
-                  html: carMarkerHtml,
-                  iconSize: [40, 40],
-                  iconAnchor: [markerData.anchor.x * 40, markerData.anchor.y * 40],
+                  html: locationMarkerHtml,
+                  iconSize: [34, 46],
+                  iconAnchor: [markerData.anchor.x * 34, markerData.anchor.y * 46],
                 })
               }).addTo(window.map);
               window.markers.push(marker);

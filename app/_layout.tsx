@@ -78,7 +78,6 @@ function RootLayoutNav() {
 
     const checkPendingNavigation = async () => {
       try {
-        const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
         const pendingChatId = await AsyncStorage.getItem('@pending_chat_navigation');
         
         if (pendingChatId) {

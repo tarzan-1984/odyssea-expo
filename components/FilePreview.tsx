@@ -18,7 +18,7 @@ export default function FilePreview({ fileUrl, fileName, fileSize }: FilePreview
 
   const fileExtension = fileName.toLowerCase().split('.').pop();
 
-  const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg'].includes(fileExtension || '');
+  const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'heic', 'heif', 'bmp', 'tiff'].includes(fileExtension || '');
   const isPdf = fileExtension === 'pdf';
   const isText = fileExtension === 'txt';
 

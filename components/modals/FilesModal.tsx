@@ -306,7 +306,7 @@ export default function FilesModal({ isOpen, onClose, chatRoomId }: FilesModalPr
                 
                 const name = file.fileName || 'Attachment';
                 const ext = name.toLowerCase().split('.').pop() || '';
-                const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
+                const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tiff'].includes(ext);
                 
                 // Helper function to determine MIME type
                 const getMimeType = (extension: string): string => {

@@ -1,11 +1,12 @@
 "use client";
 
 import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image, Alert, ActionSheetIOS, Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { colors, fonts, fp, rem } from '@/lib';
 import FileIcon from '@/icons/FileIcon';
+import FileViewerModal from '@/components/modals/FileViewerModal';
 
 type Props = {
 	fileUrl: string;
@@ -29,6 +30,10 @@ const getMimeType = (extension: string): string => {
 		png: 'image/png',
 		gif: 'image/gif',
 		webp: 'image/webp',
+		heic: 'image/heic',
+		heif: 'image/heif',
+		bmp: 'image/bmp',
+		tiff: 'image/tiff',
 		zip: 'application/zip',
 		rar: 'application/x-rar-compressed',
 	};
@@ -38,10 +43,60 @@ const getMimeType = (extension: string): string => {
 export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender, createdAt }: Props) {
 	const name = fileName || 'Attachment';
 	const ext = name.toLowerCase().split('.').pop() || '';
-	const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext);
+	const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tiff'].includes(ext);
+	const isPdf = ext === 'pdf';
+	const isText = ['txt', 'text', 'log', 'md', 'json', 'xml', 'html', 'css', 'js', 'ts'].includes(ext);
+	const isViewable = isPdf || isText || isImage;
+	
 	const [isDownloading, setIsDownloading] = useState(false);
+	const [viewerVisible, setViewerVisible] = useState(false);
+	const [downloadedFileUri, setDownloadedFileUri] = useState<string | null>(null);
 
-	const handleDownload = async () => {
+	const handleOpenFile = async (fileUri: string) => {
+		// For PDF and DOCX, open with system app
+		if (isPdf || ext === 'doc' || ext === 'docx') {
+			try {
+				const { openLocalFile } = await import('@/utils/fileOpener');
+				await openLocalFile(fileUri, name);
+			} catch (error) {
+				console.error('Failed to open file with system app:', error);
+				Alert.alert(
+					'Error',
+					'Failed to open file. Please try using Share to open it in another app.',
+					[{ text: 'OK' }]
+				);
+			}
+		} else if (isText || isImage) {
+			// For text files and images, open in viewer modal
+			setDownloadedFileUri(fileUri);
+			setViewerVisible(true);
+		} else {
+			// For other files, use Share Sheet which has "Open in..." option
+			await handleShare(fileUri);
+		}
+	};
+
+	const handleShare = async (fileUri: string) => {
+		try {
+			const isAvailable = await Sharing.isAvailableAsync();
+			if (isAvailable) {
+				await Sharing.shareAsync(fileUri, {
+					mimeType: getMimeType(ext),
+					dialogTitle: `Share ${name}`,
+				});
+			} else {
+				Alert.alert(
+					'Sharing not available',
+					'Sharing is not available on this device.',
+					[{ text: 'OK' }]
+				);
+			}
+		} catch (error) {
+			console.error('Failed to share file:', error);
+		}
+	};
+
+	const handleFileAction = async () => {
 		if (isDownloading) return;
 		
 		try {
@@ -59,22 +114,42 @@ export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender,
 			const downloadResult = await FileSystem.downloadAsync(fileUrl, fileUri);
 			
 			if (downloadResult.status === 200) {
-				// Check if Sharing API is available
-				const isAvailable = await Sharing.isAvailableAsync();
+				const downloadedUri = downloadResult.uri;
 				
-				if (isAvailable) {
-					// Open dialog for saving/opening file
-					await Sharing.shareAsync(downloadResult.uri, {
-						mimeType: getMimeType(ext),
-						dialogTitle: `Save ${name}`,
-					});
+				// For images, directly open in viewer modal (which has Share button)
+				if (isImage) {
+					setDownloadedFileUri(downloadedUri);
+					setViewerVisible(true);
 				} else {
-					// If Sharing is not available, show success message
-					Alert.alert(
-						'Downloaded',
-						`File "${name}" has been downloaded successfully.`,
-						[{ text: 'OK' }]
-					);
+					// For other files, show ActionSheet with options
+					if (Platform.OS === 'ios') {
+						ActionSheetIOS.showActionSheetWithOptions(
+							{
+								options: ['Cancel', 'Open', 'Share'],
+								cancelButtonIndex: 0,
+							},
+							(buttonIndex) => {
+								if (buttonIndex === 1) {
+									// Open
+									handleOpenFile(downloadedUri);
+								} else if (buttonIndex === 2) {
+									// Share
+									handleShare(downloadedUri);
+								}
+							}
+						);
+					} else {
+						// On Android, show Alert with options
+						Alert.alert(
+							'File',
+							'What would you like to do?',
+							[
+								{ text: 'Cancel', style: 'cancel' },
+								{ text: 'Open', onPress: () => handleOpenFile(downloadedUri) },
+								{ text: 'Share', onPress: () => handleShare(downloadedUri) },
+							]
+						);
+					}
 				}
 			} else {
 				throw new Error(`Download failed with status ${downloadResult.status}`);
@@ -94,55 +169,83 @@ export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender,
 	// Show preview for images
 	if (isImage) {
 		return (
-			<TouchableOpacity
-				onPress={handleDownload}
-				activeOpacity={0.9}
-				style={styles.imageCard}
-			>
-				<Image
-					source={{ uri: fileUrl }}
-					style={styles.previewImage}
-					resizeMode="cover"
-				/>
-			</TouchableOpacity>
+			<>
+				<TouchableOpacity
+					onPress={handleFileAction}
+					activeOpacity={0.9}
+					style={styles.imageCard}
+				>
+					<Image
+						source={{ uri: fileUrl }}
+						style={styles.previewImage}
+						resizeMode="cover"
+					/>
+				</TouchableOpacity>
+				{downloadedFileUri && (
+					<FileViewerModal
+						visible={viewerVisible}
+						fileUri={downloadedFileUri}
+						fileName={name}
+						originalUrl={fileUrl}
+						onClose={() => {
+							setViewerVisible(false);
+							setDownloadedFileUri(null);
+						}}
+					/>
+				)}
+			</>
 		);
 	}
 
 	// For all other files - only card with icon and name
 	return (
-		<TouchableOpacity
-			onPress={handleDownload}
-			activeOpacity={0.7}
-			style={[
-				styles.fileCard,
-				isSender ? styles.fileCardSender : styles.fileCardOther,
-			]}
-		>
-			<View style={styles.fileIconContainer}>
-				<FileIcon width={rem(40)} height={rem(40)} color={isSender ? colors.neutral.white : colors.primary.blue} />
-			</View>
-			<View style={styles.fileInfo}>
-				<Text 
-					style={[
-						styles.fileName,
-						isSender ? styles.fileNameSender : styles.fileNameOther,
-					]}
-					numberOfLines={1}
-				>
-					{name}
-				</Text>
-				{typeof fileSize === 'number' && (
+		<>
+			<TouchableOpacity
+				onPress={handleFileAction}
+				activeOpacity={0.7}
+				style={[
+					styles.fileCard,
+					isSender ? styles.fileCardSender : styles.fileCardOther,
+				]}
+			>
+				<View style={styles.fileIconContainer}>
+					<FileIcon width={rem(40)} height={rem(40)} color={isSender ? colors.neutral.white : colors.primary.blue} />
+				</View>
+				<View style={styles.fileInfo}>
 					<Text 
 						style={[
-							styles.fileSize,
-							isSender ? styles.fileSizeSender : styles.fileSizeOther,
+							styles.fileName,
+							isSender ? styles.fileNameSender : styles.fileNameOther,
 						]}
+						numberOfLines={1}
 					>
-						{Math.round(fileSize / 1024)}KB{createdAt ? ` • ${new Date(createdAt).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}
+						{name}
 					</Text>
-				)}
-			</View>
-		</TouchableOpacity>
+					{typeof fileSize === 'number' && (
+						<Text 
+							style={[
+								styles.fileSize,
+								isSender ? styles.fileSizeSender : styles.fileSizeOther,
+							]}
+						>
+							{Math.round(fileSize / 1024)}KB{createdAt ? ` • ${new Date(createdAt).toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}
+						</Text>
+					)}
+				</View>
+			</TouchableOpacity>
+			{downloadedFileUri && (
+				<FileViewerModal
+					visible={viewerVisible}
+					fileUri={downloadedFileUri}
+					fileName={name}
+					originalUrl={fileUrl}
+					onClose={() => {
+						setViewerVisible(false);
+						setDownloadedFileUri(null);
+					}}
+				/>
+			)}
+		</>
 	);
 }
 

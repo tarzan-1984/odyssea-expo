@@ -4020,6 +4020,11 @@ expo-image@~3.0.10:
   resolved "https://registry.npmjs.org/expo-image/-/expo-image-3.0.10.tgz"
   integrity sha512-i4qNCEf9Ur7vDqdfDdFfWnNCAF2efDTdahuDy9iELPS2nzMKBLeeGA2KxYEPuRylGCS96Rwm+SOZJu6INc2ADQ==
 
+expo-intent-launcher@^13.0.8:
+  version "13.0.8"
+  resolved "https://registry.yarnpkg.com/expo-intent-launcher/-/expo-intent-launcher-13.0.8.tgz#74093cc2c7d49b892eadb1ff42798259eb93405f"
+  integrity sha512-sgGFotttKKN6dIatjOEJT8M6Arfakus7vIxgshg5VkxarVhZBGJzOJam7rbUlB1O/gQ8em9G8vhEU9AfjEIe7A==
+
 expo-json-utils@~0.15.0:
   version "0.15.0"
   resolved "https://registry.npmjs.org/expo-json-utils/-/expo-json-utils-0.15.0.tgz"
@@ -6610,6 +6615,11 @@ react-native-device-info@^15.0.1:
   version "15.0.1"
   resolved "https://registry.npmjs.org/react-native-device-info/-/react-native-device-info-15.0.1.tgz"
   integrity sha512-U5waZRXtT3l1SgZpZMlIvMKPTkFZPH8W7Ks6GrJhdH723aUIPxjVer7cRSij1mvQdOAAYFJV/9BDzlC8apG89A==
+
+react-native-file-viewer@^2.1.5:
+  version "2.1.5"
+  resolved "https://registry.yarnpkg.com/react-native-file-viewer/-/react-native-file-viewer-2.1.5.tgz#cd4544f573108e79002b5c7e1ebfce4371885250"
+  integrity sha512-MGC6sx9jsqHdefhVQ6o0akdsPGpkXgiIbpygb2Sg4g4bh7v6K1cardLV1NwGB9A6u1yICOSDT/MOC//9Ez6EUg==
 
 react-native-gesture-handler@~2.28.0:
   version "2.28.0"

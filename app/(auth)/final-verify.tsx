@@ -194,6 +194,30 @@ export default function FinalVerifyScreen() {
   // Start background location tracking
   const startBackgroundLocationTracking = useCallback(async () => {
     try {
+      // CRITICAL: Check if automatic location sharing is enabled BEFORE starting tracking
+      const settings = await AsyncStorage.getItem('@odyssea_app_settings');
+      if (settings) {
+        const parsedSettings = JSON.parse(settings);
+        if (!parsedSettings.automaticLocationSharing) {
+          console.log('⏸️ [BackgroundTracking] Automatic location sharing is disabled, skipping start...');
+          // Ensure task is stopped if it's running
+          try {
+            const isRunning = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
+            if (isRunning) {
+              await Location.stopLocationUpdatesAsync(LOCATION_TASK_NAME);
+              console.log('✅ [BackgroundTracking] Background tracking stopped (automatic sharing disabled)');
+            }
+          } catch (stopError) {
+            // Ignore errors when stopping
+          }
+          return; // Exit early - don't start tracking
+        }
+      } else {
+        // If settings not found, don't start tracking
+        console.log('⏸️ [BackgroundTracking] Settings not found, skipping start...');
+        return; // Exit early
+      }
+      
       console.log('📍 [BackgroundTracking] ========== STARTING BACKGROUND TRACKING ==========');
       
       // IMPORTANT: On Android 12+, we need notification permission for foreground service
@@ -1275,7 +1299,7 @@ export default function FinalVerifyScreen() {
                 initialRegion={initialRegion}
                 markers={userLocation ? [{
                   coordinate: userLocation,
-                  anchor: { x: 0.5, y: 0.5 }
+                  anchor: { x: 0.5, y: 1.0 } // Anchor at bottom point of teardrop pin
                 }] : []}
                 showsUserLocation={false}
                 showsMyLocationButton={false}

@@ -40,21 +40,24 @@ const ScreenLayout: React.FC<ScreenLayoutProps> = ({
 		</View>
 			
 			{/* Header panel - starts from very top */}
-			{headerTitle && (
-				<View style={styles.headerPanel}>
-					<Text style={styles.headerTitle} accessibilityRole="header">{headerTitle}</Text>
-					
-					{headerButtonText && onHeaderButtonPress && (
-						<TouchableOpacity
-							onPress={onHeaderButtonPress}
-							accessibilityRole="button"
-							accessibilityLabel={headerButtonText}
-						>
-							<Text style={styles.headerButtonText}>{headerButtonText}</Text>
-						</TouchableOpacity>
-					)}
-				</View>
-			)}
+			
+			<View style={styles.headerPanel}>
+				{headerTitle &&
+          <Text style={styles.headerTitle} accessibilityRole="header">{headerTitle}</Text>
+				}
+				
+				{headerButtonText && onHeaderButtonPress && (
+					<TouchableOpacity
+						onPress={onHeaderButtonPress}
+						style={styles.headerButtonWrap}
+						accessibilityRole="button"
+						accessibilityLabel={headerButtonText}
+					>
+						<Text style={styles.headerButtonText}>{headerButtonText}</Text>
+					</TouchableOpacity>
+				)}
+			</View>
+			
 			
 		<SafeAreaView style={[styles.safeArea, headerTitle && styles.safeAreaWithHeader]} collapsable={false}>
 			<KeyboardAvoidingView
@@ -110,7 +113,6 @@ const styles = StyleSheet.create({
 		paddingHorizontal: rem(15),
 		paddingBottom: rem(15),
 		flexDirection: 'row',
-		justifyContent: 'space-between',
 		alignItems: 'center',
 	},
 	headerTitle: {
@@ -118,6 +120,9 @@ const styles = StyleSheet.create({
 		fontFamily: fonts["700"],
 		color: colors.neutral.white,
 		flex: 1,
+	},
+	headerButtonWrap: {
+		marginLeft: 'auto'
 	},
 	headerButtonText: {
 		fontSize: fp(20),

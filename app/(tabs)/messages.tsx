@@ -587,7 +587,7 @@ const styles = StyleSheet.create({
   screenTitle: {
     color: colors.neutral.white,
     fontFamily: fonts["700"],
-    fontSize: fp(18),
+    fontSize: fp(22),
     textTransform: 'capitalize',
   },
   header: {
@@ -612,7 +612,7 @@ const styles = StyleSheet.create({
     marginLeft: rem(8),
   },
   statusText: {
-    fontSize: fp(10),
+    fontSize: fp(12),
     fontFamily: fonts['600'],
   },
   statusOnline: {
@@ -630,7 +630,7 @@ const styles = StyleSheet.create({
   contactsButtonText: {
     color: colors.neutral.white,
     fontFamily: fonts['600'],
-    fontSize: fp(12),
+    fontSize: fp(14),
   },
   screenWrap: {
     flex: 1,
@@ -666,7 +666,7 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
-    fontSize: fp(12),
+    fontSize: fp(14),
     fontFamily: fonts["400"],
     color: colors.primary.blue,
     height: rem(35),
@@ -679,7 +679,7 @@ const styles = StyleSheet.create({
     } : {
       // iOS: use padding for vertical centering
       paddingVertical: rem(8),
-      lineHeight: fp(12),
+      lineHeight: fp(14),
     }),
   },
   clearButton: {
@@ -698,7 +698,7 @@ const styles = StyleSheet.create({
     minWidth: rem(80),
   },
   muteAllButtonText: {
-    fontSize: fp(12),
+    fontSize: fp(14),
     fontFamily: fonts["500"],
     color: colors.primary.blue,
   },
@@ -717,7 +717,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(96, 102, 197, 0.1)',
   },
   filterButtonText: {
-    fontSize: fp(12),
+    fontSize: fp(14),
     fontFamily: fonts["500"],
     color: colors.primary.blue,
   },

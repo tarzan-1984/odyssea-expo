@@ -31,7 +31,10 @@
           "location",
           "remote-notification"
         ],
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "LSApplicationQueriesSchemes": [
+          "file"
+        ]
       }
     },
     "android": {
