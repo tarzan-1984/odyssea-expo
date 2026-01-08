@@ -145,6 +145,29 @@ export default function MessagesScreen() {
     }
   };
 
+  // Mark all messages as read in all chat rooms with unread messages (mirrors Next.js handleReadAll)
+  const handleReadAll = async () => {
+    try {
+      // Get all chat room IDs with unread messages
+      const unreadChatRoomIds = chatRooms
+        .filter(room => (room.unreadCount || 0) > 0)
+        .map(room => room.id);
+
+      if (unreadChatRoomIds.length === 0) {
+        return; // No unread messages
+      }
+
+      // Call the API to mark all messages as read
+      const result = await chatApi.markAllMessagesAsReadByChatRooms(unreadChatRoomIds);
+      
+      // WebSocket will automatically update unreadCount via messagesMarkedAsRead event
+      // No need to manually update here - the event handler in WebSocketContext will do it
+      console.log(`✅ [MessagesScreen] Marked all messages as read in ${result.chatRoomIds.length} chat rooms`);
+    } catch (error) {
+      console.error('❌ [MessagesScreen] Failed to mark all messages as read:', error);
+    }
+  };
+
   // Get display name for chat room (for search filtering)
   // Mirrors Next.js ChatList.getChatDisplayName logic
   const getChatDisplayName = (chatRoom: ChatRoom): string => {
@@ -309,94 +332,110 @@ export default function MessagesScreen() {
           
           {/* Search and Filter Section */}
           <View style={styles.searchFilterSection}>
-            {/* Search Input */}
-            <View style={styles.searchContainer}>
-              <View style={styles.searchIconContainer}>
-                <SearchIcon />
-              </View>
-              
-              <TextInput
-                ref={searchInputRef}
-                style={styles.searchInput}
-                placeholder="Search chats"
-                placeholderTextColor={colors.neutral.darkGrey}
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                onFocus={() => {
-                  // If the app has just returned from background and the system
-                  // automatically focuses the previous input — immediately blur it.
-                  if (preventNextSearchFocusRef.current) {
-                    preventNextSearchFocusRef.current = false;
-                    Keyboard.dismiss();
-                    if (searchInputRef.current) {
-                      searchInputRef.current.blur();
+            {/* First Row: Search Input (full width) */}
+            <View style={styles.searchRow}>
+              <View style={styles.searchContainer}>
+                <View style={styles.searchIconContainer}>
+                  <SearchIcon />
+                </View>
+                
+                <TextInput
+                  ref={searchInputRef}
+                  style={styles.searchInput}
+                  placeholder="Search chats"
+                  placeholderTextColor={colors.neutral.darkGrey}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  onFocus={() => {
+                    // If the app has just returned from background and the system
+                    // automatically focuses the previous input — immediately blur it.
+                    if (preventNextSearchFocusRef.current) {
+                      preventNextSearchFocusRef.current = false;
+                      Keyboard.dismiss();
+                      if (searchInputRef.current) {
+                        searchInputRef.current.blur();
+                      }
                     }
-                  }
-                }}
-              />
-              
-              {searchQuery.length > 0 && (
-                <TouchableOpacity
-                  style={styles.clearButton}
-                  onPress={() => setSearchQuery('')}
-                  activeOpacity={0.7}
-                >
-                  <ClearIcon />
-                </TouchableOpacity>
-              )}
+                  }}
+                />
+                
+                {searchQuery.length > 0 && (
+                  <TouchableOpacity
+                    style={styles.clearButton}
+                    onPress={() => setSearchQuery('')}
+                    activeOpacity={0.7}
+                  >
+                    <ClearIcon />
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
             
-            {/* Mute All Button */}
-            <TouchableOpacity
-              style={styles.muteAllButton}
-              onPress={handleSmartMuteToggle}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.muteAllButtonText}>
-                {allChatsMuted ? 'Unmute all' : 'Mute all'}
-              </Text>
-            </TouchableOpacity>
-            
-            {/* Filter Dropdown */}
-            <View style={styles.filterContainer}>
+            {/* Second Row: Action Buttons and Filter (equal width) */}
+            <View style={styles.actionButtonsRow}>
+              {/* Mute All Button */}
               <TouchableOpacity
-                style={styles.filterButton}
-                onPress={() => setIsFilterDropdownOpen(!isFilterDropdownOpen)}
+                style={styles.muteAllButton}
+                onPress={handleSmartMuteToggle}
                 activeOpacity={0.7}
               >
-                <Text style={styles.filterButtonText}>{getCurrentFilterLabel()}</Text>
-                <View style={[styles.arrowIcon, isFilterDropdownOpen && styles.arrowIconRotated]}>
-                  <ArrowDownIcon />
-                </View>
+                <Text style={styles.muteAllButtonText}>
+                  {allChatsMuted ? 'Unmute all' : 'Mute all'}
+                </Text>
               </TouchableOpacity>
               
-              {/* Dropdown Menu */}
-              {isFilterDropdownOpen && (
-                <View style={styles.dropdownMenu}>
-                  {filterOptions.map((option, index) => (
-                    <TouchableOpacity
-                      key={option.value}
-                      style={[
-                        styles.dropdownItem,
-                        selectedFilter === option.value && styles.dropdownItemSelected,
-                        index === filterOptions.length - 1 && styles.dropdownItemLast,
-                      ]}
-                      onPress={() => handleFilterSelect(option.value)}
-                      activeOpacity={0.7}
-                    >
-                      <Text
-                        style={[
-                          styles.dropdownItemText,
-                          selectedFilter === option.value && styles.dropdownItemTextSelected,
-                        ]}
-                      >
-                        {option.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-              )}
+              {/* Read All Button */}
+              <TouchableOpacity
+                style={styles.readAllButton}
+                onPress={handleReadAll}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.readAllButtonText}>
+                  Read all
+                </Text>
+              </TouchableOpacity>
+              
+              {/* Filter Dropdown */}
+              <View style={styles.filterContainer}>
+                <TouchableOpacity
+                  style={styles.filterButton}
+                  onPress={() => setIsFilterDropdownOpen(!isFilterDropdownOpen)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.filterButtonText}>{getCurrentFilterLabel()}</Text>
+                  <View style={[styles.arrowIcon, isFilterDropdownOpen && styles.arrowIconRotated]}>
+                    <ArrowDownIcon />
+                  </View>
+                </TouchableOpacity>
+              </View>
             </View>
+            
+            {/* Dropdown Menu */}
+            {isFilterDropdownOpen && (
+              <View style={styles.dropdownMenu}>
+                {filterOptions.map((option, index) => (
+                  <TouchableOpacity
+                    key={option.value}
+                    style={[
+                      styles.dropdownItem,
+                      selectedFilter === option.value && styles.dropdownItemSelected,
+                      index === filterOptions.length - 1 && styles.dropdownItemLast,
+                    ]}
+                    onPress={() => handleFilterSelect(option.value)}
+                    activeOpacity={0.7}
+                  >
+                    <Text
+                      style={[
+                        styles.dropdownItemText,
+                        selectedFilter === option.value && styles.dropdownItemTextSelected,
+                      ]}
+                    >
+                      {option.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
           </View>
           
           <ScrollView
@@ -645,6 +684,11 @@ const styles = StyleSheet.create({
   searchFilterSection: {
     paddingHorizontal: rem(15),
     marginBottom: rem(17),
+  },
+  searchRow: {
+    marginBottom: rem(8),
+  },
+  actionButtonsRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: 'center',
@@ -657,7 +701,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(96, 102, 197, 0.1)',
     height: rem(35),
     paddingHorizontal: rem(12),
-    flex: 1,
+    width: '100%',
   },
   searchIconContainer: {
     marginRight: rem(8),
@@ -695,16 +739,30 @@ const styles = StyleSheet.create({
     paddingHorizontal: rem(12),
     justifyContent: 'center',
     alignItems: 'center',
-    minWidth: rem(80),
+    flex: 1,
   },
   muteAllButtonText: {
     fontSize: fp(14),
     fontFamily: fonts["500"],
     color: colors.primary.blue,
   },
+  readAllButton: {
+    borderRadius: rem(100),
+    backgroundColor: 'rgba(96, 102, 197, 0.1)',
+    height: rem(35),
+    paddingHorizontal: rem(12),
+    justifyContent: 'center',
+    alignItems: 'center',
+    flex: 1,
+  },
+  readAllButtonText: {
+    fontSize: fp(14),
+    fontFamily: fonts["500"],
+    color: colors.primary.blue,
+  },
   filterContainer: {
     position: 'relative',
-    width: rem(100),
+    flex: 1,
   },
   filterButton: {
     flexDirection: 'row',

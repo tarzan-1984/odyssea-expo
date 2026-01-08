@@ -29,10 +29,30 @@ interface DriversMapResponse {
 }
 
 /**
- * Check if drivers cache should be updated (based on last update timestamp).
+ * Check if drivers cache should be updated (based on last update timestamp and cache content).
+ * @param force - If true, always return true (bypass all checks)
  */
-export async function shouldUpdateDriversCache(): Promise<boolean> {
+export async function shouldUpdateDriversCache(force: boolean = false): Promise<boolean> {
+  if (force) {
+    console.log('[DriversMapService] 🔴 Force sync requested, bypassing cache checks');
+    return true;
+  }
+  
   try {
+    // First check if cache has any data
+    const cached = await AsyncStorage.getItem(DRIVERS_CACHE_KEY);
+    if (!cached) {
+      console.log('[DriversMapService] ⚠️ No cache data found, cache needs update');
+      return true;
+    }
+    
+    const parsed = JSON.parse(cached) as DriverForMap[];
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      console.log('[DriversMapService] ⚠️ Cache is empty, cache needs update');
+      return true;
+    }
+    
+    // Then check timestamp
     const ts = await AsyncStorage.getItem(DRIVERS_LAST_UPDATE_KEY);
     if (!ts) {
       console.log('[DriversMapService] ⚠️ No last update timestamp found, cache needs update');
@@ -49,7 +69,7 @@ export async function shouldUpdateDriversCache(): Promise<boolean> {
     if (needsUpdate) {
       console.log(`[DriversMapService] ⏰ Cache is ${ageMinutes} minutes old (threshold: 2 minutes), needs update`);
     } else {
-      console.log(`[DriversMapService] ✅ Cache is ${ageMinutes} minutes old, still fresh`);
+      console.log(`[DriversMapService] ✅ Cache is ${ageMinutes} minutes old, still fresh (${parsed.length} drivers in cache)`);
     }
     return needsUpdate;
   } catch (error) {
@@ -89,10 +109,12 @@ export async function getCachedDriversForMap(): Promise<DriverForMap[]> {
  *
  * @param accessToken - Access token for Authorization header
  * @param onPageLoaded - Optional callback invoked for each loaded page of drivers
+ * @param force - If true, bypasses cache freshness check (used for first sync after login)
  */
 export async function syncDriversForMap(
   accessToken: string,
   onPageLoaded?: (drivers: DriverForMap[]) => void,
+  force: boolean = false,
 ): Promise<void> {
   if (!API_BASE_URL) {
     console.warn('[DriversMapService] ⚠️ API_BASE_URL is not configured, skipping sync');
@@ -191,19 +213,25 @@ export async function syncDriversForMap(
         totalPages = pagination.total_pages || 0;
         totalCount = pagination.total_count || 0;
         console.log(`[DriversMapService] 📈 Pagination info: page ${pagination.current_page}/${totalPages}, total: ${totalCount}`);
+        console.log(`[DriversMapService] 📈 has_next_page: ${pagination.has_next_page} (type: ${typeof pagination.has_next_page})`);
         
         if (typeof pagination.has_next_page === 'boolean') {
           hasNext = pagination.has_next_page;
-          page = (pagination.current_page || page) + 1;
+          const nextPage = (pagination.current_page || page) + 1;
+          console.log(`[DriversMapService] 📈 Setting next page to ${nextPage}, hasNext: ${hasNext}`);
+          page = nextPage;
         } else {
+          console.warn(`[DriversMapService] ⚠️ has_next_page is not boolean, stopping sync`);
           hasNext = false;
         }
       } else {
         // Fallback: stop if we received less than page size
         hasNext = validDrivers.length === PAGE_SIZE;
         page += 1;
-        console.log(`[DriversMapService] ⚠️ No pagination info, using fallback logic. Has next: ${hasNext}`);
+        console.log(`[DriversMapService] ⚠️ No pagination info, using fallback logic. Has next: ${hasNext}, received: ${validDrivers.length}, page size: ${PAGE_SIZE}`);
       }
+      
+      console.log(`[DriversMapService] 🔄 Loop condition check: hasNext=${hasNext}, will continue: ${hasNext}`);
 
       // Small delay between requests to avoid stressing backend
       if (hasNext) {
@@ -265,12 +293,13 @@ export async function syncDriversForMap(
 /**
  * Helper to start sync after login for non-DRIVER users.
  * Tries to use provided accessToken, falls back to stored one if needed.
+ * Always performs full sync after login with force=true (ignores cache freshness check).
  */
 export async function syncDriversForMapAfterLogin(
   accessTokenFromLogin?: string,
   onPageLoaded?: (drivers: DriverForMap[]) => void,
 ): Promise<void> {
-  console.log('[DriversMapService] 🔐 Starting sync after login...');
+  console.log('[DriversMapService] 🔐 Starting sync after login (forced full sync with force=true)...');
   try {
     let token: string | null | undefined = accessTokenFromLogin;
 
@@ -309,15 +338,10 @@ export async function syncDriversForMapAfterLogin(
       return;
     }
 
-    console.log('[DriversMapService] 🔍 Checking if cache needs update...');
-    const needsUpdate = await shouldUpdateDriversCache();
-    if (!needsUpdate) {
-      console.log('[DriversMapService] ✅ Cache is fresh (less than 2 minutes old), skipping sync');
-      return;
-    }
-
-    console.log('[DriversMapService] 🔄 Cache is stale or missing, starting sync...');
-    await syncDriversForMap(token, onPageLoaded);
+    // After login, always perform full sync with force=true (ignore cache freshness)
+    // This ensures we get all drivers on first login
+    console.log('[DriversMapService] 🔄 Starting forced full sync after login (force=true, ignoring cache freshness)...');
+    await syncDriversForMap(token, onPageLoaded, true); // Pass force=true
   } catch (error) {
     console.error('[DriversMapService] ❌ syncDriversForMapAfterLogin error:', error);
   }

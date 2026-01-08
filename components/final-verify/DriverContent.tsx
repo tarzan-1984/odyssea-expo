@@ -61,9 +61,14 @@ export default function DriverContent() {
           const validStatuses: StatusValue[] = ['available', 'available_on', 'available_off', 'loaded_enroute'];
           if (validStatuses.includes(parsedStatus)) {
             setStatus(parsedStatus);
+            console.log(`[DriverContent] Loaded status from AsyncStorage: ${parsedStatus}`);
           } else {
-            console.warn('[FinalVerify] Invalid saved status, using default:', savedStatus);
+            console.warn('[DriverContent] Invalid saved status, using default:', savedStatus);
+            // If driverStatus from backend is not a valid StatusValue, use default
+            setStatus('available');
           }
+        } else {
+          console.log('[DriverContent] No saved status found in AsyncStorage, using default: available');
         }
         
         // Load zip

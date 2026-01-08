@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import * as Notifications from 'expo-notifications';
 import { registerForPushNotificationsAsync, addNotificationListeners, registerPushTokenToBackend } from "@/services/NotificationsService";
 import { secureStorage } from "@/utils/secureStorage";
 import { useAuth } from "@/context/AuthContext";
@@ -48,6 +49,15 @@ export default function PushTokenRegistrar() {
           return;
         }
 
+        // IMPORTANT: Check notification permissions BEFORE trying to get token
+        // This prevents race condition with AuthContext which requests permissions with delay
+        const { status: notificationStatus } = await Notifications.getPermissionsAsync();
+        if (notificationStatus !== 'granted') {
+          console.log('[PushTokenRegistrar] Notification permissions not granted yet, waiting...');
+          console.log('[PushTokenRegistrar] Permissions will be requested by AuthContext, token registration will happen there');
+          return; // Don't show error, just wait - AuthContext will handle it
+        }
+
         // Get push token
         console.log('[PushTokenRegistrar] No push token found, requesting...');
         const token = await registerForPushNotificationsAsync();
@@ -56,12 +66,13 @@ export default function PushTokenRegistrar() {
           return;
         }
         if (!token) {
+          // Only show error if permissions are granted but token is still null
+          // This indicates a real problem (simulator, provisioning profile, etc.)
           console.error('[PushTokenRegistrar] ❌ Failed to get push token (token is null)');
           console.error('[PushTokenRegistrar] This may be due to:');
           console.error('[PushTokenRegistrar] 1. Push Notifications capability not enabled in Xcode (iOS)');
-          console.error('[PushTokenRegistrar] 2. Notification permissions not granted');
-          console.error('[PushTokenRegistrar] 3. Running on simulator (push tokens only work on physical devices)');
-          console.error('[PushTokenRegistrar] 4. Provisioning profile issues (iOS)');
+          console.error('[PushTokenRegistrar] 2. Running on simulator (push tokens only work on physical devices)');
+          console.error('[PushTokenRegistrar] 3. Provisioning profile issues (iOS)');
           console.error('[PushTokenRegistrar] Token registration will be retried automatically when app restarts or when user logs in again.');
           return;
         }

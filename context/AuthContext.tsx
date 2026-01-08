@@ -167,6 +167,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (result.success && result.data?.data) {
         const { accessToken, refreshToken, user } = result.data.data;
         
+        // Determine user role early for conditional logic
+        const userRole = user?.role?.trim().toUpperCase();
+        
         // Save tokens to secure storage
         try {
           await secureStorage.setItemAsync('accessToken', accessToken);
@@ -205,6 +208,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               console.warn('⚠️ [AuthContext] Failed to cache user role:', cacheError);
             }
           }
+          // Save driverStatus for DRIVER role users
+          if (userRole === 'DRIVER' && user?.driverStatus) {
+            try {
+              await AsyncStorage.setItem('@user_status', user.driverStatus);
+              console.log(`💾 [AuthContext] Driver status cached in AsyncStorage: ${user.driverStatus}`);
+            } catch (cacheError) {
+              console.warn('⚠️ [AuthContext] Failed to cache driver status:', cacheError);
+            }
+          }
           console.log('💾 [AuthContext] Tokens and user saved (Face ID can now unlock this session)');
         } catch (storeError) {
           console.error('❌ [AuthContext] Failed to save:', storeError);
@@ -224,7 +236,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
         // Request location permissions immediately after successful login
         // Only for DRIVER role users
-        const userRole = user?.role?.trim().toUpperCase();
         if (userRole === 'DRIVER') {
           console.log('📍 [AuthContext] User is DRIVER, requesting location permissions...');
           

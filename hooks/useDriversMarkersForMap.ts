@@ -28,6 +28,7 @@ export function useDriversMarkersForMap() {
   const [totalDrivers, setTotalDrivers] = useState(0);
   const syncInProgressRef = useRef(false);
   const markersMapRef = useRef<Map<string, MarkerData>>(new Map());
+  const firstSyncAfterLoginRef = useRef(true); // Track if this is first sync after login
 
   /**
    * Convert driver data to marker data format
@@ -186,11 +187,13 @@ export function useDriversMarkersForMap() {
 
       // Check if update is needed (unless forced)
       if (!force) {
-        const needsUpdate = await shouldUpdateDriversCache();
+        const needsUpdate = await shouldUpdateDriversCache(false);
         if (!needsUpdate) {
           console.log('[useDriversMarkersForMap] ✅ Cache is fresh, skipping sync');
           return;
         }
+      } else {
+        console.log('[useDriversMarkersForMap] 🔴 Force sync requested, bypassing cache checks');
       }
 
       // For periodic sync: update/add drivers incrementally, then clean up removed ones
@@ -207,20 +210,26 @@ export function useDriversMarkersForMap() {
         console.log('[useDriversMarkersForMap] 🧹 Cleared existing markers for forced sync');
       }
 
-      // Sync with incremental updates
+      // Sync with incremental updates, pass force flag
       await syncDriversForMap(accessToken, (pageDrivers) => {
         console.log(`[useDriversMarkersForMap] 📄 Received page with ${pageDrivers.length} drivers, updating markers...`);
         // Update/add drivers incrementally, tracking received IDs
         // For periodic sync: update existing or add new, track IDs for cleanup
         // For initial sync: add incrementally for smooth "filling" effect
         addDriversToMarkers(pageDrivers, isPeriodicSync ? receivedDriverIds : undefined);
-      });
+      }, force);
 
       // After all pages are received in periodic sync, remove drivers that are no longer in the list
       if (isPeriodicSync && receivedDriverIds.size > 0) {
         const syncCompleteTime = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
         console.log(`[useDriversMarkersForMap] 📊 Sync complete. Received ${receivedDriverIds.size} drivers. Cleaning up removed drivers... [${syncCompleteTime}]`);
         removeDriversNotInSet(receivedDriverIds);
+      }
+
+      // After first sync after login, reset the flag
+      if (firstSyncAfterLoginRef.current && force) {
+        console.log('[useDriversMarkersForMap] ✅ First sync after login completed, resetting force flag');
+        firstSyncAfterLoginRef.current = false;
       }
 
       const finalSyncTime = new Date().toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -240,6 +249,8 @@ export function useDriversMarkersForMap() {
     if (!authState.isAuthenticated) {
       console.log('[useDriversMarkersForMap] ⏸️ User not authenticated, skipping initialization');
       setIsLoading(false);
+      // Reset first sync flag when user logs out
+      firstSyncAfterLoginRef.current = true;
       return;
     }
 
@@ -253,11 +264,36 @@ export function useDriversMarkersForMap() {
 
       if (!mounted) return;
 
-      // Then check if sync is needed
-      const needsUpdate = await shouldUpdateDriversCache();
-      if (needsUpdate) {
-        console.log('[useDriversMarkersForMap] 🔄 Cache needs update, starting sync...');
-        await syncDrivers();
+      // If this is first sync after login, don't start sync here
+      // It will be started by AuthContext with force=true
+      if (firstSyncAfterLoginRef.current) {
+        console.log('[useDriversMarkersForMap] ⏳ First sync after login - waiting for AuthContext to start sync with force=true');
+        // Wait a bit for AuthContext to start sync, then check if it started
+        setTimeout(async () => {
+          if (!mounted) return;
+          // If sync didn't start from AuthContext, start it here with force
+          if (firstSyncAfterLoginRef.current) {
+            console.log('[useDriversMarkersForMap] 🔄 AuthContext sync not detected, starting sync with force=true...');
+            await syncDrivers(true);
+          }
+        }, 3000); // Wait 3 seconds for AuthContext sync to start
+        return;
+      }
+
+      // For subsequent syncs, check if update is needed
+      const cachedCount = markersMapRef.current.size;
+      console.log(`[useDriversMarkersForMap] 📊 Cached drivers count: ${cachedCount}`);
+      
+      const needsUpdate = await shouldUpdateDriversCache(false);
+      
+      // If cache is empty or needs update, start sync
+      if (cachedCount === 0 || needsUpdate) {
+        if (cachedCount === 0) {
+          console.log('[useDriversMarkersForMap] 🔄 Cache is empty, starting sync...');
+        } else {
+          console.log('[useDriversMarkersForMap] 🔄 Cache needs update, starting sync...');
+        }
+        await syncDrivers(false);
       } else {
         console.log('[useDriversMarkersForMap] ✅ Cache is fresh, no sync needed');
       }
@@ -282,7 +318,7 @@ export function useDriversMarkersForMap() {
     console.log('[useDriversMarkersForMap] ⏰ Setting up periodic sync (every 2 minutes)...');
     const interval = setInterval(() => {
       console.log('[useDriversMarkersForMap] ⏰ Periodic sync triggered');
-      syncDrivers();
+      syncDrivers(false); // Periodic sync should not use force
     }, 2 * 60 * 1000); // 2 minutes (temporarily changed from 10 minutes)
 
     return () => {
@@ -322,10 +358,10 @@ export function useDriversMarkersForMap() {
         }
 
         // Check if cache needs update
-        const needsUpdate = await shouldUpdateDriversCache();
+        const needsUpdate = await shouldUpdateDriversCache(false);
         if (needsUpdate) {
           console.log('[useDriversMarkersForMap] 🔄 Cache needs update, starting sync...');
-          await syncDrivers();
+          await syncDrivers(false); // App state sync should not use force
         } else {
           console.log('[useDriversMarkersForMap] ✅ Cache is fresh, no sync needed');
         }

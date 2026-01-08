@@ -303,6 +303,27 @@ class ChatApiClient {
   }
 
   /**
+   * Mark all messages as read for multiple chat rooms
+   * Mirrors Next.js chatApi.markAllMessagesAsReadByChatRooms
+   */
+  async markAllMessagesAsReadByChatRooms(chatRoomIds: string[]): Promise<{
+    success: boolean;
+    chatRoomIds: string[];
+    messageIds: string[];
+    messagesByChatRoom: Record<string, string[]>;
+  }> {
+    return this.request<{
+      success: boolean;
+      chatRoomIds: string[];
+      messageIds: string[];
+      messagesByChatRoom: Record<string, string[]>;
+    }>('/v1/messages/read-all', {
+      method: 'PUT',
+      body: JSON.stringify({ chatRoomIds }),
+    });
+  }
+
+  /**
    * Delete or hide a chat room
    * For DIRECT chats: hides the chat for the user (marks as hidden in DB)
    * For GROUP chats: if user is admin, deletes the chat; if not admin, user leaves the chat

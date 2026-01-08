@@ -240,6 +240,52 @@ export default function ChatListItem({
     return role && role.trim() ? role : null;
   };
 
+  // Format role text: convert "Morning Tracking" -> "MORNING_TRACKING", "Recruiter Team Leader" -> "RECRUITER_TL"
+  const formatRoleText = (role: string): string => {
+    // If role already contains underscores and is uppercase, return as is
+    if (role.includes('_') && role === role.toUpperCase()) {
+      return role;
+    }
+    
+    // Convert to uppercase and replace spaces with underscores
+    return role
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, '_');
+  };
+
+  // Get background color for role tag based on role type
+  const getRoleBackgroundColor = (role: string): string => {
+    const normalizedRole = formatRoleText(role);
+    
+    // Define background color mapping for different roles
+    const roleBackgroundColors: { [key: string]: string } = {
+      'DRIVER_UPDATES': '#FF6B35', // Orange
+      'MODERATOR': '#B2B2B2', // Gray
+      'RECRUITER': '#00d200', // Green
+      'ADMINISTRATOR': 'rgba(96, 102, 197, 0.15)', // Purple (current default)
+      'NIGHTSHIFT_TRACKING': '#FF6B35', // Orange
+      'DISPATCHER': '#4A90E2', // Blue
+      'BILLING': 'rgba(96, 102, 197, 0.15)', // Purple (current default)
+      'ACCOUNTING': 'rgba(96, 102, 197, 0.15)', // Purple (current default)
+    };
+
+    // Try exact match first
+    if (roleBackgroundColors[normalizedRole]) {
+      return roleBackgroundColors[normalizedRole];
+    }
+
+    // Try partial match for roles like "RECRUITER_TL", "RECRUITER_*"
+    for (const [key, color] of Object.entries(roleBackgroundColors)) {
+      if (normalizedRole.startsWith(key + '_') || normalizedRole.includes('_' + key)) {
+        return color;
+      }
+    }
+
+    // Default background color if no match found
+    return 'rgba(96, 102, 197, 0.15)'; // Default purple background
+  };
+
   // Get avatar source
   // For DIRECT chats, always use the other participant's avatar
   const getAvatarSource = () => {
@@ -481,9 +527,9 @@ export default function ChatListItem({
       <View style={styles.rightSection}>
         {/* Role Tag */}
         {role ? (
-          <View style={ styles.roleTag }>
-            <Text style={ styles.roleTagText }>
-              {role}
+          <View style={[styles.roleTag, { backgroundColor: getRoleBackgroundColor(role) }]}>
+            <Text style={styles.roleTagText}>
+              {formatRoleText(role)}
             </Text>
           </View>
         ) : null}
@@ -621,13 +667,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: rem(10),
     paddingVertical: rem(5),
     borderRadius: 4,
-    backgroundColor: 'rgba(96, 102, 197, 0.15)',
+    // Background color is now set dynamically via inline style based on role type
     marginBottom: rem(8),
   },
   roleTagText: {
     fontSize: fp(10),
     fontFamily: fonts['600'],
-    color: 'rgba(96, 102, 197, 1)',
+    color: colors.primary.blue, // Text color is always primary blue
     textTransform: 'uppercase'
   },
   unreadBadgeText: {
