@@ -2,7 +2,8 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { View, StyleSheet, LogBox } from 'react-native';
+import { View, StyleSheet, LogBox, Platform } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 import { BlurView } from 'expo-blur';
 import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -424,6 +425,7 @@ function RootLayoutNav() {
 
   return (
     <>
+      <StatusBar style="light" />
       <Stack
         screenOptions={{
           headerShown: false,
