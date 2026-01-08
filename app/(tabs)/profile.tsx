@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import BottomNavigation from "../../components/navigation/BottomNavigation";
 import { useAuth } from "@/context/AuthContext";
 import { uploadImageViaPresign, updateUserAvatarOnBackend } from '@/app-api/upload';
-import { getUserById } from '@/app-api/users';
+import { getUserById, getUserFromBackend } from '@/app-api/users';
 import { secureStorage } from '@/utils/secureStorage';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
@@ -38,20 +38,34 @@ export default function ProfileScreen() {
   // Load user info from backend on mount
   React.useEffect(() => {
     const load = async () => {
-      if (!authState.user?.externalId) return;
+      if (!authState.user?.id) return;
+      
       try {
         setIsLoadingUser(true);
         setUserError(null);
-        const res = await getUserById(authState.user.externalId);
-        setUserDetails(res ?? null);
+        
+        if (isDriver) {
+          // For DRIVER: use TMS API (existing logic)
+          if (!authState.user?.externalId) {
+            setUserError('External ID not found for driver');
+            return;
+          }
+          const res = await getUserById(authState.user.externalId);
+          setUserDetails(res ?? null);
+        } else {
+          // For non-DRIVER: use our backend database
+          const res = await getUserFromBackend(authState.user.id);
+          setUserDetails(res ?? null);
+        }
       } catch (e) {
         setUserError(e instanceof Error ? e.message : 'Failed to load user');
+        console.error('[Profile] Failed to load user:', e);
       } finally {
         setIsLoadingUser(false);
       }
     };
     load();
-  }, [authState.user?.id]);
+  }, [authState.user?.id, authState.user?.externalId, isDriver]);
 
   const handleLogout = useCallback(async () => {
     try {
@@ -206,48 +220,73 @@ export default function ProfileScreen() {
                     <View style={styles.infoSectionWrap}>
                       <View style={styles.infoItem} >
                         <Text style={styles.infoTitle}>Phone</Text>
-                        <Text style={styles.infoValue}>{userDetails?.organized_data?.contact?.driver_phone || '-'}</Text>
+                        <Text style={styles.infoValue}>
+                          {isDriver 
+                            ? (userDetails?.organized_data?.contact?.driver_phone || '-')
+                            : (userDetails?.phone || '-')}
+                        </Text>
                       </View>
                       
                       <View style={styles.infoItem} >
                         <Text style={styles.infoTitle}>Email</Text>
-                        <Text style={styles.infoValue}>{userDetails?.organized_data?.contact?.driver_email || '-'}</Text>
+                        <Text style={styles.infoValue}>
+                          {isDriver 
+                            ? (userDetails?.organized_data?.contact?.driver_email || '-')
+                            : (userDetails?.email || '-')}
+                        </Text>
                       </View>
                       
                       <View style={styles.infoItem} >
                         <Text style={styles.infoTitle}>Home Location</Text>
-                        <Text style={styles.infoValue}>{userDetails?.organized_data?.contact?.home_location || '-'}</Text>
+                        <Text style={styles.infoValue}>
+                          {isDriver 
+                            ? (userDetails?.organized_data?.contact?.home_location || '-')
+                            : (userDetails?.location || '-')}
+                        </Text>
                       </View>
                       
                       <View style={styles.infoItem} >
                         <Text style={styles.infoTitle}>City</Text>
-                        <Text style={styles.infoValue}>{userDetails?.organized_data?.contact?.city || '-'}</Text>
+                        <Text style={styles.infoValue}>
+                          {isDriver 
+                            ? (userDetails?.organized_data?.contact?.city || '-')
+                            : (userDetails?.city || '-')}
+                        </Text>
                       </View>
                       
                       <View style={styles.infoItem} >
                         <Text style={styles.infoTitle}>State</Text>
-                        <Text style={styles.infoValue}>{userDetails?.organized_data?.contact?.city_state_zip || '-'}</Text>
+                        <Text style={styles.infoValue}>
+                          {isDriver 
+                            ? (userDetails?.organized_data?.contact?.city_state_zip || '-')
+                            : (userDetails?.state || '-')}
+                        </Text>
                       </View>
                       
-                      <View style={styles.infoItem} >
-                        <Text style={styles.infoTitle}>Date of Birth</Text>
-                        <Text style={styles.infoValue}>{userDetails?.organized_data?.contact?.date_of_birth || '-'}</Text>
-                      </View>
-                      
-                      <View style={styles.infoItem} >
-                        <Text style={styles.infoTitle}>Languages</Text>
-                        <Text style={styles.infoValue}>{userDetails?.organized_data?.contact?.languages || '-'}</Text>
-                      </View>
-                      
-                      <View style={styles.infoItem} >
-                        <Text style={styles.infoTitle}>Team Driver</Text>
-                        <Text style={styles.infoValue}>{userDetails?.organized_data?.contact?.team_driver?.name || '-'}</Text>
-                      </View>
-                      
-                      <View style={styles.infoItem} >
-                        <Text style={styles.infoTitle}>Preferred distance</Text>
-                        <Text style={styles.infoValue}>{userDetails?.organized_data?.contact?.preferred_distance || '-'}</Text>
-                      </View>
+                      {/* Hide these fields for non-DRIVER users */}
+                      {isDriver && (
+                        <>
+                          <View style={styles.infoItem} >
+                            <Text style={styles.infoTitle}>Date of Birth</Text>
+                            <Text style={styles.infoValue}>{userDetails?.organized_data?.contact?.date_of_birth || '-'}</Text>
+                          </View>
+                          
+                          <View style={styles.infoItem} >
+                            <Text style={styles.infoTitle}>Languages</Text>
+                            <Text style={styles.infoValue}>{userDetails?.organized_data?.contact?.languages || '-'}</Text>
+                          </View>
+                          
+                          <View style={styles.infoItem} >
+                            <Text style={styles.infoTitle}>Team Driver</Text>
+                            <Text style={styles.infoValue}>{userDetails?.organized_data?.contact?.team_driver?.name || '-'}</Text>
+                          </View>
+                          
+                          <View style={styles.infoItem} >
+                            <Text style={styles.infoTitle}>Preferred distance</Text>
+                            <Text style={styles.infoValue}>{userDetails?.organized_data?.contact?.preferred_distance || '-'}</Text>
+                          </View>
+                        </>
+                      )}
                     </View>
                   </View>
                   
@@ -481,7 +520,8 @@ const styles = StyleSheet.create({
   infoSectionWrap: {
     flexDirection: 'row',
     flexWrap: "wrap",
-    justifyContent: "space-between",
+    justifyContent: "flex-start",
+    gap: rem(15),
   },
   infoSectionTitle: {
     fontSize: fp(16),

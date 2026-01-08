@@ -1192,7 +1192,8 @@ export default function DriverContent() {
                 initialRegion={initialRegion}
                 markers={userLocation ? [{
                   coordinate: userLocation,
-                  anchor: { x: 0.5, y: 1.0 } // Anchor at bottom point of teardrop pin
+                  anchor: { x: 0.5, y: 1.0 }, // Anchor at bottom point of teardrop pin
+                  driverStatus: status || user?.driverStatus || null // Use current status from state, fallback to user.driverStatus
                 }] : []}
                 showsUserLocation={false}
                 showsMyLocationButton={false}
