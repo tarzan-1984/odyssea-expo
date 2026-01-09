@@ -178,6 +178,31 @@ class ChatCacheService {
       throw error;
     }
   }
+
+  /**
+   * Get cache size in bytes
+   */
+  async getCacheSize(): Promise<number> {
+    try {
+      const storedData = await AsyncStorage.getItem(CHAT_ROOMS_KEY);
+      if (!storedData) {
+        return 0;
+      }
+      // Calculate size in bytes (UTF-8 encoding)
+      // For JSON strings, most characters are ASCII (1 byte), but some may be multi-byte
+      // Using TextEncoder for accurate byte size calculation
+      if (typeof TextEncoder !== 'undefined') {
+        const encoder = new TextEncoder();
+        return encoder.encode(storedData).length;
+      }
+      // Fallback: approximate size (most JSON is ASCII, so string length is close to byte size)
+      // This is a reasonable approximation for JSON data
+      return storedData.length;
+    } catch (error) {
+      console.error('❌ [ChatCache] Failed to get cache size:', error);
+      return 0;
+    }
+  }
 }
 
 // Create singleton instance

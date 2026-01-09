@@ -228,6 +228,45 @@ class MessagesCacheService {
       throw error;
     }
   }
+
+  /**
+   * Get total cache size in bytes for all messages
+   */
+  async getCacheSize(): Promise<number> {
+    try {
+      const keys = await AsyncStorage.getAllKeys();
+      const messagesKeys = keys.filter(key => 
+        key.startsWith(MESSAGES_KEY_PREFIX) || key.startsWith(MESSAGES_TIMESTAMP_KEY_PREFIX)
+      );
+      
+      if (messagesKeys.length === 0) {
+        return 0;
+      }
+
+      // Get all message cache data
+      const items = await AsyncStorage.multiGet(messagesKeys);
+      
+      // Calculate total size
+      let totalSize = 0;
+      for (const [key, value] of items) {
+        if (value) {
+          // Calculate size in bytes (UTF-8 encoding)
+          if (typeof TextEncoder !== 'undefined') {
+            const encoder = new TextEncoder();
+            totalSize += encoder.encode(value).length;
+          } else {
+            // Fallback: approximate size
+            totalSize += value.length;
+          }
+        }
+      }
+      
+      return totalSize;
+    } catch (error) {
+      console.error('❌ [MessagesCache] Failed to get cache size:', error);
+      return 0;
+    }
+  }
 }
 
 // Create singleton instance

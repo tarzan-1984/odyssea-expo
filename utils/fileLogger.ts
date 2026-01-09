@@ -95,7 +95,7 @@ export const fileLogger = {
   
   warn: (tag: string, message: string, data?: any) => {
     console.warn(`[${tag}] ${message}`, data);
-    writeToFile('WARN', tag, message, data);
+    // Do not write warnings to file - only errors should be logged to file
   },
   
   // Get log file path for sharing

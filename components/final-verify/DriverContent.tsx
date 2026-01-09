@@ -41,6 +41,10 @@ export default function DriverContent() {
       await AsyncStorage.setItem('@user_zip', newZip);
     } catch (error) {
       console.error('[FinalVerify] Failed to save ZIP to AsyncStorage:', error);
+      fileLogger.error('FinalVerify', 'FAILED_TO_SAVE_ZIP', {
+        error: error instanceof Error ? error.message : String(error),
+        zip: newZip,
+      });
     }
   }, []);
   
@@ -84,6 +88,9 @@ export default function DriverContent() {
         }
       } catch (error) {
         console.error('[DriverContent] Failed to load saved data:', error);
+        fileLogger.error('DriverContent', 'FAILED_TO_LOAD_SAVED_DATA', {
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     };
     
@@ -136,6 +143,10 @@ export default function DriverContent() {
     const externalId = user?.externalId;
     if (!externalId) {
       console.error('[FinalVerify] No externalId found for user');
+      fileLogger.error('FinalVerify', 'NO_EXTERNAL_ID_FOUND', {
+        userId: user?.id,
+        userEmail: user?.email,
+      });
       return false;
     }
     
@@ -307,14 +318,20 @@ export default function DriverContent() {
       
       if (finalForegroundCheck.status !== 'granted') {
         console.error('❌ [BackgroundTracking] Foreground permission not granted:', finalForegroundCheck.status);
-        // Alert removed - error logged only
+        fileLogger.error('BackgroundTracking', 'FOREGROUND_PERMISSION_NOT_GRANTED', {
+          status: finalForegroundCheck.status,
+          platform: Platform.OS,
+        });
         return;
       }
       
       if (finalBackgroundCheck.status !== 'granted') {
         console.error('❌ [BackgroundTracking] Background permission not granted:', finalBackgroundCheck.status);
         console.error('❌ [BackgroundTracking] Background location requires "Always" permission on Android');
-        // Alert removed - error logged only
+        fileLogger.error('BackgroundTracking', 'BACKGROUND_PERMISSION_NOT_GRANTED', {
+          status: finalBackgroundCheck.status,
+          platform: Platform.OS,
+        });
         return;
       }
       
@@ -417,6 +434,10 @@ export default function DriverContent() {
         console.error('❌ [BackgroundTracking] Error type:', typeof startError);
         console.error('❌ [BackgroundTracking] Error instanceof Error:', startError instanceof Error);
         
+        // Re-check permissions to see if they're actually granted
+        const recheckForeground = await Location.getForegroundPermissionsAsync();
+        const recheckBackground = await Location.getBackgroundPermissionsAsync();
+        
         if (startError instanceof Error) {
           console.error('❌ [BackgroundTracking] Error message:', startError.message);
           console.error('❌ [BackgroundTracking] Error stack:', startError.stack);
@@ -424,9 +445,6 @@ export default function DriverContent() {
           console.error('❌ [BackgroundTracking] Error (not Error instance):', JSON.stringify(startError));
         }
         
-        // Re-check permissions to see if they're actually granted
-        const recheckForeground = await Location.getForegroundPermissionsAsync();
-        const recheckBackground = await Location.getBackgroundPermissionsAsync();
         console.error('❌ [BackgroundTracking] Permission re-check after error:');
         console.error('❌ [BackgroundTracking] - Foreground:', recheckForeground.status);
         console.error('❌ [BackgroundTracking] - Background:', recheckBackground.status);
@@ -540,6 +558,10 @@ export default function DriverContent() {
         console.error('❌ [BackgroundTracking] 2. Task not registered (check above logs)');
         console.error('❌ [BackgroundTracking] 3. Android system restrictions');
         console.error('❌ [BackgroundTracking] 4. Foreground service notification permission issue');
+        fileLogger.error('BackgroundTracking', 'TASK_VERIFICATION_FAILED', {
+          platform: Platform.OS,
+          androidVersion: Platform.OS === 'android' ? Platform.Version : null,
+        });
       }
     } catch (error) {
       console.error('❌ [BackgroundTracking] ========== ERROR STARTING TASK ==========');
@@ -609,6 +631,11 @@ export default function DriverContent() {
       console.log('📍 [BackgroundTracking] Stop request completed');
     } catch (error) {
       console.error('❌ [BackgroundTracking] Error stopping task:', error);
+      fileLogger.error('BackgroundTracking', 'ERROR_STOPPING_TASK', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        platform: Platform.OS,
+      });
     }
   }, []);
 
@@ -700,6 +727,10 @@ export default function DriverContent() {
       }
     } catch (error) {
       console.error('❌ [FinalVerify] Failed to check location updates:', error);
+      fileLogger.error('FinalVerify', 'FAILED_TO_CHECK_LOCATION_UPDATES', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
     }
   }, [syncLocationFromAsyncStorage, setZip, formatAddressLabel]);
 
@@ -867,7 +898,7 @@ export default function DriverContent() {
       }
 
       // Send location update to our backend (independent of TMS API)
-      fileLogger.warn('DriverContent', 'Sending location update to backend in handleUpdateStatus', {
+      console.warn('[DriverContent] Sending location update to backend in handleUpdateStatus', {
         latitude: currentLocation.latitude,
         longitude: currentLocation.longitude,
         zip,
@@ -884,14 +915,14 @@ export default function DriverContent() {
       });
 
       if (backendSuccess) {
-        fileLogger.warn('DriverContent', 'Backend update successful in handleUpdateStatus, saving location data');
+        console.warn('[DriverContent] Backend update successful in handleUpdateStatus, saving location data');
         // Update lastLocationUpdate in AuthContext only after successful backend update
         await updateUserLocation(
           currentLocation.latitude,
           currentLocation.longitude,
           zip
         );
-        fileLogger.warn('DriverContent', 'Location data saved to app in handleUpdateStatus', {
+        console.warn('[DriverContent] Location data saved to app in handleUpdateStatus', {
           latitude: currentLocation.latitude,
           longitude: currentLocation.longitude,
           zip,
@@ -923,11 +954,11 @@ export default function DriverContent() {
       return;
     }
 
-    fileLogger.warn('DriverContent', 'Share location button pressed');
+    console.warn('[DriverContent] Share location button pressed');
     setIsSharingLocation(true);
     try {
       if (hasLocationPermission === null) {
-        fileLogger.warn('DriverContent', 'Requesting location permission');
+        console.warn('[DriverContent] Requesting location permission');
         const { status } = await Location.requestForegroundPermissionsAsync();
         const granted = status === 'granted';
         setHasLocationPermission(granted);
@@ -936,10 +967,10 @@ export default function DriverContent() {
           console.warn('Location permission not granted');
           return;
         }
-        fileLogger.warn('DriverContent', 'Location permission granted');
+        console.warn('[DriverContent] Location permission granted');
       }
 
-      fileLogger.warn('DriverContent', 'Getting current location');
+      console.warn('[DriverContent] Getting current location');
       const pos = await Location.getCurrentPositionAsync({
         accuracy: Location.Accuracy.Balanced,
       });
@@ -949,7 +980,6 @@ export default function DriverContent() {
         return;
       }
       const { latitude, longitude } = pos.coords;
-      fileLogger.warn('DriverContent', 'Location obtained', { latitude, longitude });
       const nextRegion: Region = {
         latitude,
         longitude,
@@ -958,7 +988,6 @@ export default function DriverContent() {
       };
       
       // Reverse geocode to get ZIP code and human-readable address
-      fileLogger.warn('DriverContent', 'Starting reverse geocoding', { latitude, longitude });
       let postalCode = '';
       let city: string | undefined;
       let state: string | undefined;
@@ -975,9 +1004,6 @@ export default function DriverContent() {
           }
           locationString = formatAddressLabel(geo);
           setLocationLabel(locationString);
-          fileLogger.warn('DriverContent', 'Reverse geocoding successful', { postalCode, city, state });
-        } else {
-          fileLogger.warn('DriverContent', 'Reverse geocoding returned empty results');
         }
       } catch (geoError) {
         fileLogger.error('DriverContent', 'Reverse geocoding failed', { error: geoError instanceof Error ? geoError.message : String(geoError) });
@@ -1003,13 +1029,6 @@ export default function DriverContent() {
         
         // Send location update to our backend (independent of TMS API)
         if (status && finalZipCode) {
-          fileLogger.warn('DriverContent', 'Sending location update to backend after Share my location', {
-            latitude,
-            longitude,
-            zip: finalZipCode,
-            city,
-            state,
-          });
           console.log('[DriverContent] Sending location update to backend after Share my location...');
           
           const backendSuccess = await sendLocationUpdateToBackendUser({
@@ -1023,15 +1042,11 @@ export default function DriverContent() {
           });
           
           if (backendSuccess) {
-            fileLogger.warn('DriverContent', 'Backend update successful, saving location data to app');
             // Update coordinates and time only after successful backend update
             await updateUserLocation(latitude, longitude, finalZipCode);
-            fileLogger.warn('DriverContent', 'Location data saved to app', { latitude, longitude, zip: finalZipCode });
           } else {
             fileLogger.error('DriverContent', 'Backend update failed');
           }
-        } else {
-          fileLogger.warn('DriverContent', 'Skipping backend update - missing status or zip', { hasStatus: !!status, hasZip: !!finalZipCode });
         }
         
         // Start background location tracking

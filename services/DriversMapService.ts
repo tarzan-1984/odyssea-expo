@@ -34,7 +34,6 @@ interface DriversMapResponse {
  */
 export async function shouldUpdateDriversCache(force: boolean = false): Promise<boolean> {
   if (force) {
-    console.log('[DriversMapService] 🔴 Force sync requested, bypassing cache checks');
     return true;
   }
   
@@ -42,38 +41,27 @@ export async function shouldUpdateDriversCache(force: boolean = false): Promise<
     // First check if cache has any data
     const cached = await AsyncStorage.getItem(DRIVERS_CACHE_KEY);
     if (!cached) {
-      console.log('[DriversMapService] ⚠️ No cache data found, cache needs update');
       return true;
     }
     
     const parsed = JSON.parse(cached) as DriverForMap[];
     if (!Array.isArray(parsed) || parsed.length === 0) {
-      console.log('[DriversMapService] ⚠️ Cache is empty, cache needs update');
       return true;
     }
     
     // Then check timestamp
     const ts = await AsyncStorage.getItem(DRIVERS_LAST_UPDATE_KEY);
     if (!ts) {
-      console.log('[DriversMapService] ⚠️ No last update timestamp found, cache needs update');
       return true;
     }
     const last = parseInt(ts, 10);
     if (Number.isNaN(last)) {
-      console.log('[DriversMapService] ⚠️ Invalid last update timestamp, cache needs update');
       return true;
     }
     const age = Date.now() - last;
-    const ageMinutes = Math.floor(age / 60000);
     const needsUpdate = age >= UPDATE_INTERVAL_MS;
-    if (needsUpdate) {
-      console.log(`[DriversMapService] ⏰ Cache is ${ageMinutes} minutes old (threshold: 2 minutes), needs update`);
-    } else {
-      console.log(`[DriversMapService] ✅ Cache is ${ageMinutes} minutes old, still fresh (${parsed.length} drivers in cache)`);
-    }
     return needsUpdate;
   } catch (error) {
-    console.warn('[DriversMapService] ⚠️ Error checking cache age:', error);
     // On any error, treat as needing update
     return true;
   }
@@ -84,21 +72,16 @@ export async function shouldUpdateDriversCache(force: boolean = false): Promise<
  */
 export async function getCachedDriversForMap(): Promise<DriverForMap[]> {
   try {
-    console.log('[DriversMapService] 📖 Reading cached drivers from AsyncStorage...');
     const cached = await AsyncStorage.getItem(DRIVERS_CACHE_KEY);
     if (!cached) {
-      console.log('[DriversMapService] ⚠️ No cached drivers found');
       return [];
     }
     const parsed = JSON.parse(cached) as DriverForMap[];
     if (!Array.isArray(parsed)) {
-      console.warn('[DriversMapService] ⚠️ Cached data is not an array');
       return [];
     }
-    console.log(`[DriversMapService] ✅ Loaded ${parsed.length} drivers from cache`);
     return parsed;
   } catch (error) {
-    console.error('[DriversMapService] ❌ Failed to read cached drivers:', error);
     return [];
   }
 }
@@ -134,29 +117,21 @@ export async function syncDriversForMap(
       // Check if app is in background - skip requests if so
       const appState = AppState.currentState;
       if (appState !== 'active') {
-        console.log(`[DriversMapService] ⏸️ App is in ${appState} state, pausing sync...`);
-        console.log(`[DriversMapService] 💾 Saving ${allDrivers.length} drivers collected so far...`);
-        
         // Save partial data before pausing
         if (allDrivers.length > 0) {
           try {
             await AsyncStorage.setItem(DRIVERS_CACHE_KEY, JSON.stringify(allDrivers));
-            console.log(`[DriversMapService] ✅ Saved ${allDrivers.length} drivers to cache`);
           } catch (saveError) {
-            console.error('[DriversMapService] ❌ Failed to save partial data:', saveError);
+            // Silent fail
           }
         }
         
         // Break the loop - sync will resume when app becomes active again
-        console.log('[DriversMapService] ℹ️ Sync paused. Will resume when app becomes active.');
         break;
       }
       
       const url = `${API_BASE_URL}/v1/users/drivers/map?page=${page}&limit=${PAGE_SIZE}`;
-      console.log(`[DriversMapService] 📄 Fetching page ${page}...`);
-      console.log(`[DriversMapService] 🔗 URL: ${url}`);
 
-      const pageStartTime = Date.now();
       const response = await fetch(url, {
         method: 'GET',
         headers: {
@@ -165,14 +140,7 @@ export async function syncDriversForMap(
         },
       });
 
-      const pageFetchTime = Date.now() - pageStartTime;
-      console.log(`[DriversMapService] ⏱️ Page ${page} fetch time: ${pageFetchTime}ms`);
-
       if (!response.ok) {
-        const errorText = await response.text().catch(() => '');
-        console.error(`[DriversMapService] ❌ Failed to fetch page ${page}`);
-        console.error(`[DriversMapService] Status: ${response.status}`);
-        console.error(`[DriversMapService] Error: ${errorText}`);
         break;
       }
 
@@ -181,9 +149,6 @@ export async function syncDriversForMap(
       // Backend wraps response in { data: {...}, timestamp, path } due to TransformInterceptor
       const data = responseData.data || responseData as any;
       const pageDrivers = Array.isArray(data?.drivers) ? data.drivers : [];
-      
-      console.log(`[DriversMapService] ✅ Page ${page} received: ${pageDrivers.length} drivers`);
-      console.log(`[DriversMapService] 🔍 Response structure check - has data wrapper: ${!!responseData.data}, drivers count: ${pageDrivers.length}`);
 
       // Filter out invalid coordinates just in case
       const validDrivers = pageDrivers.filter(
@@ -194,17 +159,10 @@ export async function syncDriversForMap(
           !Number.isNaN(d.longitude),
       );
 
-      const invalidCount = pageDrivers.length - validDrivers.length;
-      if (invalidCount > 0) {
-        console.warn(`[DriversMapService] ⚠️ Page ${page}: ${invalidCount} drivers with invalid coordinates filtered out`);
-      }
-
       allDrivers.push(...validDrivers);
-      console.log(`[DriversMapService] 📊 Total drivers collected so far: ${allDrivers.length}`);
 
       // Incremental UI update
       if (onPageLoaded && validDrivers.length > 0) {
-        console.log(`[DriversMapService] 🎨 Updating UI with ${validDrivers.length} drivers from page ${page}`);
         onPageLoaded(validDrivers);
       }
 
@@ -212,30 +170,22 @@ export async function syncDriversForMap(
       if (pagination) {
         totalPages = pagination.total_pages || 0;
         totalCount = pagination.total_count || 0;
-        console.log(`[DriversMapService] 📈 Pagination info: page ${pagination.current_page}/${totalPages}, total: ${totalCount}`);
-        console.log(`[DriversMapService] 📈 has_next_page: ${pagination.has_next_page} (type: ${typeof pagination.has_next_page})`);
         
         if (typeof pagination.has_next_page === 'boolean') {
           hasNext = pagination.has_next_page;
           const nextPage = (pagination.current_page || page) + 1;
-          console.log(`[DriversMapService] 📈 Setting next page to ${nextPage}, hasNext: ${hasNext}`);
           page = nextPage;
         } else {
-          console.warn(`[DriversMapService] ⚠️ has_next_page is not boolean, stopping sync`);
           hasNext = false;
         }
       } else {
         // Fallback: stop if we received less than page size
         hasNext = validDrivers.length === PAGE_SIZE;
         page += 1;
-        console.log(`[DriversMapService] ⚠️ No pagination info, using fallback logic. Has next: ${hasNext}, received: ${validDrivers.length}, page size: ${PAGE_SIZE}`);
       }
-      
-      console.log(`[DriversMapService] 🔄 Loop condition check: hasNext=${hasNext}, will continue: ${hasNext}`);
 
       // Small delay between requests to avoid stressing backend
       if (hasNext) {
-        console.log(`[DriversMapService] ⏳ Waiting 300ms before next page...`);
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
     }
@@ -247,31 +197,10 @@ export async function syncDriversForMap(
     await AsyncStorage.setItem(DRIVERS_CACHE_KEY, JSON.stringify(allDrivers));
     await AsyncStorage.setItem(DRIVERS_LAST_UPDATE_KEY, Date.now().toString());
     
-    console.log('[DriversMapService] ✅ Sync completed successfully!');
-    console.log(`[DriversMapService] 📊 Final statistics:`);
-    console.log(`[DriversMapService]    - Total drivers: ${allDrivers.length}`);
-    console.log(`[DriversMapService]    - Total pages fetched: ${page - 1}`);
-    console.log(`[DriversMapService]    - Total count from backend: ${totalCount}`);
-    console.log(`[DriversMapService]    - Sync duration: ${syncDuration}ms`);
-    console.log(`[DriversMapService]    - Cache saved to AsyncStorage`);
+    console.log(`[DriversMapService] Total drivers: ${allDrivers.length}`);
   } catch (error) {
     const syncEndTime = Date.now();
     const syncDuration = syncEndTime - syncStartTime;
-    
-    // Check if error is network-related
-    const isNetworkError = 
-      error instanceof TypeError && 
-      (error.message?.includes('Network request failed') || 
-       error.message?.includes('Failed to fetch') ||
-       error.message?.includes('network'));
-    
-    if (isNetworkError) {
-      console.warn('[DriversMapService] ⚠️ Network error detected (app may have been backgrounded)');
-    }
-    
-    console.error('[DriversMapService] ❌ Failed to sync drivers');
-    console.error(`[DriversMapService] Error after ${syncDuration}ms:`, error);
-    console.error('[DriversMapService] Drivers collected before error:', allDrivers.length);
     
     // Save partial data if we collected any drivers before the error
     // This is especially important when app goes to background during sync
@@ -279,10 +208,8 @@ export async function syncDriversForMap(
       try {
         await AsyncStorage.setItem(DRIVERS_CACHE_KEY, JSON.stringify(allDrivers));
         // Don't update last update timestamp if sync failed - will retry next time
-        console.log(`[DriversMapService] 💾 Saved ${allDrivers.length} drivers to cache (partial sync)`);
-        console.log('[DriversMapService] ℹ️ Will retry full sync next time cache is checked');
       } catch (saveError) {
-        console.error('[DriversMapService] ❌ Failed to save partial data:', saveError);
+        // Silent fail
       }
     }
     
@@ -299,51 +226,38 @@ export async function syncDriversForMapAfterLogin(
   accessTokenFromLogin?: string,
   onPageLoaded?: (drivers: DriverForMap[]) => void,
 ): Promise<void> {
-  console.log('[DriversMapService] 🔐 Starting sync after login (forced full sync with force=true)...');
   try {
     let token: string | null | undefined = accessTokenFromLogin;
 
     // Fallback: try get from AsyncStorage or secureStorage if not provided
     if (!token) {
-      console.log('[DriversMapService] 🔍 Access token not provided, trying to get from cache...');
       try {
         const cachedToken = await AsyncStorage.getItem('@user_access_token');
         if (cachedToken) {
           token = cachedToken;
-          console.log('[DriversMapService] ✅ Found access token in AsyncStorage');
-        } else {
-          console.log('[DriversMapService] ⚠️ Access token not found in AsyncStorage');
         }
       } catch (error) {
-        console.warn('[DriversMapService] ⚠️ Failed to read from AsyncStorage:', error);
+        // Silent fail
       }
-    } else {
-      console.log('[DriversMapService] ✅ Using provided access token');
     }
 
     if (!token) {
-      console.log('[DriversMapService] 🔍 Trying secureStorage...');
       token = await secureStorage.getItemAsync('accessToken');
-      if (token) {
-        console.log('[DriversMapService] ✅ Found access token in secureStorage');
-      } else {
-        console.warn('[DriversMapService] ❌ No access token available for sync');
+      if (!token) {
         return;
       }
     }
 
     // Ensure token is string before passing to syncDriversForMap
     if (!token) {
-      console.warn('[DriversMapService] ❌ No access token available for sync');
       return;
     }
 
     // After login, always perform full sync with force=true (ignore cache freshness)
     // This ensures we get all drivers on first login
-    console.log('[DriversMapService] 🔄 Starting forced full sync after login (force=true, ignoring cache freshness)...');
     await syncDriversForMap(token, onPageLoaded, true); // Pass force=true
   } catch (error) {
-    console.error('[DriversMapService] ❌ syncDriversForMapAfterLogin error:', error);
+    // Silent fail
   }
 }
 

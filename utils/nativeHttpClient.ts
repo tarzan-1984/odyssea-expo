@@ -40,7 +40,6 @@ export async function sendLocationUpdateNative(
   console.log('[nativeHttpClient] Platform:', Platform.OS);
   console.log('[nativeHttpClient] Module available:', !!LocationHttpModule);
   
-  fileLogger.warn('nativeHttpClient', 'NATIVE_REQUEST_START', {
     platform: Platform.OS,
     moduleAvailable: !!LocationHttpModule,
     url,
@@ -49,7 +48,6 @@ export async function sendLocationUpdateNative(
   
   if (Platform.OS !== 'android' || !LocationHttpModule) {
     console.warn('[nativeHttpClient] Native module not available, falling back to fetch');
-    fileLogger.warn('nativeHttpClient', 'FALLBACK_TO_FETCH', {
       platform: Platform.OS,
       moduleAvailable: !!LocationHttpModule,
     });
@@ -67,7 +65,6 @@ export async function sendLocationUpdateNative(
       const duration = Date.now() - requestStartTime;
       const success = response.ok;
       console.log(`[nativeHttpClient] Fetch fallback ${success ? 'success' : 'failed'} (${duration}ms), status: ${response.status}`);
-      fileLogger.warn('nativeHttpClient', success ? 'FETCH_FALLBACK_SUCCESS' : 'FETCH_FALLBACK_FAILED', {
         duration,
         status: response.status,
         url,
@@ -87,7 +84,6 @@ export async function sendLocationUpdateNative(
 
   try {
     console.log('[nativeHttpClient] Calling native module sendLocationUpdate...');
-    fileLogger.warn('nativeHttpClient', 'CALLING_NATIVE_MODULE', {
       url,
       dataSize: JSON.stringify(requestData).length,
     });
@@ -97,7 +93,6 @@ export async function sendLocationUpdateNative(
     const success = await LocationHttpModule.sendLocationUpdate(url, apiKey, requestData as any);
     const duration = Date.now() - requestStartTime;
     console.log(`[nativeHttpClient] Native request ${success ? 'successful' : 'failed'} (${duration}ms)`);
-    fileLogger.warn('nativeHttpClient', success ? 'NATIVE_REQUEST_SUCCESS' : 'NATIVE_REQUEST_FAILED', {
       duration,
       url,
       success,
@@ -143,6 +138,10 @@ export async function sendHttpGetRequestNative(
       return null;
     } catch (error) {
       console.error('[nativeHttpClient] Fetch fallback failed:', error);
+      fileLogger.error('nativeHttpClient', 'FETCH_FALLBACK_ERROR_GET', {
+        error: error instanceof Error ? error.message : String(error),
+        url,
+      });
       return null;
     }
   }
@@ -160,6 +159,12 @@ export async function sendHttpGetRequestNative(
     return responseBody;
   } catch (error: any) {
     console.error('[nativeHttpClient] Native GET request failed:', error);
+    fileLogger.error('nativeHttpClient', 'NATIVE_GET_REQUEST_FAILED', {
+      error: error instanceof Error ? error.message : String(error),
+      errorCode: error?.code || 'unknown',
+      url,
+      stack: error?.stack,
+    });
     // Return null on error instead of throwing
     return null;
   }

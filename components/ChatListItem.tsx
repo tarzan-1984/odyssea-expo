@@ -240,18 +240,51 @@ export default function ChatListItem({
     return role && role.trim() ? role : null;
   };
 
-  // Format role text: convert "Morning Tracking" -> "MORNING_TRACKING", "Recruiter Team Leader" -> "RECRUITER_TL"
+  // Format role text: convert role to readable format (e.g., "DRIVER_UPDATES" -> "Driver Updates")
   const formatRoleText = (role: string): string => {
-    // If role already contains underscores and is uppercase, return as is
-    if (role.includes('_') && role === role.toUpperCase()) {
-      return role;
-    }
-    
-    // Convert to uppercase and replace spaces with underscores
-    return role
+    // Normalize role to uppercase with underscores for matching
+    const normalizedRole = role
       .trim()
       .toUpperCase()
       .replace(/\s+/g, '_');
+    
+    // Mapping of normalized roles to display format
+    const roleDisplayMap: { [key: string]: string } = {
+      'DRIVER_UPDATES': 'Driver Updates',
+      'MODERATOR': 'Moderator',
+      'RECRUITER': 'Recruiter',
+      'ADMINISTRATOR': 'Administrator',
+      'NIGHTSHIFT_TRACKING': 'Nightshift Tracking',
+      'DISPATCHER': 'Dispatcher',
+      'BILLING': 'Billing',
+      'ACCOUNTING': 'Accounting',
+      'RECRUITER_TL': 'Recruiter Team Leader',
+      'DRIVER': 'Driver',
+      'EXPEDITE_MANAGER': 'Expedite Manager',
+      'TRACKING_TL': 'Tracking Team Leader',
+      'DISPATCHER_TL': 'Dispatcher Team Leader',
+      'TRACKING': 'Tracking',
+      'SUBSCRIBER': 'Subscriber',
+      'MORNING_TRACKING': 'Morning Tracking',
+    };
+    
+    // Try exact match first
+    if (roleDisplayMap[normalizedRole]) {
+      return roleDisplayMap[normalizedRole];
+    }
+    
+    // Try partial match for roles like "RECRUITER_TL", "RECRUITER_*"
+    for (const [key, displayValue] of Object.entries(roleDisplayMap)) {
+      if (normalizedRole.startsWith(key + '_') || normalizedRole.includes('_' + key)) {
+        return displayValue;
+      }
+    }
+    
+    // If no match found, convert underscores to spaces and capitalize words
+    return normalizedRole
+      .split('_')
+      .map(word => word.charAt(0) + word.slice(1).toLowerCase())
+      .join(' ');
   };
 
   // Get background color for role tag based on role type
@@ -263,7 +296,7 @@ export default function ChatListItem({
       'DRIVER_UPDATES': '#FF6B35', // Orange
       'MODERATOR': '#B2B2B2', // Gray
       'RECRUITER': '#00d200', // Green
-      'ADMINISTRATOR': 'rgba(96, 102, 197, 0.15)', // Purple (current default)
+      'ADMINISTRATOR': '#B2B2B2', // Gray (same as MODERATOR)
       'NIGHTSHIFT_TRACKING': '#FF6B35', // Orange
       'DISPATCHER': '#4A90E2', // Blue
       'BILLING': 'rgba(96, 102, 197, 0.15)', // Purple (current default)
@@ -671,10 +704,9 @@ const styles = StyleSheet.create({
     marginBottom: rem(8),
   },
   roleTagText: {
-    fontSize: fp(10),
+    fontSize: fp(12),
     fontFamily: fonts['600'],
     color: colors.primary.blue, // Text color is always primary blue
-    textTransform: 'uppercase'
   },
   unreadBadgeText: {
     fontSize: 10,
