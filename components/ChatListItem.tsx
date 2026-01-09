@@ -287,9 +287,17 @@ export default function ChatListItem({
       .join(' ');
   };
 
+  // Normalize role to uppercase with underscores for color matching
+  const normalizeRoleForColor = (role: string): string => {
+    return role
+      .trim()
+      .toUpperCase()
+      .replace(/\s+/g, '_');
+  };
+
   // Get background color for role tag based on role type
   const getRoleBackgroundColor = (role: string): string => {
-    const normalizedRole = formatRoleText(role);
+    const normalizedRole = normalizeRoleForColor(role);
     
     // Define background color mapping for different roles
     const roleBackgroundColors: { [key: string]: string } = {
@@ -301,6 +309,14 @@ export default function ChatListItem({
       'DISPATCHER': '#4A90E2', // Blue
       'BILLING': 'rgba(96, 102, 197, 0.15)', // Purple (current default)
       'ACCOUNTING': 'rgba(96, 102, 197, 0.15)', // Purple (current default)
+      'RECRUITER_TL': '#00d200', // Green (same as RECRUITER)
+      'DRIVER': '#D2B48C', // Light brown (tan)
+      'EXPEDITE_MANAGER': 'rgba(96, 102, 197, 0.15)', // Default purple
+      'TRACKING_TL': 'rgba(96, 102, 197, 0.15)', // Default purple
+      'DISPATCHER_TL': '#4A90E2', // Blue (same as DISPATCHER)
+      'TRACKING': 'rgba(96, 102, 197, 0.15)', // Default purple
+      'SUBSCRIBER': 'rgba(96, 102, 197, 0.15)', // Default purple
+      'MORNING_TRACKING': 'rgba(96, 102, 197, 0.15)', // Default purple
     };
 
     // Try exact match first
