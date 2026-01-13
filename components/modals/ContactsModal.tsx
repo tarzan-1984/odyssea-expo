@@ -371,7 +371,7 @@ const styles = StyleSheet.create({
   title: {
     color: colors.neutral.white,
     fontFamily: fonts['700'],
-    fontSize: fp(16),
+    fontSize: fp(22),
   },
   closeBtn: {
     paddingHorizontal: rem(8),

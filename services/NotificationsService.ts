@@ -77,7 +77,64 @@ Notifications.setNotificationHandler({
         } catch {}
       }
 
-      const suppress = (activeId && incomingChatId && activeId === incomingChatId) || isMuted;
+      // Check if sound should be blocked for drivers with expired_documents or blocked status
+      let shouldBlockSound = false;
+      try {
+        const secureStorage = (await import('@/utils/secureStorage')).secureStorage;
+        const userStr = await secureStorage.getItemAsync('user').catch(() => null);
+        if (userStr) {
+          const currentUser = JSON.parse(userStr);
+          const userRole = currentUser?.role;
+          const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+          const driverStatus = await AsyncStorage.getItem('@user_status').catch(() => null);
+
+          // Block all push notifications for drivers with 'blocked' status
+          if (userRole === 'DRIVER' && driverStatus === 'blocked') {
+            shouldBlockSound = true;
+          }
+
+          // Filter push notifications for drivers with 'expired_documents' status
+          if (userRole === 'DRIVER' && driverStatus === 'expired_documents') {
+            // Get chat type from chatRoom in store or try to parse from data
+            let chatType: string | undefined = chatRoom?.type;
+            
+            // If chatRoom not found in store, try to get type from notification data
+            if (!chatType && data?.chatRoomType) {
+              chatType = data.chatRoomType;
+            }
+
+            // Block all non-DIRECT chats
+            if (chatType && chatType !== 'DIRECT') {
+              shouldBlockSound = true;
+            } else if (chatType === 'DIRECT' || !chatType) {
+              // For DIRECT chats (or if type unknown, assume DIRECT for safety), only allow if sender role is in allowed list
+              const allowedRolesForExpiredDocuments = ['RECRUITER', 'RECRUITER_TL', 'ADMINISTRATOR', 'EXPEDITE_MANAGER'];
+              
+              // Get sender role from notification data (sender is serialized as JSON string)
+              let senderRole: string | undefined;
+              if (data?.sender) {
+                try {
+                  // Try to parse if it's a JSON string
+                  const senderData = typeof data.sender === 'string' ? JSON.parse(data.sender) : data.sender;
+                  senderRole = senderData?.role;
+                } catch {
+                  // If parsing fails, try direct access
+                  senderRole = data.sender?.role;
+                }
+              }
+              
+              if (!senderRole || !allowedRolesForExpiredDocuments.includes(senderRole)) {
+                shouldBlockSound = true;
+              }
+            }
+          }
+        }
+      } catch (error) {
+        // If error occurs, don't block sound (fail open)
+        console.warn('[NotificationsService] Failed to check driver status for sound blocking:', error);
+      }
+
+      const suppress = (activeId && incomingChatId && activeId === incomingChatId) || isMuted || shouldBlockSound;
 
       // Get avatar URL for notification (if not already in data)
       // For Android, we can use largeIcon with URL

@@ -1,5 +1,6 @@
 import { Audio } from 'expo-av';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { secureStorage } from '@/utils/secureStorage';
 
 let isInitialized = false;
 let soundObject: Audio.Sound | null = null;
@@ -44,6 +45,26 @@ export async function playIncomingMessageSound(): Promise<void> {
 		if (!enabled) {
 			if (__DEV__) console.log('[SoundManager] Notifications disabled in settings, skipping sound');
 			return;
+		}
+
+		// Check if sound should be blocked for drivers with blocked status
+		try {
+			const userStr = await secureStorage.getItemAsync('user').catch(() => null);
+			if (userStr) {
+				const currentUser = JSON.parse(userStr);
+				const userRole = currentUser?.role;
+				if (userRole === 'DRIVER') {
+					const driverStatus = await AsyncStorage.getItem('@user_status').catch(() => null);
+					// Block all sounds for drivers with 'blocked' status
+					if (driverStatus === 'blocked') {
+						if (__DEV__) console.log('[SoundManager] Sound blocked for driver with blocked status');
+						return;
+					}
+				}
+			}
+		} catch (error) {
+			// If error occurs, don't block sound (fail open)
+			if (__DEV__) console.warn('[SoundManager] Failed to check driver status for sound blocking:', error);
 		}
 
 		if (__DEV__) console.log('[SoundManager] playIncomingMessageSound() called');

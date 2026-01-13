@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { View, TouchableOpacity, Text, StyleSheet, Dimensions, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { colors, fonts, fp, rem } from '@/lib';
@@ -7,6 +7,10 @@ import ChatIcon from '@/icons/ChatIcon';
 import ProfileIcon from '@/icons/ProfileIcon';
 import SettingsIcon from '@/icons/SettingsIcon';
 import { useChatRooms } from '@/hooks/useChatRooms';
+import { useAuth } from '@/context/AuthContext';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { eventBus } from '@/services/EventBus';
+import { AppState, AppStateStatus } from 'react-native';
 const { width } = Dimensions.get('window');
 
 interface NavItemProps {
@@ -53,13 +57,94 @@ interface BottomNavigationProps {
 
 export default function BottomNavigation({ currentRoute }: BottomNavigationProps) {
   const { chatRooms } = useChatRooms();
+  const { authState } = useAuth();
+  const [driverStatus, setDriverStatus] = useState<string | null>(null);
 
-  // Calculate total unread messages count
+  const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+
+  // Load driver status from AsyncStorage
+  const loadDriverStatus = useCallback(async () => {
+    const userRole = authState.user?.role;
+    if (userRole === 'DRIVER') {
+      try {
+        const status = await AsyncStorage.getItem('@user_status');
+        setDriverStatus(status);
+      } catch (error) {
+        console.warn('[BottomNavigation] Failed to load driver status:', error);
+      }
+    } else {
+      setDriverStatus(null);
+    }
+  }, [authState.user?.role]);
+
+  useEffect(() => {
+    loadDriverStatus();
+  }, [loadDriverStatus]);
+
+  // Listen for driver status updates from WebSocket
+  useEffect(() => {
+    const handleDriverStatusUpdate = async (data: { driverStatus: string | null }) => {
+      if (authState.user?.role === 'DRIVER') {
+        setDriverStatus(data.driverStatus);
+      }
+    };
+
+    const unsubscribe = eventBus.on('DRIVER_STATUS_UPDATED', handleDriverStatusUpdate);
+
+    return () => {
+      unsubscribe();
+    };
+  }, [authState.user?.role]);
+
+  // Reload driver status when app returns from background
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      const prevState = appStateRef.current;
+      
+      // Transition from inactive/background to active
+      if (prevState.match(/inactive|background/) && nextAppState === 'active') {
+        if (authState.user?.role === 'DRIVER') {
+          loadDriverStatus();
+        }
+      }
+      
+      appStateRef.current = nextAppState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [authState.user?.role, loadDriverStatus]);
+
+  // Calculate total unread messages count, excluding blocked chats for drivers with expired_documents
   const totalUnreadCount = useMemo(() => {
     return chatRooms.reduce((total, room) => {
+      // Filter out blocked chats for drivers with expired_documents status
+      const userRole = authState.user?.role;
+      if (userRole === 'DRIVER' && driverStatus === 'expired_documents') {
+        // Allowed roles for expired_documents drivers
+        const allowedRoles = ['RECRUITER', 'RECRUITER_TL', 'ADMINISTRATOR', 'EXPEDITE_MANAGER'];
+        
+        // Block all non-DIRECT chats
+        if (room.type !== 'DIRECT') {
+          return total; // Don't count unread messages from blocked chats
+        }
+        
+        // For DIRECT chats, check if other participant's role is allowed
+        const otherParticipant = room.participants.find(
+          p => p.user.id !== authState.user?.id
+        );
+        const otherRole = otherParticipant?.user.role;
+        
+        if (!otherRole || !allowedRoles.includes(otherRole)) {
+          return total; // Don't count unread messages from blocked chats
+        }
+      }
+
+      // Count unread messages for allowed chats
       return total + (room.unreadCount || 0);
     }, 0);
-  }, [chatRooms]);
+  }, [chatRooms, authState.user?.role, authState.user?.id, driverStatus]);
 
   return (
     <View style={styles.bottomNav}>

@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import LogsSettings from '@/components/settings/LogsSettings';
 import NotificationToggleSettings from '@/components/settings/NotificationToggleSettings';
 import ChatCacheSettings from '@/components/settings/ChatCacheSettings';
+import WebSocketConnectionSettings from '@/components/settings/WebSocketConnectionSettings';
 import BottomNavigation from '@/components/navigation/BottomNavigation';
 import { colors } from '@/lib/colors';
 import { fonts, fp, rem } from '@/lib';
@@ -24,6 +25,7 @@ export default function SettingsScreen() {
           <View style={styles.contentWrapper}>
             <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
               <NotificationToggleSettings />
+              <WebSocketConnectionSettings />
               <ChatCacheSettings />
               <LogsSettings />
             </ScrollView>
