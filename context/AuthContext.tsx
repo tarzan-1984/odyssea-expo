@@ -1,9 +1,12 @@
-import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect } from 'react';
+import { AppState, AppStateStatus } from 'react-native';
 import { secureStorage } from '@/utils/secureStorage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authApi, CheckEmailResponse, LoginResponse, OtpVerificationResponse } from '@/services/authApi';
 import { registerForPushNotificationsAsync, registerPushTokenToBackend } from '@/services/NotificationsService';
 import { syncDriversForMapAfterLogin } from '@/services/DriversMapService';
+import { getDriverStatus } from '@/app-api/users';
+import { fileLogger } from '@/utils/fileLogger';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 
@@ -698,6 +701,69 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       lastLocationUpdate: null,
     });
   }, []);
+
+  // Track app state to detect when app returns from background and update driver status
+  useEffect(() => {
+    if (!authState.isAuthenticated || !authState.user) {
+      return;
+    }
+
+    // Only track for DRIVER role users
+    if (authState.user.role !== 'DRIVER') {
+      return;
+    }
+
+    let appState: AppStateStatus = AppState.currentState;
+    let wasInBackground = false;
+
+    const subscription = AppState.addEventListener('change', async (nextAppState: AppStateStatus) => {
+      // Track when app goes to background/inactive
+      if (appState.match(/active/) && nextAppState.match(/inactive|background/)) {
+        wasInBackground = true;
+        console.log('📱 [AuthContext] App went to background/inactive');
+      }
+
+      // When app becomes active again after being in background
+      if (nextAppState === 'active' && wasInBackground) {
+        wasInBackground = false;
+        console.log('📱 [AuthContext] App became active after being in background, updating driver status...');
+        
+        try {
+          const userId = authState.user?.id;
+          if (!userId) {
+            console.warn('⚠️ [AuthContext] No user ID available for driver status update');
+            return;
+          }
+
+          const result = await getDriverStatus(userId);
+          
+          if (result.driverStatus !== undefined) {
+            // Update driverStatus in AsyncStorage
+            await AsyncStorage.setItem('@user_status', result.driverStatus || '');
+            console.log(`✅ [AuthContext] Driver status updated from backend: ${result.driverStatus || 'null'}`);
+            
+            // Emit event to notify DriverContent component if it's mounted
+            const { eventBus } = await import('@/services/EventBus');
+            eventBus.emit('DRIVER_STATUS_UPDATED', { driverStatus: result.driverStatus });
+          } else {
+            console.log('ℹ️ [AuthContext] Driver status is undefined from backend');
+          }
+        } catch (error) {
+          console.error('❌ [AuthContext] Failed to update driver status:', error);
+          fileLogger.error('AuthContext', 'FAILED_TO_UPDATE_DRIVER_STATUS', {
+            error: error instanceof Error ? error.message : String(error),
+            userId: authState.user?.id,
+          });
+        }
+      }
+
+      appState = nextAppState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [authState.isAuthenticated, authState.user?.id, authState.user?.role]);
 
   const value: AuthContextValue = {
     authState,

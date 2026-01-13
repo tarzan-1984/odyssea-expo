@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, TextInput, Platform, AppState, ActivityIndicator } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, TextInput, Platform, AppState, ActivityIndicator, Linking } from 'react-native';
 import OSMMapView, { Region } from '@/components/maps/OSMMapView';
 import { BlurView } from 'expo-blur';
 import * as Location from 'expo-location';
@@ -15,8 +15,10 @@ import { useAuth } from '@/context/AuthContext';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { LOCATION_TASK_NAME, LOCATION_UPDATE_INTERVAL } from '@/tasks/locationTask';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { sendLocationUpdateToTMS, sendLocationUpdateToBackendUser, getLocalIsoString } from '@/utils/locationApi';
+import { sendLocationUpdateToTMS, sendLocationUpdateToBackendUser, getLocalIsoString, getLocationDetails } from '@/utils/locationApi';
 import { fileLogger } from '@/utils/fileLogger';
+import { eventBus } from '@/services/EventBus';
+import { updateUser } from '@/app-api/users';
 
 /**
  * DriverContent - Location tracking component for DRIVER role users
@@ -31,6 +33,11 @@ export default function DriverContent() {
   const initials = `${firstName[0]}${lastName ? lastName[0] : firstName[0]}`.toUpperCase();
   const profilePhoto = user?.profilePhoto || user?.avatar || null;
   const [status, setStatus] = useState<StatusValue>('available');
+  const [isStatusDisabled, setIsStatusDisabled] = useState(false);
+  const previousStatusRef = useRef<StatusValue | null>(null); // Track previous status for transitions
+  const [isLocationSharingAllowed, setIsLocationSharingAllowed] = useState(true); // Control visibility of toggle
+  const isInitialLoadRef = useRef(true); // Track if this is the first load
+  const isUpdatingLocationSharingRef = useRef(false); // Prevent infinite loops when updating location sharing
   const [zip, setZipState] = useState('');
   
   // Wrapper function to set ZIP and save to AsyncStorage
@@ -52,50 +59,6 @@ export default function DriverContent() {
   const [date, setDate] = useState(formatDate(new Date()));
   const [locationLabel, setLocationLabel] = useState<string | null>(null);
   const [isSharingLocation, setIsSharingLocation] = useState(false);
-  
-  // Load saved status, zip, and date from AsyncStorage on mount
-  useEffect(() => {
-    const loadSavedData = async () => {
-      try {
-        // Load status
-        const savedStatus = await AsyncStorage.getItem('@user_status');
-        if (savedStatus) {
-          const parsedStatus = savedStatus as StatusValue;
-          // Validate that the saved status is a valid StatusValue
-          const validStatuses: StatusValue[] = ['available', 'available_on', 'available_off', 'loaded_enroute'];
-          if (validStatuses.includes(parsedStatus)) {
-            setStatus(parsedStatus);
-            console.log(`[DriverContent] Loaded status from AsyncStorage: ${parsedStatus}`);
-          } else {
-            console.warn('[DriverContent] Invalid saved status, using default:', savedStatus);
-            // If driverStatus from backend is not a valid StatusValue, use default
-            setStatus('available');
-          }
-        } else {
-          console.log('[DriverContent] No saved status found in AsyncStorage, using default: available');
-        }
-        
-        // Load zip
-        const savedZip = await AsyncStorage.getItem('@user_zip');
-        if (savedZip) {
-          setZip(savedZip);
-        }
-        
-        // Load date
-        const savedDate = await AsyncStorage.getItem('@user_date');
-        if (savedDate) {
-          setDate(savedDate);
-        }
-      } catch (error) {
-        console.error('[DriverContent] Failed to load saved data:', error);
-        fileLogger.error('DriverContent', 'FAILED_TO_LOAD_SAVED_DATA', {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    };
-    
-    loadSavedData();
-  }, [setZip]);
   
   const formatLastUpdate = (date: Date | null): string => {
     if (!date) return '';
@@ -639,6 +602,215 @@ export default function DriverContent() {
     }
   }, []);
 
+  // Auto-manage automatic location sharing based on driver status transition
+  const updateLocationSharingBasedOnStatus = useCallback(async (driverStatus: StatusValue, previousStatus: StatusValue | null) => {
+    // Prevent infinite loops
+    if (isUpdatingLocationSharingRef.current) {
+      console.log('[DriverContent] Already updating location sharing, skipping...');
+      return;
+    }
+
+    // Statuses that should disable automatic location sharing (inactive group)
+    const inactiveStatuses: StatusValue[] = [
+      'available_off',      // Not available
+      'banned',             // Out of service
+      'blocked',            // Blocked
+      'on_vocation',        // On vocation
+      'expired_documents',  // Expired documents
+    ];
+
+    // Statuses that should enable automatic location sharing (active group)
+    const activeStatuses: StatusValue[] = [
+      'available',         // Available
+      'available_on',      // Available on
+      'loaded_enroute',    // Loaded & Enroute
+    ];
+
+    const isCurrentInactive = inactiveStatuses.includes(driverStatus);
+    const isCurrentActive = activeStatuses.includes(driverStatus);
+    
+    // Determine previous status group
+    const wasPreviousInactive = previousStatus ? inactiveStatuses.includes(previousStatus) : null;
+    const wasPreviousActive = previousStatus ? activeStatuses.includes(previousStatus) : null;
+
+    // Update visibility of toggle based on current status group
+    setIsLocationSharingAllowed(isCurrentActive);
+
+    // If this is initial load (previousStatus is null), just set the correct state
+    if (previousStatus === null) {
+      if (isCurrentInactive) {
+        // Status is in inactive group - disable and hide
+        isUpdatingLocationSharingRef.current = true;
+        try {
+          await setAutomaticLocationSharing(false);
+          await stopBackgroundLocationTracking();
+        } finally {
+          isUpdatingLocationSharingRef.current = false;
+        }
+      }
+      // If status is in active group - just show toggle, don't force enable
+      // (respect user's manual choice if they disabled it)
+      return;
+    }
+
+    // Check if we're transitioning between groups
+    const transitioningFromActiveToInactive = wasPreviousActive && isCurrentInactive;
+    const transitioningFromInactiveToActive = wasPreviousInactive && isCurrentActive;
+
+    if (transitioningFromActiveToInactive) {
+      // Transitioning from active group to inactive group - disable and hide
+      console.log(`[DriverContent] Transitioning from active group ("${previousStatus}") to inactive group ("${driverStatus}") - disabling automatic location sharing`);
+      // Only update if setting is currently enabled
+      if (automaticLocationSharing) {
+        isUpdatingLocationSharingRef.current = true;
+        try {
+          await setAutomaticLocationSharing(false);
+          await stopBackgroundLocationTracking();
+        } finally {
+          isUpdatingLocationSharingRef.current = false;
+        }
+      }
+    } else if (transitioningFromInactiveToActive) {
+      // Transitioning from inactive group to active group - enable and show
+      console.log(`[DriverContent] Transitioning from inactive group ("${previousStatus}") to active group ("${driverStatus}") - enabling automatic location sharing`);
+      // Only update if setting is currently disabled
+      if (!automaticLocationSharing) {
+        isUpdatingLocationSharingRef.current = true;
+        try {
+          await setAutomaticLocationSharing(true);
+          if (userLocation) {
+            await startBackgroundLocationTracking();
+          }
+        } finally {
+          isUpdatingLocationSharingRef.current = false;
+        }
+      }
+    }
+    // If both statuses are in the same group (active->active or inactive->inactive), don't change the setting
+  }, [setAutomaticLocationSharing, stopBackgroundLocationTracking, startBackgroundLocationTracking, userLocation, automaticLocationSharing]);
+
+  // Load saved status, zip, and date from AsyncStorage on mount
+  useEffect(() => {
+    const loadSavedData = async () => {
+      try {
+        // Load status
+        const savedStatus = await AsyncStorage.getItem('@user_status');
+        if (savedStatus) {
+          const parsedStatus = savedStatus as StatusValue;
+          
+          // Check if status is a basic (selectable) status
+          const basicStatuses: StatusValue[] = ['available', 'available_on', 'available_off', 'loaded_enroute'];
+          const isBasic = basicStatuses.includes(parsedStatus);
+          
+          setStatus(parsedStatus);
+          setIsStatusDisabled(!isBasic);
+          
+          // Set previous status ref to null for initial load
+          previousStatusRef.current = null;
+          
+          // Update visibility and setting based on status group (initial load)
+          const inactiveStatuses: StatusValue[] = ['available_off', 'banned', 'blocked', 'on_vocation', 'expired_documents'];
+          const activeStatuses: StatusValue[] = ['available', 'available_on', 'loaded_enroute'];
+          
+          const isInactiveStatus = inactiveStatuses.includes(parsedStatus);
+          const isActiveStatus = activeStatuses.includes(parsedStatus);
+          
+          setIsLocationSharingAllowed(isActiveStatus);
+          
+          // On initial load only, set correct state based on status group
+          if (isInitialLoadRef.current) {
+            if (isInactiveStatus) {
+              // Only update if setting is currently enabled to avoid unnecessary updates
+              const currentSettings = await AsyncStorage.getItem('@odyssea_app_settings');
+              if (currentSettings) {
+                const parsedSettings = JSON.parse(currentSettings);
+                if (parsedSettings.automaticLocationSharing) {
+                  await setAutomaticLocationSharing(false);
+                  await stopBackgroundLocationTracking();
+                }
+              } else {
+                // Settings don't exist, set to false
+                await setAutomaticLocationSharing(false);
+                await stopBackgroundLocationTracking();
+              }
+            }
+            // If active status - just show toggle, don't force enable
+            isInitialLoadRef.current = false; // Mark as loaded
+          }
+          
+          // Now set previous status for future transitions
+          previousStatusRef.current = parsedStatus;
+          
+          console.log(`[DriverContent] Loaded status from AsyncStorage: ${parsedStatus}, disabled: ${!isBasic}`);
+        } else {
+          console.log('[DriverContent] No saved status found in AsyncStorage, using default: available');
+          setStatus('available');
+          setIsStatusDisabled(false);
+          previousStatusRef.current = null;
+          setIsLocationSharingAllowed(true);
+          // Default status is active, so toggle will be shown
+          // Don't force enable on initial load
+          if (isInitialLoadRef.current) {
+            isInitialLoadRef.current = false; // Mark as loaded
+          }
+          previousStatusRef.current = 'available';
+        }
+        
+        // Load zip
+        const savedZip = await AsyncStorage.getItem('@user_zip');
+        if (savedZip) {
+          setZip(savedZip);
+        }
+        
+        // Load date
+        const savedDate = await AsyncStorage.getItem('@user_date');
+        if (savedDate) {
+          setDate(savedDate);
+        }
+      } catch (error) {
+        console.error('[DriverContent] Failed to load saved data:', error);
+        fileLogger.error('DriverContent', 'FAILED_TO_LOAD_SAVED_DATA', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    };
+    
+    loadSavedData();
+  }, [setZip, setAutomaticLocationSharing, stopBackgroundLocationTracking]);
+
+  // Listen for driver status updates from AuthContext
+  useEffect(() => {
+    const handleDriverStatusUpdate = async (data: { driverStatus: string | null }) => {
+      if (data.driverStatus === null || data.driverStatus === undefined) {
+        return;
+      }
+
+      const newStatus = data.driverStatus as StatusValue;
+      const previousStatus = previousStatusRef.current;
+      
+      // Check if status is a basic (selectable) status
+      const basicStatuses: StatusValue[] = ['available', 'available_on', 'available_off', 'loaded_enroute'];
+      const isBasic = basicStatuses.includes(newStatus);
+      
+      setStatus(newStatus);
+      setIsStatusDisabled(!isBasic);
+      
+      console.log(`[DriverContent] Driver status updated from backend: ${newStatus}, disabled: ${!isBasic}`);
+
+      // Auto-manage location sharing based on status transition
+      await updateLocationSharingBasedOnStatus(newStatus, previousStatus);
+      
+      // Update previous status ref
+      previousStatusRef.current = newStatus;
+    };
+
+    const unsubscribe = eventBus.on('DRIVER_STATUS_UPDATED', handleDriverStatusUpdate);
+
+    return () => {
+      unsubscribe();
+    };
+  }, [updateLocationSharingBasedOnStatus]);
+
   // Load saved location data on mount
   useEffect(() => {
     // Always load coordinates if they exist in authState, even if userLocation is already set
@@ -874,22 +1046,21 @@ export default function DriverContent() {
         return;
       }
 
-      // Save status, zip, and date to AsyncStorage
+      // Save zip and date to AsyncStorage (status will be saved after successful TMS update via WebSocket)
       await AsyncStorage.multiSet([
-        ['@user_status', status],
         ['@user_zip', zip],
         ['@user_date', date],
       ]);
-      console.log('[DriverContent] Updated status saved to AsyncStorage:', { status, zip, date });
+      console.log('[DriverContent] Updated zip and date saved to AsyncStorage:', { zip, date });
       
-      // Send location update to TMS API
+      // Send location update to TMS API (status from useState will be sent)
       let tmsSuccess = false;
       try {
         tmsSuccess = await sendLocationUpdate(
           currentLocation.latitude,
           currentLocation.longitude,
           zip,
-          status,
+          status, // Use status from useState
           date
         );
       } catch (tmsError) {
@@ -897,13 +1068,78 @@ export default function DriverContent() {
         tmsSuccess = false;
       }
 
+      // After successful TMS update, update our backend database with status and location data
+      if (tmsSuccess) {
+        const previousStatus = previousStatusRef.current;
+        previousStatusRef.current = status;
+        
+        // Get location details (city, state) for backend update
+        let city: string | undefined;
+        let state: string | undefined;
+        try {
+          const locationDetails = await getLocationDetails(
+            currentLocation.latitude,
+            currentLocation.longitude
+          );
+          city = locationDetails.city;
+          state = locationDetails.state;
+        } catch (geoError) {
+          console.warn('[DriverContent] Failed to get location details for backend update:', geoError);
+        }
+        
+        // Update user in our backend database (status, zip, city, state)
+        // Note: latitude/longitude are updated separately via /location endpoint
+        try {
+          if (user?.id) {
+            await updateUser(user.id, {
+              driverStatus: status,
+              zip: zip,
+              city: city,
+              state: state,
+            });
+            console.log('[DriverContent] ✅ Backend user updated successfully with status and location data');
+          }
+        } catch (updateError: any) {
+          // Extract error message properly
+          let errorMessage = 'Unknown error';
+          let errorStatus: number | undefined;
+          let errorDetails: any = null;
+          
+          if (updateError instanceof Error) {
+            errorMessage = updateError.message;
+            errorStatus = (updateError as any).status;
+            errorDetails = (updateError as any).details;
+          } else if (typeof updateError === 'string') {
+            errorMessage = updateError;
+          } else if (updateError && typeof updateError === 'object') {
+            // Try to extract message from error object
+            errorMessage = updateError.message || updateError.error || JSON.stringify(updateError);
+            errorStatus = updateError.status;
+            errorDetails = updateError;
+          }
+          
+          console.error('[DriverContent] Failed to update user in backend:', errorMessage);
+          if (errorDetails) {
+            console.error('[DriverContent] Error details:', JSON.stringify(errorDetails, null, 2));
+          }
+          
+          fileLogger.error('DriverContent', 'BACKEND_USER_UPDATE_FAILED', {
+            error: errorMessage,
+            statusCode: errorStatus,
+            errorDetails: errorDetails ? JSON.stringify(errorDetails) : undefined,
+            userId: user?.id,
+            status,
+            zip,
+            city,
+            state,
+          });
+        }
+        
+        // Auto-manage location sharing based on status transition
+        await updateLocationSharingBasedOnStatus(status, previousStatus);
+      }
+
       // Send location update to our backend (independent of TMS API)
-      console.warn('[DriverContent] Sending location update to backend in handleUpdateStatus', {
-        latitude: currentLocation.latitude,
-        longitude: currentLocation.longitude,
-        zip,
-      });
-      
       const backendSuccess = await sendLocationUpdateToBackendUser({
         location: undefined,
         city: undefined,
@@ -915,18 +1151,12 @@ export default function DriverContent() {
       });
 
       if (backendSuccess) {
-        console.warn('[DriverContent] Backend update successful in handleUpdateStatus, saving location data');
         // Update lastLocationUpdate in AuthContext only after successful backend update
         await updateUserLocation(
           currentLocation.latitude,
           currentLocation.longitude,
           zip
         );
-        console.warn('[DriverContent] Location data saved to app in handleUpdateStatus', {
-          latitude: currentLocation.latitude,
-          longitude: currentLocation.longitude,
-          zip,
-        });
         
         // Show success message
         setUpdateSuccessMessage('Location data sent successfully');
@@ -1071,13 +1301,16 @@ export default function DriverContent() {
 
   const handleStatusChange = async (newStatus: StatusValue) => {
     setStatus(newStatus);
-      // Save status to AsyncStorage immediately when changed
-      try {
-        await AsyncStorage.setItem('@user_status', newStatus);
-      } catch (error) {
-        console.error('[DriverContent] Failed to save status to AsyncStorage:', error);
-      }
-    };
+    
+    // Check if new status is basic (selectable)
+    const basicStatuses: StatusValue[] = ['available', 'available_on', 'available_off', 'loaded_enroute'];
+    const isBasic = basicStatuses.includes(newStatus);
+    setIsStatusDisabled(!isBasic);
+    
+    // Don't update isLocationSharingAllowed here - it should be determined from AsyncStorage status (synced with backend)
+    // Don't save to AsyncStorage here - it will be saved after successful API update
+    // Don't call updateLocationSharingBasedOnStatus here - it will be called after successful API update or via WebSocket
+  };
 
   const handleLocationToggleChange = async (value: boolean) => {
     await setAutomaticLocationSharing(value);
@@ -1252,20 +1485,44 @@ export default function DriverContent() {
             )}
           </TouchableOpacity>
           
-          {/* Location toggle */}
-          <View style={styles.switchContainer}>
-            <Text style={styles.switchLabel}>Turn on automatic location sharing</Text>
-                <View style={{ flexShrink: 0 }}>
-                  <CustomSwitch
-                    value={automaticLocationSharing}
-                    onValueChange={handleLocationToggleChange}
-            />
-          </View>
+          {/* Expired documents message */}
+          {status === 'expired_documents' && (
+            <View style={styles.expiredDocumentsMessage}>
+              <Text style={styles.expiredDocumentsText}>
+                Some of your documents have been outdated in our system, please contact{' '}
+                <Text 
+                  style={styles.expiredDocumentsEmail}
+                  onPress={() => {
+                    Linking.openURL('mailto:HR@odysseia.one').catch((err) => {
+                      console.error('Failed to open email:', err);
+                    });
+                  }}
+                >
+                  HR@odysseia.one
+                </Text>
+              </Text>
+            </View>
+          )}
+          
+          {/* Location toggle - only show for active status group */}
+          {isLocationSharingAllowed && (
+            <View style={styles.switchContainer}>
+              <Text style={styles.switchLabel}>Turn on automatic location sharing</Text>
+              <View style={{ flexShrink: 0 }}>
+                <CustomSwitch
+                  value={automaticLocationSharing}
+                  onValueChange={handleLocationToggleChange}
+                />
               </View>
+            </View>
+          )}
               
               {/* Last update time */}
               {authState.lastLocationUpdate && (
-                <View style={styles.lastUpdateContainer}>
+                <View style={[
+                  styles.lastUpdateContainer,
+                  !isLocationSharingAllowed && styles.lastUpdateContainerWithMargin
+                ]}>
                   <Text style={styles.lastUpdateText}>
                     {formatLastUpdate(authState.lastLocationUpdate)}
                   </Text>
@@ -1275,7 +1532,7 @@ export default function DriverContent() {
           {/* Status dropdown */}
               <View style={styles.settingsWrap}>
                 <Text style={styles.settingsLabel}>Your status</Text>
-                <StatusSelect value={status} onChange={handleStatusChange} />
+                <StatusSelect value={status} onChange={handleStatusChange} disabled={isStatusDisabled} />
           </View>
           
           {/* ZIP input */}
@@ -1301,20 +1558,26 @@ export default function DriverContent() {
             </View>
           </View>
               
-              <View style={styles.settingsWrap}>
-                <Text style={styles.settingsLabel}></Text>
-          
-          <TouchableOpacity style={styles.updateButton} onPress={handleUpdateStatus}>
-            <Text style={styles.updateButtonText}>Update status</Text>
-          </TouchableOpacity>
-              </View>
-              
               {/* Success/Error message */}
               {updateSuccessMessage && (
                 <View style={styles.messageContainer}>
                   <Text style={styles.successMessage}>{updateSuccessMessage}</Text>
                 </View>
               )}
+              
+              <View style={styles.settingsWrap}>
+                <Text style={styles.settingsLabel}></Text>
+          
+          <TouchableOpacity 
+            style={[styles.updateButton, isStatusDisabled && styles.updateButtonDisabled]} 
+            onPress={handleUpdateStatus}
+            disabled={isStatusDisabled}
+          >
+            <Text style={[styles.updateButtonText, isStatusDisabled && styles.updateButtonTextDisabled]}>
+              Update status
+            </Text>
+          </TouchableOpacity>
+              </View>
             </View>
     </View>
   );
@@ -1524,13 +1787,22 @@ const styles = StyleSheet.create({
     boxShadow: '0px 4px 8px rgba(52, 199, 89, 0.3)',
     justifyContent: "center",
   },
+  updateButtonDisabled: {
+    backgroundColor: '#CCCCCC',
+    boxShadow: 'none',
+    opacity: 0.6,
+  },
   updateButtonText: {
     color: colors.neutral.white,
     fontSize: fp(14),
     fontFamily: fonts["500"],
   },
+  updateButtonTextDisabled: {
+    color: '#999999',
+  },
   messageContainer: {
     marginTop: rem(12),
+    marginBottom: rem(12),
     paddingHorizontal: rem(16),
     paddingVertical: rem(8),
     borderRadius: 8,
@@ -1543,5 +1815,29 @@ const styles = StyleSheet.create({
     fontSize: fp(13),
     fontFamily: fonts["500"],
     textAlign: 'center',
+  },
+  expiredDocumentsMessage: {
+    margin: rem(0),
+    paddingHorizontal: rem(16),
+    paddingVertical: rem(12),
+    backgroundColor: 'rgba(255, 193, 7, 0.1)',
+    borderRadius: rem(8),
+    borderWidth: 1,
+    borderColor: 'rgba(255, 193, 7, 0.3)',
+  },
+  expiredDocumentsText: {
+    fontSize: fp(14),
+    fontFamily: fonts['700'],
+    color: colors.primary.blue,
+    lineHeight: fp(20),
+    textAlign: 'center',
+  },
+  expiredDocumentsEmail: {
+    color: colors.primary.blue,
+    fontFamily: fonts['600'],
+    textDecorationLine: 'underline',
+  },
+  lastUpdateContainerWithMargin: {
+    marginTop: rem(15), // Add margin when toggle is hidden
   },
 });

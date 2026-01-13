@@ -12,6 +12,7 @@ import { WebSocketProvider } from '@/context/WebSocketContext';
 import { OnlineStatusProvider } from '@/context/OnlineStatusContext';
 import { useLocationPermission } from '@/hooks/useLocationPermission';
 import LocationPermissionModal from '@/components/common/LocationPermissionModal';
+import BlockedAccountModal from '@/components/common/BlockedAccountModal';
 // Import background location task to register it
 // CRITICAL: This import must happen at the top level to ensure task registration
 // The task is registered when this module is imported
@@ -55,7 +56,41 @@ function RootLayoutNav() {
   const lastCheckedSegment = useRef<string>('');
   const hasRequestedPermissionRef = useRef(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
+  const [isAccountBlocked, setIsAccountBlocked] = useState(false);
   const ENABLE_PERMISSIONS_ONBOARDING = false; // temporary disable permissions onboarding modal
+
+  // Check if account is blocked
+  useEffect(() => {
+    const checkBlockedStatus = async () => {
+      if (!authState.isAuthenticated || authState.user?.role !== 'DRIVER') {
+        setIsAccountBlocked(false);
+        return;
+      }
+
+      try {
+        const status = await AsyncStorage.getItem('@user_status');
+        setIsAccountBlocked(status === 'blocked');
+      } catch (error) {
+        console.error('Failed to check blocked status:', error);
+      }
+    };
+
+    checkBlockedStatus();
+
+    // Listen for driver status updates
+    const { eventBus } = require('@/services/EventBus');
+    const handleDriverStatusUpdate = (data: { driverStatus: string | null }) => {
+      if (authState.user?.role === 'DRIVER') {
+        setIsAccountBlocked(data.driverStatus === 'blocked');
+      }
+    };
+
+    const unsubscribe = eventBus.on('DRIVER_STATUS_UPDATED', handleDriverStatusUpdate);
+
+    return () => {
+      unsubscribe();
+    };
+  }, [authState.isAuthenticated, authState.user?.role]);
 
   // Handle navigation from push notifications
   useEffect(() => {
@@ -442,6 +477,9 @@ function RootLayoutNav() {
         onOpenAppSettings={openAppSettings}
         onOpenLocationSettings={openLocationSettings}
       />
+      
+      {/* Blocked account modal - shows if driver account is blocked */}
+      <BlockedAccountModal visible={isAccountBlocked} />
       
       {/**
        * TEMP DISABLED FOR SIMULATOR

@@ -67,6 +67,125 @@ export async function getUserFromBackend(userId: string): Promise<any> {
 }
 
 /**
+ * Get driver status from backend (for DRIVER role users)
+ * Returns only driverStatus field
+ */
+export async function getDriverStatus(userId: string): Promise<{ driverStatus: string | null }> {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is not configured');
+  }
+
+  const accessToken = await secureStorage.getItemAsync('accessToken');
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
+
+  const response = await fetch(`${API_BASE_URL}/v1/users/${userId}/driver-status`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || `Failed to fetch driver status. Status: ${response.status}`);
+  }
+
+  const data = await response.json();
+  
+  // Backend wraps response in { data: {...} } format due to TransformInterceptor
+  return data.data || data;
+}
+
+/**
+ * Update user in our backend database
+ * @param userId - User ID
+ * @param updateData - Data to update (driverStatus, zip, city, state, location, etc.)
+ * @returns Promise with updated user data
+ * @throws Error if update fails
+ */
+export async function updateUser(userId: string, updateData: {
+  driverStatus?: string;
+  zip?: string;
+  city?: string;
+  state?: string;
+  location?: string;
+  latitude?: number;
+  longitude?: number;
+}): Promise<any> {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is not configured');
+  }
+
+  const accessToken = await secureStorage.getItemAsync('accessToken');
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
+
+  const response = await fetch(`${API_BASE_URL}/v1/users/${userId}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(updateData),
+  });
+
+  if (!response.ok) {
+    let errorMessage = `Failed to update user. Status: ${response.status}`;
+    let errorDetails: any = null;
+    
+    try {
+      // Clone response to read it without consuming the stream
+      const responseClone = response.clone();
+      const errorData = await responseClone.json();
+      errorDetails = errorData;
+      
+      
+      // Backend may wrap error in { message: ... } or { data: { message: ... } }
+      if (errorData?.message) {
+        errorMessage = errorData.message;
+      } else if (errorData?.data?.message) {
+        errorMessage = errorData.data.message;
+      } else if (Array.isArray(errorData?.message)) {
+        // Validation errors are often arrays
+        errorMessage = errorData.message.join(', ');
+      } else if (typeof errorData === 'string') {
+        errorMessage = errorData;
+      } else if (errorData) {
+        // Try to stringify the whole error object
+        errorMessage = JSON.stringify(errorData);
+      }
+    } catch (parseError) {
+      // If JSON parsing fails, try to get text response
+      try {
+        const responseClone = response.clone();
+        const textResponse = await responseClone.text();
+        console.error('[updateUser] Error response text:', textResponse);
+        if (textResponse) {
+          errorMessage = textResponse;
+        }
+      } catch (textError) {
+        console.error('[updateUser] Failed to read error response:', textError);
+      }
+    }
+    
+    const error = new Error(errorMessage);
+    // Attach error details for better debugging
+    (error as any).details = errorDetails;
+    (error as any).status = response.status;
+    throw error;
+  }
+
+  const data = await response.json();
+  
+  // Backend wraps response in { data: {...} } format due to TransformInterceptor
+  return data.data || data;
+}
+
+/**
  * Reset password for mobile app
  * Generates new password and sends it to user's email
  * @param email - User's email address

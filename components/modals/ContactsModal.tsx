@@ -1,10 +1,31 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Modal, View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, ActivityIndicator, Image } from 'react-native';
+import { Modal, View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, ActivityIndicator, Image, ScrollView } from 'react-native';
 import { colors, fonts, rem, fp, borderRadius } from '@/lib';
 import { chatApi, UsersResponse } from '@/app-api/chatApi';
 import { useOnlineStatusContext } from '@/context/OnlineStatusContext';
 import { useAuth } from '@/context/AuthContext';
 import { useChatRooms } from '@/hooks/useChatRooms';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Role filter options
+const ROLE_OPTIONS = [
+  { value: '', label: 'All Roles' },
+  { value: 'DRIVER_UPDATES', label: 'Driver Updates' },
+  { value: 'MODERATOR', label: 'Moderator' },
+  { value: 'RECRUITER', label: 'Recruiter' },
+  { value: 'ADMINISTRATOR', label: 'Administrator' },
+  { value: 'NIGHTSHIFT_TRACKING', label: 'Nightshift Tracking' },
+  { value: 'DISPATCHER', label: 'Dispatcher' },
+  { value: 'BILLING', label: 'Billing' },
+  { value: 'ACCOUNTING', label: 'Accounting' },
+  { value: 'RECRUITER_TL', label: 'Recruiter Team Leader' },
+  { value: 'DRIVER', label: 'Driver' },
+  { value: 'EXPEDITE_MANAGER', label: 'Expedite Manager' },
+  { value: 'TRACKING_TL', label: 'Tracking Team Leader' },
+  { value: 'DISPATCHER_TL', label: 'Dispatcher Team Leader' },
+  { value: 'TRACKING', label: 'Tracking' },
+  { value: 'SUBSCRIBER', label: 'Subscriber' },
+];
 
 interface UserItem {
   id: string;
@@ -32,8 +53,20 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [selectedRole, setSelectedRole] = useState<string>('');
+  const [isRoleModalVisible, setIsRoleModalVisible] = useState(false);
   const [page, setPage] = useState(1);
   const [hasNextPage, setHasNextPage] = useState(true);
+  const [driverStatus, setDriverStatus] = useState<string | null>(null);
+  
+  // Check if user is DRIVER with expired_documents status
+  const isDriverWithExpiredDocuments = useMemo(() => {
+    const userRole = authState.user?.role;
+    return userRole === 'DRIVER' && driverStatus === 'expired_documents';
+  }, [authState.user?.role, driverStatus]);
+  
+  // Allowed roles for drivers with expired documents
+  const allowedRolesForExpiredDocuments = ['RECRUITER', 'RECRUITER_TL', 'ADMINISTRATOR', 'EXPEDITE_MANAGER'];
 
   // Helper: deduplicate users by id while preserving order
   const dedupeById = (list: UserItem[]): UserItem[] => {
@@ -54,15 +87,33 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
     return () => clearTimeout(t);
   }, [search]);
 
+  // Load driver status from AsyncStorage
+  useEffect(() => {
+    const loadDriverStatus = async () => {
+      try {
+        const status = await AsyncStorage.getItem('@user_status');
+        setDriverStatus(status);
+      } catch (error) {
+        console.warn('[ContactsModal] Failed to load driver status:', error);
+      }
+    };
+    if (visible && authState.user?.role === 'DRIVER') {
+      loadDriverStatus();
+    }
+  }, [visible, authState.user?.role]);
+
   // Reset state when modal closes to ensure clean slate on next open
   useEffect(() => {
     if (!visible) {
       setSearch('');
       setDebouncedSearch('');
+      setSelectedRole('');
       setUsers([]);
       setPage(1);
       setHasNextPage(true);
       setError(null);
+      setIsRoleModalVisible(false);
+      setDriverStatus(null);
     }
   }, [visible]);
 
@@ -72,7 +123,17 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
       setIsLoading(true);
       setError(null);
       try {
-        const res: UsersResponse = await chatApi.getUsers({ page: 1, limit: 10, search: debouncedSearch || undefined });
+        // If driver with expired documents, filter by allowed roles on API level
+        const rolesParam = isDriverWithExpiredDocuments 
+          ? allowedRolesForExpiredDocuments 
+          : (selectedRole || undefined);
+        
+        const res: UsersResponse = await chatApi.getUsers({ 
+          page: 1, 
+          limit: 10, 
+          search: debouncedSearch || undefined,
+          roles: rolesParam
+        });
         setUsers(dedupeById(res.users || []));
         setPage(res.pagination?.current_page || 1);
         setHasNextPage(!!res.pagination?.has_next_page);
@@ -83,14 +144,24 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
       }
     };
     load();
-  }, [visible, debouncedSearch]);
+  }, [visible, debouncedSearch, selectedRole, isDriverWithExpiredDocuments]);
 
   const loadMore = async () => {
     if (!hasNextPage || isLoadingMore) return;
     setIsLoadingMore(true);
     try {
       const next = page + 1;
-      const res: UsersResponse = await chatApi.getUsers({ page: next, limit: 10, search: debouncedSearch || undefined });
+      // If driver with expired documents, filter by allowed roles on API level
+      const rolesParam = isDriverWithExpiredDocuments 
+        ? allowedRolesForExpiredDocuments 
+        : (selectedRole || undefined);
+      
+      const res: UsersResponse = await chatApi.getUsers({ 
+        page: next, 
+        limit: 10, 
+        search: debouncedSearch || undefined,
+        roles: rolesParam
+      });
       setUsers(prev => dedupeById([...(prev || []), ...((res.users as UserItem[]) || [])]));
       setPage(res.pagination?.current_page || next);
       setHasNextPage(!!res.pagination?.has_next_page);
@@ -111,7 +182,14 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
         if (other) directUserIds.add(other);
       }
     });
-    const base = users.filter(u => !directUserIds.has(u.id));
+    
+    // Filter out users that already have DIRECT chats
+    let base = users.filter(u => !directUserIds.has(u.id));
+    
+    // Note: Role filtering for expired_documents drivers is now done on API level
+    // No need for client-side filtering here
+    
+    // Apply search filter if provided
     if (!q) return base;
     return base.filter(u => `${u.firstName} ${u.lastName}`.toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q));
   }, [users, search, chatRooms]);
@@ -176,6 +254,67 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
               onChangeText={setSearch}
             />
           </View>
+
+          {/* Role Filter Select - Hidden for drivers with expired documents */}
+          {!isDriverWithExpiredDocuments && (
+            <View style={styles.roleFilterContainer}>
+              <TouchableOpacity 
+                style={styles.roleSelectButton}
+                onPress={() => setIsRoleModalVisible(true)}
+              >
+                <Text style={styles.roleSelectText}>
+                  {selectedRole ? ROLE_OPTIONS.find(r => r.value === selectedRole)?.label || selectedRole : 'All Roles'}
+                </Text>
+                <Text style={styles.roleSelectArrow}>▼</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Role Selection Modal */}
+          <Modal
+            visible={isRoleModalVisible}
+            transparent={true}
+            animationType="fade"
+            onRequestClose={() => setIsRoleModalVisible(false)}
+          >
+            <TouchableOpacity 
+              style={styles.roleModalOverlay}
+              activeOpacity={1}
+              onPress={() => setIsRoleModalVisible(false)}
+            >
+              <View style={styles.roleModalContent} onStartShouldSetResponder={() => true}>
+                <Text style={styles.roleModalTitle}>Select Role</Text>
+                <ScrollView style={styles.roleModalScroll} showsVerticalScrollIndicator={false}>
+                  {ROLE_OPTIONS.map((option) => (
+                    <TouchableOpacity
+                      key={option.value}
+                      style={[
+                        styles.roleOptionItem,
+                        selectedRole === option.value && styles.roleOptionItemActive
+                      ]}
+                      onPress={() => {
+                        setSelectedRole(option.value);
+                        setIsRoleModalVisible(false);
+                      }}
+                    >
+                      <Text style={[
+                        styles.roleOptionText,
+                        selectedRole === option.value && styles.roleOptionTextActive
+                      ]}>
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                <TouchableOpacity
+                  style={styles.roleModalCancelButton}
+                  onPress={() => setIsRoleModalVisible(false)}
+                >
+                  <Text style={styles.roleModalCancelText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableOpacity>
+          </Modal>
 
           {isLoading ? (
             <View style={styles.loaderWrap}>
@@ -313,4 +452,90 @@ const styles = StyleSheet.create({
   userInfo: { marginLeft: rem(12), flex: 1 },
   userName: { fontFamily: fonts['600'], fontSize: fp(14), color: colors.neutral.black },
   userEmail: { fontFamily: fonts['400'], fontSize: fp(12), color: colors.neutral.darkGrey },
+  roleFilterContainer: {
+    paddingHorizontal: rem(16),
+    paddingVertical: rem(8),
+    borderBottomWidth: 1,
+    borderBottomColor: colors.neutral.veryLightGrey,
+  },
+  roleSelectButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    height: rem(36),
+    borderRadius: rem(100),
+    backgroundColor: 'rgba(96, 102, 197, 0.1)',
+    paddingHorizontal: rem(12),
+    borderWidth: 1,
+    borderColor: colors.primary.blue,
+  },
+  roleSelectText: {
+    fontSize: fp(14),
+    fontFamily: fonts['500'],
+    color: colors.primary.blue,
+    flex: 1,
+  },
+  roleSelectArrow: {
+    fontSize: fp(10),
+    color: colors.primary.blue,
+    marginLeft: rem(8),
+  },
+  roleModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  roleModalContent: {
+    backgroundColor: colors.neutral.white,
+    borderRadius: 20,
+    padding: rem(20),
+    width: '80%',
+    maxWidth: 400,
+    maxHeight: '70%',
+  },
+  roleModalTitle: {
+    fontSize: fp(20),
+    fontFamily: fonts['700'],
+    color: colors.neutral.black,
+    marginBottom: rem(20),
+    textAlign: 'center',
+  },
+  roleModalScroll: {
+    maxHeight: rem(300),
+  },
+  roleOptionItem: {
+    paddingVertical: rem(15),
+    paddingHorizontal: rem(20),
+    borderRadius: 12,
+    marginBottom: rem(10),
+    backgroundColor: '#F8F8F8',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  roleOptionItemActive: {
+    backgroundColor: colors.primary.blue,
+    borderColor: colors.primary.blue,
+  },
+  roleOptionText: {
+    fontSize: fp(16),
+    fontFamily: fonts['500'],
+    color: colors.neutral.black,
+  },
+  roleOptionTextActive: {
+    color: colors.neutral.white,
+  },
+  roleModalCancelButton: {
+    marginTop: rem(10),
+    paddingVertical: rem(15),
+    paddingHorizontal: rem(20),
+    borderRadius: 12,
+    backgroundColor: '#E8E8E8',
+    alignItems: 'center',
+  },
+  roleModalCancelText: {
+    fontSize: fp(16),
+    fontFamily: fonts['600'],
+    color: colors.neutral.black,
+  },
 });

@@ -60,13 +60,9 @@ export async function getLocationDetails(
  * Map status value to API format
  */
 export function mapStatusToApi(statusValue: StatusValue): string {
-  const statusMap: Record<StatusValue, string> = {
-    'available': 'available',
-    'available_on': 'available_on',
-    'available_off': 'available_off',
-    'loaded_enroute': 'loaded_enroute',
-  };
-  return statusMap[statusValue] || 'available';
+  // Map all status values to their API format
+  // For now, return as-is since all statuses are valid
+  return statusValue;
 }
 
 /**

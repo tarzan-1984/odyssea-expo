@@ -29,4 +29,5 @@ export const AppEvents = {
   WebSocketDisconnect: 'webSocketDisconnect',
   MessageRead: 'messageRead',
   MessagesMarkedAsRead: 'messagesMarkedAsRead',
+  DriverStatusUpdated: 'DRIVER_STATUS_UPDATED',
 } as const;

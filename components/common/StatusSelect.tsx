@@ -3,30 +3,75 @@ import { View, Text, TouchableOpacity, StyleSheet, Modal } from 'react-native';
 import { colors, fonts, fp, rem, br } from '@/lib';
 import SelectArrow from '@/icons/SelectArrow'
 
-export type StatusValue = 'available' | 'available_on' | 'available_off' | 'loaded_enroute';
+// All possible status values
+export type StatusValue = 
+  | 'available' 
+  | 'available_on' 
+  | 'available_off' 
+  | 'loaded_enroute'
+  | 'banned'
+  | 'on_vocation'
+  | 'no_updates'
+  | 'blocked'
+  | 'expired_documents'
+  | 'no_interview'
+  | 'no_Interview'
+  | 'on_hold'
+  | 'need_update'
+  | 'unknown';
 
 interface StatusOption {
   value: StatusValue;
   label: string;
 }
 
-const STATUS_OPTIONS: StatusOption[] = [
+// Basic statuses that are always available for selection
+const BASIC_STATUS_OPTIONS: StatusOption[] = [
   { value: 'available', label: 'Available' },
   { value: 'available_on', label: 'Available on' },
   { value: 'available_off', label: 'Not available' },
   { value: 'loaded_enroute', label: 'Loaded & Enroute' },
 ];
 
+// Full mapping of all statuses to their labels
+const ALL_STATUS_LABELS: Record<StatusValue, string> = {
+  'available': 'Available',
+  'available_on': 'Available on',
+  'available_off': 'Not available',
+  'loaded_enroute': 'Loaded & Enroute',
+  'banned': 'Out of service',
+  'on_vocation': 'On vacation',
+  'no_updates': 'No updates',
+  'blocked': 'Blocked',
+  'expired_documents': 'Expired documents',
+  'no_interview': 'No Interview',
+  'no_Interview': 'No Interview',
+  'on_hold': 'On hold',
+  'need_update': 'Need update',
+  'unknown': 'Unknown'
+};
+
+// Check if a status is a basic (selectable) status
+const isBasicStatus = (status: StatusValue): boolean => {
+  return BASIC_STATUS_OPTIONS.some(opt => opt.value === status);
+};
+
 interface StatusSelectProps {
   value: StatusValue;
   onChange: (value: StatusValue) => void;
   style?: any;
+  disabled?: boolean;
 }
 
-export default function StatusSelect({ value, onChange, style }: StatusSelectProps) {
+export default function StatusSelect({ value, onChange, style, disabled = false }: StatusSelectProps) {
   const [isModalVisible, setIsModalVisible] = useState(false);
   
-  const currentStatus = STATUS_OPTIONS.find(opt => opt.value === value) || STATUS_OPTIONS[0];
+  // Get current status label
+  const currentStatusLabel = ALL_STATUS_LABELS[value] || 'Unknown';
+  
+  // Determine which options to show in modal
+  // If disabled, we don't show modal, but if enabled, show only basic options
+  const optionsToShow = BASIC_STATUS_OPTIONS;
   
   const handleSelect = (option: StatusOption) => {
     onChange(option.value);
@@ -36,16 +81,26 @@ export default function StatusSelect({ value, onChange, style }: StatusSelectPro
   return (
     <>
       <TouchableOpacity 
-        style={[styles.statusDropdown, style]} 
-        onPress={() => setIsModalVisible(true)}
+        style={[
+          styles.statusDropdown, 
+          disabled && styles.statusDropdownDisabled,
+          style
+        ]} 
+        onPress={() => !disabled && setIsModalVisible(true)}
+        disabled={disabled}
       >
-        <Text style={styles.statusText}>{currentStatus.label}</Text>
+        <Text style={[
+          styles.statusText,
+          disabled && styles.statusTextDisabled
+        ]}>
+          {currentStatusLabel}
+        </Text>
         
-        <SelectArrow />
+        {!disabled && <SelectArrow />}
       </TouchableOpacity>
 
       <Modal
-        visible={isModalVisible}
+        visible={isModalVisible && !disabled}
         transparent={true}
         animationType="fade"
         onRequestClose={() => setIsModalVisible(false)}
@@ -54,7 +109,7 @@ export default function StatusSelect({ value, onChange, style }: StatusSelectPro
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Select Status</Text>
             
-            {STATUS_OPTIONS.map((option) => (
+            {optionsToShow.map((option) => (
               <TouchableOpacity
                 key={option.value}
                 style={[
@@ -101,6 +156,13 @@ const styles = StyleSheet.create({
     fontSize: fp(16),
     color: '#8E8E93',
     fontWeight: '500',
+  },
+  statusDropdownDisabled: {
+    borderColor: '#CCCCCC',
+    backgroundColor: '#F5F5F5',
+  },
+  statusTextDisabled: {
+    color: '#999999',
   },
   modalOverlay: {
     flex: 1,

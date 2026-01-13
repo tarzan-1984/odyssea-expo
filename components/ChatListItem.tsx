@@ -661,6 +661,7 @@ const styles = StyleSheet.create({
     top: -2,
     right: -2,
     minWidth: rem(22),
+    paddingHorizontal: rem(6),
     height: rem(22),
     borderRadius: borderRadius.full,
     backgroundColor: colors.semantic.error,
@@ -726,13 +727,13 @@ const styles = StyleSheet.create({
   },
   unreadBadgeText: {
     fontSize: 10,
+    fontFamily: fonts['600'],
     textAlign: 'center',
-    lineHeight: 8,
+    lineHeight: 12,
     includeFontPadding: false,
     textAlignVertical: 'center',
     color: colors.neutral.white,
     padding: 0,
-    fontFamily: fonts['700'],
   },
   menuContainer: {
     position: 'relative',

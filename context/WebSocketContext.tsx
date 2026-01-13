@@ -8,6 +8,7 @@ import { useChatStore, updateLastMessage } from '@/stores/chatStore';
 import { chatApi } from '@/app-api/chatApi';
 import { ChatRoom } from '@/components/ChatListItem';
 import { messagesCacheService } from '@/services/MessagesCacheService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // WebSocket context interface
 interface WebSocketContextType {
@@ -538,6 +539,27 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         }
       } catch (error) {
         console.error('❌ [WebSocket] Failed to restore chat room:', error);
+      }
+    });
+
+    // Handle driver status update from server
+    newSocket.on('driverStatusUpdate', async (data: { driverStatus: string | null }) => {
+      console.log('[WebSocket] Driver status update received:', data);
+      
+      if (!currentUser || currentUser.role !== 'DRIVER') {
+        return;
+      }
+
+      try {
+        // Update AsyncStorage
+        await AsyncStorage.setItem('@user_status', data.driverStatus || '');
+        console.log(`✅ [WebSocket] Driver status updated: ${data.driverStatus || 'null'}`);
+        
+        // Emit event to notify DriverContent component
+        const { eventBus } = await import('@/services/EventBus');
+        eventBus.emit('DRIVER_STATUS_UPDATED', { driverStatus: data.driverStatus });
+      } catch (error) {
+        console.error('[WebSocket] Failed to update driver status:', error);
       }
     });
 
