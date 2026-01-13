@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Platform, Keyboard, AppState, AppStateStatus } from 'react-native';
 import type { TextInput as RNTextInput } from 'react-native';
 import { colors, fonts, rem, fp, borderRadius } from '@/lib';
@@ -15,6 +15,8 @@ import { useOnlineStatusContext } from '@/context/OnlineStatusContext';
 import ChatListItem, { ChatRoom } from '@/components/ChatListItem';
 import ContactsModal from '@/components/modals/ContactsModal';
 import { chatApi } from '@/app-api/chatApi';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { eventBus } from '@/services/EventBus';
 
 type FilterType = 'all' | 'muted' | 'unread' | 'favorite';
 
@@ -48,10 +50,65 @@ export default function MessagesScreen() {
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [isContactsOpen, setIsContactsOpen] = useState(false);
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
+  const [driverStatus, setDriverStatus] = useState<string | null>(null);
   const appStateRef = React.useRef<AppStateStatus>(AppState.currentState);
   const searchInputRef = React.useRef<RNTextInput | null>(null);
   const preventNextSearchFocusRef = React.useRef<boolean>(false);
   
+  // Load driver status from AsyncStorage
+  const loadDriverStatus = React.useCallback(async () => {
+    const userRole = authState.user?.role;
+    if (userRole === 'DRIVER') {
+      try {
+        const status = await AsyncStorage.getItem('@user_status');
+        setDriverStatus(status);
+      } catch (error) {
+        console.warn('[MessagesScreen] Failed to load driver status:', error);
+      }
+    } else {
+      setDriverStatus(null);
+    }
+  }, [authState.user?.role]);
+
+  React.useEffect(() => {
+    loadDriverStatus();
+  }, [loadDriverStatus]);
+
+  // Listen for driver status updates from WebSocket
+  React.useEffect(() => {
+    const handleDriverStatusUpdate = async (data: { driverStatus: string | null }) => {
+      if (authState.user?.role === 'DRIVER') {
+        setDriverStatus(data.driverStatus);
+      }
+    };
+
+    const unsubscribe = eventBus.on('DRIVER_STATUS_UPDATED', handleDriverStatusUpdate);
+
+    return () => {
+      unsubscribe();
+    };
+  }, [authState.user?.role]);
+
+  // Reload driver status when app returns from background
+  React.useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      const prevState = appStateRef.current;
+      
+      // Transition from inactive/background to active
+      if (prevState.match(/inactive|background/) && nextAppState === 'active') {
+        if (authState.user?.role === 'DRIVER') {
+          loadDriverStatus();
+        }
+      }
+      
+      appStateRef.current = nextAppState;
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [authState.user?.role, loadDriverStatus]);
+
   // Function to close all dropdowns
   const closeAllDropdowns = () => {
     setOpenDropdownId(null);
@@ -202,6 +259,28 @@ export default function MessagesScreen() {
   // Mirrors Next.js ChatList.filteredChatRooms logic
   const filteredChatRooms = useMemo(() => {
     return chatRooms.filter(chatRoom => {
+      // Filter out blocked chats for drivers with expired_documents status
+      const userRole = authState.user?.role;
+      if (userRole === 'DRIVER' && driverStatus === 'expired_documents') {
+        // Allowed roles for expired_documents drivers
+        const allowedRoles = ['RECRUITER', 'RECRUITER_TL', 'ADMINISTRATOR', 'EXPEDITE_MANAGER'];
+        
+        // Block all non-DIRECT chats
+        if (chatRoom.type !== 'DIRECT') {
+          return false;
+        }
+        
+        // For DIRECT chats, check if other participant's role is allowed
+        const otherParticipant = chatRoom.participants.find(
+          p => p.user.id !== authState.user?.id
+        );
+        const otherRole = otherParticipant?.user.role;
+        
+        if (!otherRole || !allowedRoles.includes(otherRole)) {
+          return false;
+        }
+      }
+
       // Apply search filter - search by display name and also by individual name parts
       const searchQueryLower = debouncedSearchQuery.trim().toLowerCase();
       let matchesSearch = !searchQueryLower;
@@ -243,7 +322,7 @@ export default function MessagesScreen() {
 
       return matchesSearch && matchesFilter;
     });
-  }, [chatRooms, debouncedSearchQuery, selectedFilter, authState.user?.id]);
+  }, [chatRooms, debouncedSearchQuery, selectedFilter, authState.user?.id, authState.user?.role, driverStatus]);
 
   const handleChatPress = (chatRoom: ChatRoom) => {
     setSelectedChatId(chatRoom.id);
