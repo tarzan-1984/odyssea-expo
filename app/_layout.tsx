@@ -59,7 +59,7 @@ function RootLayoutNav() {
   const [isAccountBlocked, setIsAccountBlocked] = useState(false);
   const ENABLE_PERMISSIONS_ONBOARDING = false; // temporary disable permissions onboarding modal
 
-  // Check if account is blocked
+  // Check if account is blocked or banned
   useEffect(() => {
     const checkBlockedStatus = async () => {
       if (!authState.isAuthenticated || authState.user?.role !== 'DRIVER') {
@@ -69,7 +69,7 @@ function RootLayoutNav() {
 
       try {
         const status = await AsyncStorage.getItem('@user_status');
-        setIsAccountBlocked(status === 'blocked');
+        setIsAccountBlocked(status === 'blocked' || status === 'banned');
       } catch (error) {
         console.error('Failed to check blocked status:', error);
       }
@@ -81,7 +81,7 @@ function RootLayoutNav() {
     const { eventBus } = require('@/services/EventBus');
     const handleDriverStatusUpdate = (data: { driverStatus: string | null }) => {
       if (authState.user?.role === 'DRIVER') {
-        setIsAccountBlocked(data.driverStatus === 'blocked');
+        setIsAccountBlocked(data.driverStatus === 'blocked' || data.driverStatus === 'banned');
       }
     };
 

@@ -47,7 +47,7 @@ export async function playIncomingMessageSound(): Promise<void> {
 			return;
 		}
 
-		// Check if sound should be blocked for drivers with blocked status
+		// Check if sound should be blocked for drivers with blocked or banned status
 		try {
 			const userStr = await secureStorage.getItemAsync('user').catch(() => null);
 			if (userStr) {
@@ -55,9 +55,9 @@ export async function playIncomingMessageSound(): Promise<void> {
 				const userRole = currentUser?.role;
 				if (userRole === 'DRIVER') {
 					const driverStatus = await AsyncStorage.getItem('@user_status').catch(() => null);
-					// Block all sounds for drivers with 'blocked' status
-					if (driverStatus === 'blocked') {
-						if (__DEV__) console.log('[SoundManager] Sound blocked for driver with blocked status');
+					// Block all sounds for drivers with 'blocked' or 'banned' status
+					if (driverStatus === 'blocked' || driverStatus === 'banned') {
+						if (__DEV__) console.log('[SoundManager] Sound blocked for driver with blocked or banned status');
 						return;
 					}
 				}
