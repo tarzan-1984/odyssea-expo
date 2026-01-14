@@ -1,6 +1,7 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { View, StyleSheet } from 'react-native';
 import OSMMapView, { Region } from '@/components/maps/OSMMapView';
+import DriverInfoPopup from '@/components/maps/DriverInfoPopup';
 import { colors } from '@/lib/colors';
 import { useDriversMarkersForMap } from '@/hooks/useDriversMarkersForMap';
 
@@ -11,6 +12,14 @@ interface NonDriverContentProps {
 export default function NonDriverContent({ firstName }: NonDriverContentProps) {
   const mapRef = useRef<{ animateToRegion: (region: Region, duration?: number) => void }>(null);
   const { markers, isLoading, isSyncing, totalDrivers } = useDriversMarkersForMap();
+  const [selectedDriver, setSelectedDriver] = useState<{
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string | null;
+    driverStatus: string | null;
+  } | null>(null);
+  const [isPopupVisible, setIsPopupVisible] = useState(false);
   
   // Default region - St. Louis area with wider zoom
   const initialRegion: Region = {
@@ -43,6 +52,31 @@ export default function NonDriverContent({ firstName }: NonDriverContentProps) {
     }
   }, [isSyncing, totalDrivers]);
 
+  const handleMarkerPress = (driverData: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string | null;
+    driverStatus: string | null;
+    latitude: number;
+    longitude: number;
+  }) => {
+    setSelectedDriver({
+      firstName: driverData.firstName,
+      lastName: driverData.lastName,
+      email: driverData.email,
+      phone: driverData.phone,
+      driverStatus: driverData.driverStatus,
+    });
+    setIsPopupVisible(true);
+  };
+
+  const handleClosePopup = () => {
+    setIsPopupVisible(false);
+    setSelectedDriver(null);
+  };
+
   return (
     <View style={styles.contentWrapper}>
       <View style={styles.mapContainer}>
@@ -58,8 +92,15 @@ export default function NonDriverContent({ firstName }: NonDriverContentProps) {
           rotateEnabled
           pitchEnabled
           showsCompass
+          onMarkerPress={handleMarkerPress}
         />
       </View>
+      
+      <DriverInfoPopup
+        visible={isPopupVisible}
+        onClose={handleClosePopup}
+        driverData={selectedDriver}
+      />
     </View>
   );
 }

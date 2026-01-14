@@ -40,6 +40,11 @@ export function useDriversMarkersForMap() {
         longitude: driver.longitude,
       },
       driverStatus: driver.driverStatus,
+      driverId: driver.id,
+      driverFirstName: driver.firstName,
+      driverLastName: driver.lastName,
+      driverEmail: driver.email,
+      driverPhone: driver.phone,
     };
   }, []);
 

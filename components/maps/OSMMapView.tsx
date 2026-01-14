@@ -16,6 +16,11 @@ export interface MarkerData {
   };
   anchor?: { x: number; y: number };
   driverStatus?: string | null;
+  driverId?: string;
+  driverFirstName?: string;
+  driverLastName?: string;
+  driverEmail?: string;
+  driverPhone?: string | null;
 }
 
 export interface OSMMapViewProps {
@@ -29,6 +34,16 @@ export interface OSMMapViewProps {
   rotateEnabled?: boolean;
   pitchEnabled?: boolean;
   showsCompass?: boolean;
+  onMarkerPress?: (driverData: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string | null;
+    driverStatus: string | null;
+    latitude: number;
+    longitude: number;
+  }) => void;
 }
 
 export interface OSMMapViewRef {
@@ -36,7 +51,7 @@ export interface OSMMapViewRef {
 }
 
 const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
-  ({ initialRegion, style, markers = [] }, ref) => {
+  ({ initialRegion, style, markers = [], onMarkerPress }, ref) => {
     const webViewRef = useRef<WebView>(null);
     const mapReadyRef = useRef(false);
     const currentZoomRef = useRef<number | null>(null);
@@ -99,6 +114,11 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
         anchor: marker.anchor || { x: 0.5, y: 0.5 },
         status: marker.driverStatus || null,
         statusColor: getStatusColor(marker.driverStatus),
+        driverId: marker.driverId,
+        driverFirstName: marker.driverFirstName,
+        driverLastName: marker.driverLastName,
+        driverEmail: marker.driverEmail,
+        driverPhone: marker.driverPhone,
       }));
 
       const scaleX = width / MAX_MARKER_WIDTH;
@@ -135,8 +155,32 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
                 })
               });
               
-              // Store driver status on marker for later use (when updating zoom)
+              // Store driver data on marker for later use
               marker._driverStatus = markerData.status;
+              marker._driverId = markerData.driverId;
+              marker._driverFirstName = markerData.driverFirstName;
+              marker._driverLastName = markerData.driverLastName;
+              marker._driverEmail = markerData.driverEmail;
+              marker._driverPhone = markerData.driverPhone;
+              marker._driverLat = markerData.lat;
+              marker._driverLng = markerData.lng;
+              
+              // Add click handler
+              marker.on('click', function() {
+                if (window.ReactNativeWebView && markerData.driverId) {
+                  window.ReactNativeWebView.postMessage(JSON.stringify({
+                    type: 'markerClick',
+                    driverId: markerData.driverId,
+                    firstName: markerData.driverFirstName || '',
+                    lastName: markerData.driverLastName || '',
+                    email: markerData.driverEmail || '',
+                    phone: markerData.driverPhone || null,
+                    driverStatus: markerData.status || null,
+                    latitude: markerData.lat,
+                    longitude: markerData.lng
+                  }));
+                }
+              });
               
               marker.addTo(window.map);
               window.markers.push(marker);
@@ -389,6 +433,18 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
                 // Update zoom ref when zoom changes
                 currentZoomRef.current = data.zoom;
                 // Markers are updated automatically in the zoomend handler
+              } else if (data.type === 'markerClick' && onMarkerPress) {
+                // Handle marker click
+                onMarkerPress({
+                  id: data.driverId,
+                  firstName: data.firstName,
+                  lastName: data.lastName,
+                  email: data.email,
+                  phone: data.phone,
+                  driverStatus: data.driverStatus,
+                  latitude: data.latitude,
+                  longitude: data.longitude,
+                });
               }
             } catch (e) {
               // Ignore parse errors
