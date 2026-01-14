@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, TextInput, Platform, AppState, ActivityIndicator, Linking } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, TextInput, Platform, AppState, ActivityIndicator, Linking, Animated } from 'react-native';
 import OSMMapView, { Region } from '@/components/maps/OSMMapView';
 import { BlurView } from 'expo-blur';
 import * as Location from 'expo-location';
@@ -32,7 +32,8 @@ export default function DriverContent() {
   const lastName = user?.lastName || '';
   const initials = `${firstName[0]}${lastName ? lastName[0] : firstName[0]}`.toUpperCase();
   const profilePhoto = user?.profilePhoto || user?.avatar || null;
-  const [status, setStatus] = useState<StatusValue>('available');
+  const [status, setStatus] = useState<StatusValue>('available'); // Local state for dropdown selection
+  const [driverStatusFromStorage, setDriverStatusFromStorage] = useState<StatusValue | null>(null); // Status from AsyncStorage (synced with backend)
   const [isStatusDisabled, setIsStatusDisabled] = useState(false);
   const previousStatusRef = useRef<StatusValue | null>(null); // Track previous status for transitions
   const [isLocationSharingAllowed, setIsLocationSharingAllowed] = useState(true); // Control visibility of toggle
@@ -85,6 +86,7 @@ export default function DriverContent() {
   const [isLocationReady, setIsLocationReady] = useState(false);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [updateSuccessMessage, setUpdateSuccessMessage] = useState<string | null>(null);
+  const messageAnimation = useRef(new Animated.Value(-100)).current; // Start above screen
 
   const formatAddressLabel = useCallback((info: Partial<GeocodedAddress>): string => {
     const city = info.city || info.subregion || info.district || '';
@@ -703,6 +705,7 @@ export default function DriverContent() {
           const isBasic = basicStatuses.includes(parsedStatus);
           
           setStatus(parsedStatus);
+          setDriverStatusFromStorage(parsedStatus); // Set status from AsyncStorage for marker
           setIsStatusDisabled(!isBasic);
           
           // Set previous status ref to null for initial load
@@ -745,6 +748,7 @@ export default function DriverContent() {
         } else {
           console.log('[DriverContent] No saved status found in AsyncStorage, using default: available');
           setStatus('available');
+          setDriverStatusFromStorage('available'); // Set default status for marker
           setIsStatusDisabled(false);
           previousStatusRef.current = null;
           setIsLocationSharingAllowed(true);
@@ -793,6 +797,7 @@ export default function DriverContent() {
       const isBasic = basicStatuses.includes(newStatus);
       
       setStatus(newStatus);
+      setDriverStatusFromStorage(newStatus); // Update status from AsyncStorage for marker
       setIsStatusDisabled(!isBasic);
       
       console.log(`[DriverContent] Driver status updated from backend: ${newStatus}, disabled: ${!isBasic}`);
@@ -810,6 +815,26 @@ export default function DriverContent() {
       unsubscribe();
     };
   }, [updateLocationSharingBasedOnStatus]);
+
+  // Animate message when updateSuccessMessage changes
+  useEffect(() => {
+    if (updateSuccessMessage) {
+      // Slide down
+      Animated.spring(messageAnimation, {
+        toValue: 0,
+        useNativeDriver: true,
+        tension: 50,
+        friction: 8,
+      }).start();
+    } else {
+      // Slide up
+      Animated.timing(messageAnimation, {
+        toValue: -100,
+        duration: 300,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [updateSuccessMessage, messageAnimation]);
 
   // Load saved location data on mount
   useEffect(() => {
@@ -1071,7 +1096,7 @@ export default function DriverContent() {
       // After successful TMS update, update our backend database with status and location data
       if (tmsSuccess) {
         const previousStatus = previousStatusRef.current;
-        previousStatusRef.current = status;
+        const sentStatus = status; // Store the status that was sent in the request
         
         // Get location details (city, state) for backend update
         let city: string | undefined;
@@ -1092,12 +1117,19 @@ export default function DriverContent() {
         try {
           if (user?.id) {
             await updateUser(user.id, {
-              driverStatus: status,
+              driverStatus: sentStatus,
               zip: zip,
               city: city,
               state: state,
             });
             console.log('[DriverContent] ✅ Backend user updated successfully with status and location data');
+            
+            // After successful backend update, save status to AsyncStorage and sync local state
+            await AsyncStorage.setItem('@user_status', sentStatus);
+            setDriverStatusFromStorage(sentStatus); // Update marker status
+            previousStatusRef.current = sentStatus; // Update previous status ref
+            
+            console.log('[DriverContent] ✅ Status saved to AsyncStorage and local state synced:', sentStatus);
           }
         } catch (updateError: any) {
           // Extract error message properly
@@ -1128,7 +1160,7 @@ export default function DriverContent() {
             statusCode: errorStatus,
             errorDetails: errorDetails ? JSON.stringify(errorDetails) : undefined,
             userId: user?.id,
-            status,
+            status: sentStatus,
             zip,
             city,
             state,
@@ -1136,7 +1168,7 @@ export default function DriverContent() {
         }
         
         // Auto-manage location sharing based on status transition
-        await updateLocationSharingBasedOnStatus(status, previousStatus);
+        await updateLocationSharingBasedOnStatus(sentStatus, previousStatus);
       }
 
       // Send location update to our backend (independent of TMS API)
@@ -1187,26 +1219,72 @@ export default function DriverContent() {
     console.warn('[DriverContent] Share location button pressed');
     setIsSharingLocation(true);
     try {
-      if (hasLocationPermission === null) {
+      // Check and request location permission
+      if (hasLocationPermission === null || hasLocationPermission === false) {
         console.warn('[DriverContent] Requesting location permission');
         const { status } = await Location.requestForegroundPermissionsAsync();
         const granted = status === 'granted';
         setHasLocationPermission(granted);
         if (!granted) {
-          fileLogger.error('DriverContent', 'Location permission not granted');
-          console.warn('Location permission not granted');
+          fileLogger.error('DriverContent', 'Location permission not granted', { status });
+          console.warn('[DriverContent] Location permission not granted:', status);
+          setUpdateSuccessMessage('Location permission is required. Please enable it in settings.');
+          setTimeout(() => {
+            setUpdateSuccessMessage(null);
+          }, 3000);
           return;
         }
         console.warn('[DriverContent] Location permission granted');
       }
 
+      // Check if location services are enabled
+      const isLocationEnabled = await Location.hasServicesEnabledAsync();
+      if (!isLocationEnabled) {
+        fileLogger.error('DriverContent', 'Location services are disabled');
+        console.warn('[DriverContent] Location services are disabled');
+        setUpdateSuccessMessage('Location services are disabled. Please enable them in device settings.');
+        setTimeout(() => {
+          setUpdateSuccessMessage(null);
+        }, 3000);
+        return;
+      }
+
       console.warn('[DriverContent] Getting current location');
-      const pos = await Location.getCurrentPositionAsync({
-        accuracy: Location.Accuracy.Balanced,
-      });
-      if (!pos) {
-        fileLogger.error('DriverContent', 'Failed to get current location');
-        console.warn('Failed to get current location');
+      let pos;
+      try {
+        pos = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+      } catch (locationError: any) {
+        fileLogger.error('DriverContent', 'Failed to get current location', {
+          error: locationError instanceof Error ? locationError.message : String(locationError),
+          code: locationError?.code,
+        });
+        console.error('[DriverContent] Failed to get current location:', locationError);
+        
+        let errorMessage = 'Failed to get your location. ';
+        if (locationError?.code === 0 || locationError?.message?.includes('KCLErrorDomain')) {
+          errorMessage += 'Please check that location services are enabled and try again.';
+        } else if (locationError?.message?.includes('permission') || locationError?.message?.includes('denied')) {
+          errorMessage += 'Location permission is required. Please enable it in settings.';
+        } else {
+          errorMessage += 'Please try again.';
+        }
+        
+        setUpdateSuccessMessage(errorMessage);
+        setTimeout(() => {
+          setUpdateSuccessMessage(null);
+        }, 4000);
+        return;
+      }
+      
+      if (!pos || !pos.coords) {
+        fileLogger.error('DriverContent', 'Invalid location data received');
+        console.warn('[DriverContent] Invalid location data received');
+        setUpdateSuccessMessage('Invalid location data. Please try again.');
+        setTimeout(() => {
+          setUpdateSuccessMessage(null);
+        }, 3000);
         return;
       }
       const { latitude, longitude } = pos.coords;
@@ -1292,8 +1370,30 @@ export default function DriverContent() {
       mapRef.current?.animateToRegion(nextRegion, 1000);
       setUserLocation({ latitude, longitude });
       setIsLocationReady(true);
-    } catch (e) {
-      console.error('Failed to get location:', e);
+      
+      // Show success message if location was obtained
+      setUpdateSuccessMessage('Location obtained successfully');
+      setTimeout(() => {
+        setUpdateSuccessMessage(null);
+      }, 2000);
+    } catch (e: any) {
+      fileLogger.error('DriverContent', 'Unexpected error in handleShareLocation', {
+        error: e instanceof Error ? e.message : String(e),
+        stack: e instanceof Error ? e.stack : undefined,
+      });
+      console.error('[DriverContent] Failed to get location:', e);
+      
+      let errorMessage = 'An error occurred while getting your location. ';
+      if (e?.message) {
+        errorMessage += e.message;
+      } else {
+        errorMessage += 'Please try again.';
+      }
+      
+      setUpdateSuccessMessage(errorMessage);
+      setTimeout(() => {
+        setUpdateSuccessMessage(null);
+      }, 4000);
     } finally {
       setIsSharingLocation(false);
     }
@@ -1432,6 +1532,31 @@ export default function DriverContent() {
 
   return (
     <View style={styles.contentWrapper}>
+      {/* Animated success/error message from top */}
+      {updateSuccessMessage && (
+        <Animated.View
+          style={[
+            styles.topMessageContainer,
+            updateSuccessMessage.includes('successfully') 
+              ? styles.topMessageContainerSuccess 
+              : styles.topMessageContainerError,
+            {
+              transform: [{ translateY: messageAnimation }],
+            },
+          ]}
+        >
+          <Text 
+            style={[
+              styles.topMessageText,
+              updateSuccessMessage.includes('successfully') 
+                ? styles.topMessageTextSuccess 
+                : styles.topMessageTextError,
+            ]}
+          >
+            {updateSuccessMessage}
+          </Text>
+        </Animated.View>
+      )}
           {/* Map section */}
           <View style={styles.mapContainer}>
               <OSMMapView
@@ -1441,7 +1566,7 @@ export default function DriverContent() {
                 markers={userLocation ? [{
                   coordinate: userLocation,
                   anchor: { x: 0.5, y: 1.0 }, // Anchor at bottom point of teardrop pin
-                  driverStatus: status || user?.driverStatus || null // Use current status from state, fallback to user.driverStatus
+                  driverStatus: driverStatusFromStorage || user?.driverStatus || null // Use status from AsyncStorage (synced with backend)
                 }] : []}
                 showsUserLocation={false}
                 showsMyLocationButton={false}
@@ -1557,13 +1682,6 @@ export default function DriverContent() {
                   <Text style={styles.textInput}>{date}</Text>
             </View>
           </View>
-              
-              {/* Success/Error message */}
-              {updateSuccessMessage && (
-                <View style={styles.messageContainer}>
-                  <Text style={styles.successMessage}>{updateSuccessMessage}</Text>
-                </View>
-              )}
               
               <View style={styles.settingsWrap}>
                 <Text style={styles.settingsLabel}></Text>
@@ -1800,21 +1918,42 @@ const styles = StyleSheet.create({
   updateButtonTextDisabled: {
     color: '#999999',
   },
-  messageContainer: {
-    marginTop: rem(12),
-    marginBottom: rem(12),
-    paddingHorizontal: rem(16),
-    paddingVertical: rem(8),
-    borderRadius: 8,
-    backgroundColor: 'rgba(52, 199, 89, 0.1)',
-    borderWidth: 1,
-    borderColor: '#34C759',
+  topMessageContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 1000,
+    paddingTop: Platform.OS === 'ios' ? rem(50) : rem(20),
+    paddingHorizontal: rem(20),
+    paddingBottom: rem(12),
+    backgroundColor: colors.neutral.white,
+    borderBottomWidth: 1,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 5,
   },
-  successMessage: {
-    color: '#34C759',
-    fontSize: fp(13),
-    fontFamily: fonts["500"],
+  topMessageContainerSuccess: {
+    borderBottomColor: '#34C759',
+  },
+  topMessageContainerError: {
+    borderBottomColor: '#FF3B30',
+  },
+  topMessageText: {
+    fontSize: fp(14),
+    fontFamily: fonts["600"],
     textAlign: 'center',
+  },
+  topMessageTextSuccess: {
+    color: '#34C759',
+  },
+  topMessageTextError: {
+    color: '#FF3B30',
   },
   expiredDocumentsMessage: {
     margin: rem(0),

@@ -1,9 +1,10 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, StyleSheet, ActivityIndicator } from 'react-native';
 import OSMMapView, { Region } from '@/components/maps/OSMMapView';
 import DriverInfoPopup from '@/components/maps/DriverInfoPopup';
 import { colors } from '@/lib/colors';
 import { useDriversMarkersForMap } from '@/hooks/useDriversMarkersForMap';
+import { getUserById } from '@/app-api/users';
 
 interface NonDriverContentProps {
   firstName: string;
@@ -12,14 +13,9 @@ interface NonDriverContentProps {
 export default function NonDriverContent({ firstName }: NonDriverContentProps) {
   const mapRef = useRef<{ animateToRegion: (region: Region, duration?: number) => void }>(null);
   const { markers, isLoading, isSyncing, totalDrivers } = useDriversMarkersForMap();
-  const [selectedDriver, setSelectedDriver] = useState<{
-    firstName: string;
-    lastName: string;
-    email: string;
-    phone: string | null;
-    driverStatus: string | null;
-  } | null>(null);
+  const [selectedDriver, setSelectedDriver] = useState<any | null>(null);
   const [isPopupVisible, setIsPopupVisible] = useState(false);
+  const [isLoadingDriverData, setIsLoadingDriverData] = useState(false);
   
   // Default region - St. Louis area with wider zoom
   const initialRegion: Region = {
@@ -52,24 +48,33 @@ export default function NonDriverContent({ firstName }: NonDriverContentProps) {
     }
   }, [isSyncing, totalDrivers]);
 
-  const handleMarkerPress = (driverData: {
+  const handleMarkerPress = async (driverData: {
     id: string;
-    firstName: string;
-    lastName: string;
-    email: string;
-    phone: string | null;
+    externalId: string | null;
     driverStatus: string | null;
     latitude: number;
     longitude: number;
   }) => {
-    setSelectedDriver({
-      firstName: driverData.firstName,
-      lastName: driverData.lastName,
-      email: driverData.email,
-      phone: driverData.phone,
-      driverStatus: driverData.driverStatus,
-    });
+    if (!driverData.externalId) {
+      console.warn('[NonDriverContent] No externalId for driver:', driverData.id);
+      return;
+    }
+
+    setIsLoadingDriverData(true);
     setIsPopupVisible(true);
+    
+    try {
+      const res = await getUserById(driverData.externalId);
+      // TMS API returns data in format: { data: { data: {...} } } or just {...}
+      const driverDataFromTMS = res?.data?.data || res?.data || res;
+      setSelectedDriver(driverDataFromTMS);
+    } catch (error) {
+      console.error('[NonDriverContent] Failed to fetch driver data from TMS:', error);
+      setSelectedDriver(null);
+      setIsPopupVisible(false);
+    } finally {
+      setIsLoadingDriverData(false);
+    }
   };
 
   const handleClosePopup = () => {
@@ -100,6 +105,7 @@ export default function NonDriverContent({ firstName }: NonDriverContentProps) {
         visible={isPopupVisible}
         onClose={handleClosePopup}
         driverData={selectedDriver}
+        isLoading={isLoadingDriverData}
       />
     </View>
   );

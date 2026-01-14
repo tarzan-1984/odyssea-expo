@@ -11,6 +11,7 @@ import { secureStorage } from '@/utils/secureStorage';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createSlot } from "@radix-ui/react-slot";
 
 /**
  * ProfileScreen - Profile screen of the application
@@ -51,6 +52,7 @@ export default function ProfileScreen() {
             return;
           }
           const res = await getUserById(authState.user.externalId);
+          console.log('res', res);
           setUserDetails(res ?? null);
         } else {
           // For non-DRIVER: use our backend database

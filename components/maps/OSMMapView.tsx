@@ -17,10 +17,7 @@ export interface MarkerData {
   anchor?: { x: number; y: number };
   driverStatus?: string | null;
   driverId?: string;
-  driverFirstName?: string;
-  driverLastName?: string;
-  driverEmail?: string;
-  driverPhone?: string | null;
+  driverExternalId?: string | null;
 }
 
 export interface OSMMapViewProps {
@@ -36,10 +33,7 @@ export interface OSMMapViewProps {
   showsCompass?: boolean;
   onMarkerPress?: (driverData: {
     id: string;
-    firstName: string;
-    lastName: string;
-    email: string;
-    phone: string | null;
+    externalId: string | null;
     driverStatus: string | null;
     latitude: number;
     longitude: number;
@@ -115,10 +109,7 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
         status: marker.driverStatus || null,
         statusColor: getStatusColor(marker.driverStatus),
         driverId: marker.driverId,
-        driverFirstName: marker.driverFirstName,
-        driverLastName: marker.driverLastName,
-        driverEmail: marker.driverEmail,
-        driverPhone: marker.driverPhone,
+        driverExternalId: marker.driverExternalId,
       }));
 
       const scaleX = width / MAX_MARKER_WIDTH;
@@ -158,10 +149,7 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
               // Store driver data on marker for later use
               marker._driverStatus = markerData.status;
               marker._driverId = markerData.driverId;
-              marker._driverFirstName = markerData.driverFirstName;
-              marker._driverLastName = markerData.driverLastName;
-              marker._driverEmail = markerData.driverEmail;
-              marker._driverPhone = markerData.driverPhone;
+              marker._driverExternalId = markerData.driverExternalId;
               marker._driverLat = markerData.lat;
               marker._driverLng = markerData.lng;
               
@@ -171,10 +159,7 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
                   window.ReactNativeWebView.postMessage(JSON.stringify({
                     type: 'markerClick',
                     driverId: markerData.driverId,
-                    firstName: markerData.driverFirstName || '',
-                    lastName: markerData.driverLastName || '',
-                    email: markerData.driverEmail || '',
-                    phone: markerData.driverPhone || null,
+                    externalId: markerData.driverExternalId || null,
                     driverStatus: markerData.status || null,
                     latitude: markerData.lat,
                     longitude: markerData.lng
@@ -437,10 +422,7 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
                 // Handle marker click
                 onMarkerPress({
                   id: data.driverId,
-                  firstName: data.firstName,
-                  lastName: data.lastName,
-                  email: data.email,
-                  phone: data.phone,
+                  externalId: data.externalId,
                   driverStatus: data.driverStatus,
                   latitude: data.latitude,
                   longitude: data.longitude,
