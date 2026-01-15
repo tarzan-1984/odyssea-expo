@@ -8,6 +8,10 @@ import BottomNavigation from "../../components/navigation/BottomNavigation";
 import SearchIcon from '@/icons/SearchIcon';
 import ClearIcon from '@/icons/ClearIcon';
 import ArrowDownIcon from '@/icons/ArrowDownIcon';
+import PinIcon from '@/icons/PinIcon';
+import MuteIcon from '@/icons/MuteIcon';
+import UnreadFilterIcon from '@/icons/UnreadFilterIcon';
+import AllFilterIcon from '@/icons/AllFilterIcon';
 import { useChatRooms } from '@/hooks/useChatRooms';
 import { useAuth } from '@/context/AuthContext';
 import { useWebSocket } from '@/context/WebSocketContext';
@@ -29,7 +33,7 @@ const filterOptions: FilterOption[] = [
   { value: 'all', label: 'All' },
   { value: 'muted', label: 'Muted' },
   { value: 'unread', label: 'Unread' },
-  { value: 'favorite', label: 'Favorite' },
+  { value: 'favorite', label: 'Pin' },
 ];
 
 /**
@@ -43,6 +47,7 @@ export default function MessagesScreen() {
   const { isConnected } = useWebSocket();
   const { isUserOnline } = useOnlineStatusContext();
   const { chatRooms, isLoading, error, loadChatRooms, updateChatRoom } = useChatRooms();
+  const [activeTab, setActiveTab] = useState<'chats' | 'shipments'>('chats');
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [isFilterDropdownOpen, setIsFilterDropdownOpen] = useState(false);
@@ -134,8 +139,11 @@ export default function MessagesScreen() {
 
   // Determine if all chats are muted (mirrors Next.js logic)
   const allChatsMuted = useMemo(() => {
-    return chatRooms.length > 0 && chatRooms.every(room => room.isMuted);
-  }, [chatRooms]);
+    const tabScopedRooms = chatRooms.filter((room) =>
+      activeTab === 'chats' ? room.type !== 'LOAD' : room.type === 'LOAD'
+    );
+    return tabScopedRooms.length > 0 && tabScopedRooms.every((room) => room.isMuted);
+  }, [chatRooms, activeTab]);
 
   // Smart mute/unmute function (mirrors Next.js handleSmartMuteToggle)
   const handleSmartMuteToggle = async () => {
@@ -153,6 +161,7 @@ export default function MessagesScreen() {
     try {
       // Get all unmuted chat room IDs
       const unmutedChatRoomIds = chatRooms
+        .filter((room) => (activeTab === 'chats' ? room.type !== 'LOAD' : room.type === 'LOAD'))
         .filter(room => !room.isMuted)
         .map(room => room.id);
 
@@ -180,6 +189,7 @@ export default function MessagesScreen() {
     try {
       // Get all muted chat room IDs
       const mutedChatRoomIds = chatRooms
+        .filter((room) => (activeTab === 'chats' ? room.type !== 'LOAD' : room.type === 'LOAD'))
         .filter(room => room.isMuted)
         .map(room => room.id);
 
@@ -207,6 +217,7 @@ export default function MessagesScreen() {
     try {
       // Get all chat room IDs with unread messages
       const unreadChatRoomIds = chatRooms
+        .filter((room) => (activeTab === 'chats' ? room.type !== 'LOAD' : room.type === 'LOAD'))
         .filter(room => (room.unreadCount || 0) > 0)
         .map(room => room.id);
 
@@ -259,6 +270,14 @@ export default function MessagesScreen() {
   // Mirrors Next.js ChatList.filteredChatRooms logic
   const filteredChatRooms = useMemo(() => {
     return chatRooms.filter(chatRoom => {
+      // Tab filtering:
+      // - Chats tab: show all chats except LOAD
+      // - Shipments tab: show only LOAD chats
+      const isAllowedByTab = activeTab === 'chats'
+        ? chatRoom.type !== 'LOAD'
+        : chatRoom.type === 'LOAD';
+      if (!isAllowedByTab) return false;
+
       // Filter out blocked chats for drivers with expired_documents status
       const userRole = authState.user?.role;
       if (userRole === 'DRIVER' && driverStatus === 'expired_documents') {
@@ -322,7 +341,7 @@ export default function MessagesScreen() {
 
       return matchesSearch && matchesFilter;
     });
-  }, [chatRooms, debouncedSearchQuery, selectedFilter, authState.user?.id, authState.user?.role, driverStatus]);
+  }, [chatRooms, activeTab, debouncedSearchQuery, selectedFilter, authState.user?.id, authState.user?.role, driverStatus]);
 
   const handleChatPress = (chatRoom: ChatRoom) => {
     setSelectedChatId(chatRoom.id);
@@ -449,8 +468,47 @@ export default function MessagesScreen() {
                 )}
               </View>
             </View>
+
+            {/* Second Row: Tabs (Chats / Shipments) */}
+            <View style={styles.tabsRow}>
+              <TouchableOpacity
+                style={[
+                  styles.tabButton,
+                  activeTab === 'chats' && styles.tabButtonActive,
+                ]}
+                onPress={() => setActiveTab('chats')}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.tabButtonText,
+                    activeTab === 'chats' && styles.tabButtonTextActive,
+                  ]}
+                >
+                  Chats
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[
+                  styles.tabButton,
+                  activeTab === 'shipments' && styles.tabButtonActive,
+                ]}
+                onPress={() => setActiveTab('shipments')}
+                activeOpacity={0.8}
+              >
+                <Text
+                  style={[
+                    styles.tabButtonText,
+                    activeTab === 'shipments' && styles.tabButtonTextActive,
+                  ]}
+                >
+                  Shipments
+                </Text>
+              </TouchableOpacity>
+            </View>
             
-            {/* Second Row: Action Buttons and Filter (equal width) */}
+            {/* Third Row: Action Buttons and Filter (equal width) */}
             <View style={styles.actionButtonsRow}>
               {/* Mute All Button */}
               <TouchableOpacity
@@ -481,7 +539,29 @@ export default function MessagesScreen() {
                   onPress={() => setIsFilterDropdownOpen(!isFilterDropdownOpen)}
                   activeOpacity={0.7}
                 >
-                  <Text style={styles.filterButtonText}>{getCurrentFilterLabel()}</Text>
+                  <View style={styles.filterButtonContent}>
+                    {selectedFilter === 'all' && (
+                      <View style={styles.filterButtonIcon}>
+                        <AllFilterIcon width={16} height={16} color={colors.primary.blue} />
+                      </View>
+                    )}
+                    {selectedFilter === 'muted' && (
+                      <View style={styles.filterButtonIcon}>
+                        <MuteIcon width={16} height={16} color={colors.primary.blue} />
+                      </View>
+                    )}
+                    {selectedFilter === 'unread' && (
+                      <View style={styles.filterButtonIcon}>
+                        <UnreadFilterIcon width={16} height={16} color={colors.primary.blue} />
+                      </View>
+                    )}
+                    {selectedFilter === 'favorite' && (
+                      <View style={styles.filterButtonIcon}>
+                        <PinIcon width={16} height={16} color={colors.primary.blue} />
+                      </View>
+                    )}
+                    <Text style={styles.filterButtonText}>{getCurrentFilterLabel()}</Text>
+                  </View>
                   <View style={[styles.arrowIcon, isFilterDropdownOpen && styles.arrowIconRotated]}>
                     <ArrowDownIcon />
                   </View>
@@ -503,14 +583,36 @@ export default function MessagesScreen() {
                     onPress={() => handleFilterSelect(option.value)}
                     activeOpacity={0.7}
                   >
-                    <Text
-                      style={[
-                        styles.dropdownItemText,
-                        selectedFilter === option.value && styles.dropdownItemTextSelected,
-                      ]}
-                    >
-                      {option.label}
-                    </Text>
+                    <View style={styles.dropdownItemContent}>
+                      {option.value === 'all' && (
+                        <View style={styles.dropdownItemIcon}>
+                          <AllFilterIcon width={16} height={16} color={colors.primary.blue} />
+                        </View>
+                      )}
+                      {option.value === 'muted' && (
+                        <View style={styles.dropdownItemIcon}>
+                          <MuteIcon width={16} height={16} color={colors.primary.blue} />
+                        </View>
+                      )}
+                      {option.value === 'unread' && (
+                        <View style={styles.dropdownItemIcon}>
+                          <UnreadFilterIcon width={16} height={16} color={colors.primary.blue} />
+                        </View>
+                      )}
+                      {option.value === 'favorite' && (
+                        <View style={styles.dropdownItemIcon}>
+                          <PinIcon width={16} height={16} color={colors.primary.blue} />
+                        </View>
+                      )}
+                      <Text
+                        style={[
+                          styles.dropdownItemText,
+                          selectedFilter === option.value && styles.dropdownItemTextSelected,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </View>
                   </TouchableOpacity>
                 ))}
               </View>
@@ -767,6 +869,34 @@ const styles = StyleSheet.create({
   searchRow: {
     marginBottom: rem(8),
   },
+  tabsRow: {
+    flexDirection: 'row',
+    gap: rem(15),
+    marginBottom: rem(8),
+  },
+  tabButton: {
+    flex: 1,
+    borderRadius: rem(100),
+    height: rem(35),
+    paddingHorizontal: rem(12),
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(96, 102, 197, 0.1)',
+  },
+  tabButtonActive: {
+    backgroundColor: colors.primary.green,
+  },
+  tabButtonText: {
+    fontSize: fp(14),
+    fontFamily: fonts['500'],
+    color: colors.primary.blue,
+    opacity: 0.8,
+  },
+  tabButtonTextActive: {
+    fontFamily: fonts['700'],
+    color: colors.primary.blue,
+    opacity: 1,
+  },
   actionButtonsRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -858,6 +988,13 @@ const styles = StyleSheet.create({
     fontFamily: fonts["500"],
     color: colors.primary.blue,
   },
+  filterButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  filterButtonIcon: {
+    marginRight: rem(5),
+  },
   arrowIcon: {
     justifyContent: 'center',
     alignItems: 'center',
@@ -886,8 +1023,8 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   dropdownItem: {
-    paddingHorizontal: rem(12),
-    paddingVertical: rem(6),
+    paddingHorizontal: rem(16),
+    paddingVertical: rem(12),
     borderBottomWidth: 1,
     borderBottomColor: colors.neutral.veryLightGrey,
   },
@@ -898,12 +1035,19 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary.lightBlue + '20',
   },
   dropdownItemText: {
-    fontSize: fp(12),
+    fontSize: fp(20),
     fontFamily: fonts["400"],
     color: colors.neutral.black,
   },
   dropdownItemTextSelected: {
     fontFamily: fonts["600"],
     color: colors.primary.blue,
+  },
+  dropdownItemContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  dropdownItemIcon: {
+    marginRight: rem(5),
   },
 });
