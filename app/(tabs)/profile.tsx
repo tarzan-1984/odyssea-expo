@@ -52,7 +52,6 @@ export default function ProfileScreen() {
             return;
           }
           const res = await getUserById(authState.user.externalId);
-          console.log('res', res);
           setUserDetails(res ?? null);
         } else {
           // For non-DRIVER: use our backend database
@@ -247,27 +246,36 @@ export default function ProfileScreen() {
                         </Text>
                       </View>
                       
-                      <View style={styles.infoItem} >
-                        <Text style={styles.infoTitle}>City</Text>
-                        <Text style={styles.infoValue}>
-                          {isDriver 
-                            ? (userDetails?.organized_data?.contact?.city || '-')
-                            : (userDetails?.city || '-')}
-                        </Text>
-                      </View>
-                      
-                      <View style={styles.infoItem} >
-                        <Text style={styles.infoTitle}>State</Text>
-                        <Text style={styles.infoValue}>
-                          {isDriver 
-                            ? (userDetails?.organized_data?.contact?.city_state_zip || '-')
-                            : (userDetails?.state || '-')}
-                        </Text>
-                      </View>
+                      {!isDriver &&
+                        <View style={styles.infoItem} >
+                          <Text style={styles.infoTitle}>Role</Text>
+                          <Text style={styles.infoValue}>
+                            {userDetails?.role}
+                          </Text>
+                        </View>
+                      }
                       
                       {/* Hide these fields for non-DRIVER users */}
                       {isDriver && (
                         <>
+                          <View style={styles.infoItem} >
+                            <Text style={styles.infoTitle}>City</Text>
+                            <Text style={styles.infoValue}>
+                              {isDriver
+                               ? (userDetails?.organized_data?.contact?.city || '-')
+                               : (userDetails?.city || '-')}
+                            </Text>
+                          </View>
+                          
+                          <View style={styles.infoItem} >
+                            <Text style={styles.infoTitle}>State</Text>
+                            <Text style={styles.infoValue}>
+                              {isDriver
+                               ? (userDetails?.organized_data?.contact?.city_state_zip || '-')
+                               : (userDetails?.state || '-')}
+                            </Text>
+                          </View>
+                          
                           <View style={styles.infoItem} >
                             <Text style={styles.infoTitle}>Date of Birth</Text>
                             <Text style={styles.infoValue}>{userDetails?.organized_data?.contact?.date_of_birth || '-'}</Text>
