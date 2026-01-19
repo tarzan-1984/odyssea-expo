@@ -575,7 +575,7 @@ export default function ChatListItem({
       {/* Right Section: Role, Read Status, Unread Count */}
       <View style={styles.rightSection}>
         {/* Role Tag */}
-        {role ? (
+        {chatRoom.type === 'DIRECT' && role ? (
           <View style={[styles.roleTag, { backgroundColor: getRoleBackgroundColor(role) }]}>
             <Text style={styles.roleTagText}>
               {formatRoleText(role)}

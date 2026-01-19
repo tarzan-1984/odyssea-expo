@@ -33,7 +33,7 @@ const filterOptions: FilterOption[] = [
   { value: 'all', label: 'All' },
   { value: 'muted', label: 'Muted' },
   { value: 'unread', label: 'Unread' },
-  { value: 'favorite', label: 'Pin' },
+  { value: 'favorite', label: 'Pinned' },
 ];
 
 /**
@@ -413,7 +413,7 @@ export default function MessagesScreen() {
           {/* Header with time and profile */}
           <View style={styles.header}>
             <View style={styles.titleContainer}>
-              <Text style={styles.screenTitle}>Conversation</Text>
+              <Text style={styles.screenTitle}>Conversations</Text>
               <View style={styles.statusContainer}>
                 <Text style={[
                   styles.statusText,

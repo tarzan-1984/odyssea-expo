@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useEffect, useCallback, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, KeyboardAvoidingView, Platform, Keyboard, Animated, Easing } from 'react-native';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, KeyboardAvoidingView, Platform, Keyboard, Animated, Easing, Image } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { BlurView } from 'expo-blur';
 import { colors, fonts, fp, rem } from '@/lib';
@@ -16,6 +16,7 @@ import { setActiveChatRoomId } from '@/services/ActiveChatService';
 import { useAttachmentHandler } from '@/utils/chatAttachmentHelpers';
 import FilesModal from '@/components/modals/FilesModal';
 import ChatInputSection from '@/components/chat/ChatInputSection';
+import { getChatAvatarSource as getChatAvatarSourceUtil, getChatInitials } from '@/utils/chatAvatarUtils';
 
 /**
  * Chat Room Screen
@@ -415,6 +416,27 @@ export default function ChatRoomScreen() {
               >
                 <ArrowLeft width={rem(10.46)} height={rem(19)} color={colors.neutral.white} />
               </TouchableOpacity>
+
+              {/* Chat avatar (same as in chat list) */}
+              {!chatRoom && isLoadingChatRoom ? (
+                <View style={styles.headerAvatarPlaceholder} />
+              ) : (
+                (() => {
+                  const avatarUri = getChatAvatarSourceUtil(chatRoom || null, authState.user?.id);
+                  const initials = getChatInitials(getChatDisplayName());
+                  return (
+                    <View style={styles.headerAvatarContainer}>
+                      {avatarUri ? (
+                        <Image source={{ uri: avatarUri }} style={styles.headerAvatarImage} />
+                      ) : (
+                        <View style={styles.headerAvatarPlaceholder}>
+                          <Text style={styles.headerAvatarText}>{initials}</Text>
+                        </View>
+                      )}
+                    </View>
+                  );
+                })()
+              )}
               
               {/* 
                 Show header loader ONLY if we have no chat data at all.
@@ -752,11 +774,37 @@ const styles = StyleSheet.create({
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: rem(20),
     flex: 1,
+  },
+  headerAvatarContainer: {
+    width: rem(48),
+    height: rem(48),
+    borderRadius: rem(24),
+    marginRight: rem(10),
+    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerAvatarImage: {
+    width: '100%',
+    height: '100%',
+  },
+  headerAvatarPlaceholder: {
+    width: rem(48),
+    height: rem(48),
+    borderRadius: rem(24),
+    backgroundColor: colors.neutral.lightGrey,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerAvatarText: {
+    fontSize: fp(15),
+    fontFamily: fonts['700'],
+    color: colors.primary.violet,
   },
   backButton: {
     padding: rem(4),
+    marginRight: rem(18),
     justifyContent: 'center',
     alignItems: 'center',
   },

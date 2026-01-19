@@ -24,6 +24,72 @@ export default function MessageItem({ message, isSender, onReplyPress }: Props) 
 		});
 	};
 
+	const formatRoleText = (role: string): string => {
+		const normalizedRole = role
+			.trim()
+			.toUpperCase()
+			.replace(/\s+/g, '_');
+
+		// Keep mapping minimal but user-friendly.
+		const roleDisplayMap: Record<string, string> = {
+			'DRIVER_UPDATES': 'Driver Updates',
+			'RECRUITER_TL': 'Recruiter Team Leader',
+			'DISPATCHER_TL': 'Dispatcher Team Leader',
+			'TRACKING_TL': 'Tracking Team Leader',
+			'EXPEDITE_MANAGER': 'Expedite Manager',
+			'ADMINISTRATOR': 'Administrator',
+			'SUBSCRIBER': 'Subscriber',
+		};
+
+		if (roleDisplayMap[normalizedRole]) return roleDisplayMap[normalizedRole];
+
+		return normalizedRole
+			.split('_')
+			.map(word => word.charAt(0) + word.slice(1).toLowerCase())
+			.join(' ');
+	};
+
+	const normalizeRoleForColor = (role: string): string => {
+		return role.trim().toUpperCase().replace(/\s+/g, '_');
+	};
+
+	const getRoleBackgroundColor = (role: string): string => {
+		const normalizedRole = normalizeRoleForColor(role);
+
+		// Same role palette as in chat list (ChatListItem).
+		const roleBackgroundColors: Record<string, string> = {
+			'DRIVER_UPDATES': '#FF6B35', // Orange
+			'MODERATOR': '#B2B2B2', // Gray
+			'RECRUITER': '#00d200', // Green
+			'ADMINISTRATOR': '#B2B2B2', // Gray (same as MODERATOR)
+			'NIGHTSHIFT_TRACKING': '#FF6B35', // Orange
+			'DISPATCHER': '#4A90E2', // Blue
+			'BILLING': 'rgba(96, 102, 197, 0.15)', // Purple
+			'ACCOUNTING': 'rgba(96, 102, 197, 0.15)', // Purple
+			'RECRUITER_TL': '#00d200', // Green (same as RECRUITER)
+			'DRIVER': '#D2B48C', // Light brown (tan)
+			'EXPEDITE_MANAGER': 'rgba(96, 102, 197, 0.15)', // Default purple
+			'TRACKING_TL': 'rgba(96, 102, 197, 0.15)', // Default purple
+			'DISPATCHER_TL': '#4A90E2', // Blue (same as DISPATCHER)
+			'TRACKING': 'rgba(96, 102, 197, 0.15)', // Default purple
+			'SUBSCRIBER': 'rgba(96, 102, 197, 0.15)', // Default purple
+			'MORNING_TRACKING': 'rgba(96, 102, 197, 0.15)', // Default purple
+		};
+
+		if (roleBackgroundColors[normalizedRole]) return roleBackgroundColors[normalizedRole];
+
+		for (const [key, color] of Object.entries(roleBackgroundColors)) {
+			if (normalizedRole.startsWith(key + '_') || normalizedRole.includes('_' + key)) {
+				return color;
+			}
+		}
+
+		return 'rgba(96, 102, 197, 0.15)';
+	};
+
+	const senderFirstName = message.sender?.firstName?.trim() || '';
+	const senderRoleRaw = message.sender?.role?.trim() || '';
+
 	return (
 		<View
 			style={[
@@ -96,6 +162,27 @@ export default function MessageItem({ message, isSender, onReplyPress }: Props) 
 				>
 					{formatTime(message.createdAt)}
 				</Text>
+				{!isSender ? (
+					<>
+						{senderFirstName ? (
+							<Text style={styles.messageMeta} numberOfLines={1}>
+								{senderFirstName}
+							</Text>
+						) : null}
+						{senderRoleRaw ? (
+							<View
+								style={[
+									styles.roleTag,
+									{ backgroundColor: getRoleBackgroundColor(senderRoleRaw) },
+								]}
+							>
+								<Text style={styles.roleTagText} numberOfLines={1}>
+									{formatRoleText(senderRoleRaw)}
+								</Text>
+							</View>
+						) : null}
+					</>
+				) : null}
 			</View>
 		</View>
 	);
@@ -164,6 +251,24 @@ const styles = StyleSheet.create({
 		alignItems: 'center',
 	},
 	messageTime: {
+		fontSize: fp(11),
+		fontFamily: fonts['400'],
+		color: 'rgba(41, 41, 102, 0.7)',
+	},
+	messageMeta: {
+		fontSize: fp(11),
+		fontFamily: fonts['400'],
+		color: 'rgba(41, 41, 102, 0.7)',
+	},
+	roleTag: {
+		paddingHorizontal: rem(8),
+		paddingVertical: rem(3),
+		borderRadius: rem(10),
+		justifyContent: 'center',
+		alignItems: 'center',
+		maxWidth: rem(120),
+	},
+	roleTagText: {
 		fontSize: fp(11),
 		fontFamily: fonts['400'],
 		color: 'rgba(41, 41, 102, 0.7)',
