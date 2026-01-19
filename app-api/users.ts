@@ -11,6 +11,10 @@ export interface ResetPasswordResponse {
   message: string;
 }
 
+export interface ChangePasswordResponse {
+  message: string;
+}
+
 /**
  * Get user from TMS API (for DRIVER role)
  */
@@ -223,6 +227,39 @@ export async function resetPasswordForMobile(email: string): Promise<ResetPasswo
     // Re-throw to let component handle it
     throw error;
   }
+}
+
+/**
+ * Change password for currently authenticated user (self-service).
+ * Backend validates that the user can change only their own password (or admin).
+ */
+export async function changePasswordForMobile(userId: string, newPassword: string): Promise<ChangePasswordResponse> {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is not configured');
+  }
+
+  const accessToken = await secureStorage.getItemAsync('accessToken');
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
+
+  const response = await fetch(`${API_BASE_URL}/v1/users/${userId}/password`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ newPassword }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.message || `Failed to change password. Status: ${response.status}`);
+  }
+
+  // Backend wraps response in { data: {...} } format due to TransformInterceptor
+  return (data.data || data) as ChangePasswordResponse;
 }
 
 

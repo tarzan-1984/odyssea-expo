@@ -204,6 +204,17 @@ export default function ProfileScreen() {
                    <Text style={styles.uploadButtonText}>Upload Photo</Text>
                  </TouchableOpacity>
                )}
+
+              <TouchableOpacity
+                style={[styles.uploadButton, isUploading && styles.uploadButtonDisabled]}
+                activeOpacity={0.8}
+                onPress={() => router.push('/change-password')}
+                disabled={isUploading}
+                accessibilityRole="button"
+                accessibilityLabel="Change password"
+              >
+                <Text style={styles.uploadButtonText}>Change Password</Text>
+              </TouchableOpacity>
             </View>
             
             {/* Basic user info block */}
@@ -585,6 +596,7 @@ const styles = StyleSheet.create({
   controlsWrap: {
     paddingHorizontal: 20,
     marginBottom: rem(20),
+    gap: rem(12),
   },
   infoBlock: {
     paddingHorizontal: 20,

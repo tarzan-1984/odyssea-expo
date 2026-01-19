@@ -1,6 +1,7 @@
 import React from 'react';
-import { View, StyleSheet, Platform, ScrollView, Text } from 'react-native';
+import { View, StyleSheet, Platform, ScrollView, Text, TouchableOpacity } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import LogsSettings from '@/components/settings/LogsSettings';
 import NotificationToggleSettings from '@/components/settings/NotificationToggleSettings';
 import ChatCacheSettings from '@/components/settings/ChatCacheSettings';
@@ -11,6 +12,7 @@ import { fonts, fp, rem } from '@/lib';
 
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   return (
     <View style={[styles.screenWrap, Platform.OS === 'android' && { paddingBottom: insets.bottom }]}>
       <View style={styles.screenContent}>
@@ -25,6 +27,18 @@ export default function SettingsScreen() {
           <View style={styles.contentWrapper}>
             <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
               <NotificationToggleSettings />
+              <View style={styles.sectionCard}>
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={styles.sectionTitle}>Password</Text>
+                  <TouchableOpacity
+                    style={[styles.button, styles.primaryButton]}
+                    onPress={() => router.push('/change-password')}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.buttonText}>Change password</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
               <WebSocketConnectionSettings />
               <ChatCacheSettings />
               <LogsSettings />
@@ -85,6 +99,44 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingBottom: 70,
+  },
+  sectionCard: {
+    padding: rem(16),
+    backgroundColor: 'white',
+    marginBottom: rem(12),
+    borderRadius: rem(8),
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  sectionTitle: {
+    fontFamily: fonts['700'],
+    fontSize: fp(18),
+    color: colors.primary.blue,
+    flex: 1,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  button: {
+    paddingVertical: rem(10),
+    paddingHorizontal: rem(16),
+    borderRadius: rem(8),
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: rem(90),
+  },
+  primaryButton: {
+    backgroundColor: colors.primary.blue,
+  },
+  buttonText: {
+    color: '#FFFFFF',
+    fontSize: fp(13),
+    fontWeight: '600',
   },
 });
 
