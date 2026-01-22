@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Platform, Keyboard, AppState, AppStateStatus } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Platform, Keyboard, AppState, AppStateStatus, Modal } from 'react-native';
 import type { TextInput as RNTextInput } from 'react-native';
 import { colors, fonts, rem, fp, borderRadius } from '@/lib';
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -18,9 +18,11 @@ import { useWebSocket } from '@/context/WebSocketContext';
 import { useOnlineStatusContext } from '@/context/OnlineStatusContext';
 import ChatListItem, { ChatRoom } from '@/components/ChatListItem';
 import ContactsModal from '@/components/modals/ContactsModal';
+import CreateGroupChatModal from '@/components/modals/CreateGroupChatModal';
 import { chatApi } from '@/app-api/chatApi';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { eventBus } from '@/services/EventBus';
+import { useChatStore } from '@/stores/chatStore';
 
 type FilterType = 'all' | 'muted' | 'unread' | 'favorite';
 
@@ -47,13 +49,16 @@ export default function MessagesScreen() {
   const { isConnected } = useWebSocket();
   const { isUserOnline } = useOnlineStatusContext();
   const { chatRooms, isLoading, error, loadChatRooms, updateChatRoom } = useChatRooms();
-  const [activeTab, setActiveTab] = useState<'chats' | 'shipments'>('chats');
+  const activeTab = useChatStore((s) => s.messagesTab);
+  const setActiveTab = useChatStore((s) => s.setMessagesTab);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [isFilterDropdownOpen, setIsFilterDropdownOpen] = useState(false);
   const [selectedFilter, setSelectedFilter] = useState<FilterType>('all');
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [isContactsOpen, setIsContactsOpen] = useState(false);
+  const [isAddNewMenuOpen, setIsAddNewMenuOpen] = useState(false);
+  const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false);
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
   const [driverStatus, setDriverStatus] = useState<string | null>(null);
   const appStateRef = React.useRef<AppStateStatus>(AppState.currentState);
@@ -423,10 +428,53 @@ export default function MessagesScreen() {
                 </Text>
               </View>
             </View>
-            <TouchableOpacity style={styles.contactsButton} onPress={() => setIsContactsOpen(true)}>
-              <Text style={styles.contactsButtonText}>Contacts</Text>
+            <TouchableOpacity style={styles.contactsButton} onPress={() => setIsAddNewMenuOpen(true)}>
+              <Text style={styles.contactsButtonText}>Add new</Text>
             </TouchableOpacity>
           </View>
+
+          {/* Add New toolbar */}
+          <Modal
+            transparent
+            visible={isAddNewMenuOpen}
+            animationType="fade"
+            onRequestClose={() => setIsAddNewMenuOpen(false)}
+          >
+            <TouchableOpacity
+              activeOpacity={1}
+              style={styles.addNewMenuOverlay}
+              onPress={() => setIsAddNewMenuOpen(false)}
+            >
+              <View
+                style={[styles.addNewMenu, { top: insets.top + rem(60) }]}
+                onStartShouldSetResponder={() => true}
+              >
+                <TouchableOpacity
+                  style={styles.addNewMenuItem}
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    setIsAddNewMenuOpen(false);
+                    setIsCreateGroupOpen(true);
+                  }}
+                >
+                  <Text style={styles.addNewMenuItemText}>Add new room</Text>
+                </TouchableOpacity>
+
+                <View style={styles.addNewMenuSeparator} />
+
+                <TouchableOpacity
+                  style={styles.addNewMenuItem}
+                  activeOpacity={0.7}
+                  onPress={() => {
+                    setIsAddNewMenuOpen(false);
+                    setIsContactsOpen(true);
+                  }}
+                >
+                  <Text style={styles.addNewMenuItemText}>Contacts</Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableOpacity>
+          </Modal>
           
           {/* Search and Filter Section */}
           <View style={styles.searchFilterSection}>
@@ -727,6 +775,14 @@ export default function MessagesScreen() {
             }
           }}
         />
+
+        <CreateGroupChatModal
+          visible={isCreateGroupOpen}
+          onClose={() => setIsCreateGroupOpen(false)}
+          onCreated={async () => {
+            await loadChatRooms(true);
+          }}
+        />
       </View>
     </View>
   );
@@ -783,6 +839,36 @@ const styles = StyleSheet.create({
     fontSize: fp(14),
     fontFamily: fonts['600'],
     color: colors.neutral.white,
+  },
+  addNewMenuOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.05)',
+  },
+  addNewMenu: {
+    position: 'absolute',
+    right: rem(16),
+    width: rem(190),
+    backgroundColor: colors.neutral.white,
+    borderRadius: borderRadius.md,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
+  addNewMenuItem: {
+    paddingVertical: rem(12),
+    paddingHorizontal: rem(14),
+  },
+  addNewMenuItemText: {
+    fontSize: fp(16),
+    fontFamily: fonts['600'],
+    color: colors.primary.blue,
+  },
+  addNewMenuSeparator: {
+    height: 1,
+    backgroundColor: colors.neutral.veryLightGrey,
   },
   emptyContainer: {
     flex: 1,

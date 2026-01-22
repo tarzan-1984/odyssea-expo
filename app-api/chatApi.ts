@@ -207,6 +207,7 @@ class ChatApiClient {
     name?: string;
     type: 'DIRECT' | 'GROUP' | 'LOAD';
     loadId?: string;
+    avatar?: string;
     participantIds: string[];
   }): Promise<ChatRoom> {
     return this.request<ChatRoom>(`/v1/chat-rooms`, {
@@ -225,6 +226,7 @@ class ChatApiClient {
     search?: string;
     roles?: string | string[];   // optional filter - can be string or array
     status?: string; // optional filter
+    contactsOnly?: boolean; // when true, backend returns only ACTIVE users
     sort?: any;      // optional sort payload
   }): Promise<UsersResponse> {
     const query = new URLSearchParams();
@@ -239,6 +241,7 @@ class ChatApiClient {
       query.append('roles', rolesParam);
     }
     if (params?.status) query.append('status', params.status);
+    if (params?.contactsOnly) query.append('contactsOnly', 'true');
     if (params?.sort) query.append('sort', JSON.stringify(params.sort));
 
     const qs = query.toString();

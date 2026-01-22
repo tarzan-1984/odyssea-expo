@@ -19,6 +19,7 @@ const ROLE_OPTIONS = [
   { value: 'BILLING', label: 'Billing' },
   { value: 'ACCOUNTING', label: 'Accounting' },
   { value: 'RECRUITER_TL', label: 'Recruiter Team Leader' },
+  { value: 'HR_MANAGER', label: 'HR Manager' },
   { value: 'DRIVER', label: 'Driver' },
   { value: 'EXPEDITE_MANAGER', label: 'Expedite Manager' },
   { value: 'TRACKING_TL', label: 'Tracking Team Leader' },
@@ -87,6 +88,15 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
     return () => clearTimeout(t);
   }, [search]);
 
+  // Backend search seems to work best with a single token.
+  // For multi-word queries (e.g. "first last"), use the first token for API and filter locally by all tokens.
+  const apiSearch = useMemo(() => {
+    const q = (debouncedSearch || '').trim();
+    if (!q) return undefined;
+    const firstToken = q.split(/\s+/).filter(Boolean)[0];
+    return firstToken || undefined;
+  }, [debouncedSearch]);
+
   // Load driver status from AsyncStorage
   useEffect(() => {
     const loadDriverStatus = async () => {
@@ -131,8 +141,9 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
         const res: UsersResponse = await chatApi.getUsers({ 
           page: 1, 
           limit: 10, 
-          search: debouncedSearch || undefined,
-          roles: rolesParam
+          search: apiSearch,
+          roles: rolesParam,
+          contactsOnly: true,
         });
         setUsers(dedupeById(res.users || []));
         setPage(res.pagination?.current_page || 1);
@@ -144,7 +155,7 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
       }
     };
     load();
-  }, [visible, debouncedSearch, selectedRole, isDriverWithExpiredDocuments]);
+  }, [visible, apiSearch, selectedRole, isDriverWithExpiredDocuments]);
 
   const loadMore = async () => {
     if (!hasNextPage || isLoadingMore) return;
@@ -159,8 +170,9 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
       const res: UsersResponse = await chatApi.getUsers({ 
         page: next, 
         limit: 10, 
-        search: debouncedSearch || undefined,
-        roles: rolesParam
+        search: apiSearch,
+        roles: rolesParam,
+        contactsOnly: true,
       });
       setUsers(prev => dedupeById([...(prev || []), ...((res.users as UserItem[]) || [])]));
       setPage(res.pagination?.current_page || next);
@@ -174,6 +186,7 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const tokens = q.split(/\s+/).filter(Boolean);
     // Build a set of userIds that already have a DIRECT chat with current user
     const directUserIds = new Set<string>();
     chatRooms.forEach(room => {
@@ -190,8 +203,11 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
     // No need for client-side filtering here
     
     // Apply search filter if provided
-    if (!q) return base;
-    return base.filter(u => `${u.firstName} ${u.lastName}`.toLowerCase().includes(q) || (u.email || '').toLowerCase().includes(q));
+    if (tokens.length === 0) return base;
+    return base.filter(u => {
+      const haystack = `${u.firstName || ''} ${u.lastName || ''} ${(u.email || '')}`.toLowerCase();
+      return tokens.every((t) => haystack.includes(t));
+    });
   }, [users, search, chatRooms]);
 
   // Handlers to clear search on close/select
@@ -334,6 +350,11 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
               keyboardShouldPersistTaps="handled"
               onEndReachedThreshold={0.6}
               onEndReached={loadMore}
+              ListEmptyComponent={
+                <View style={styles.emptyWrap}>
+                  <Text style={styles.emptyText}>Contact not found</Text>
+                </View>
+              }
               ListFooterComponent={isLoadingMore ? (
                 <View style={styles.loaderMoreWrap}><ActivityIndicator size="small" color={colors.primary.violet} /></View>
               ) : null}
@@ -409,6 +430,16 @@ const styles = StyleSheet.create({
   errorWrap: { padding: rem(20), alignItems: 'center' },
   errorText: { color: colors.semantic.error, fontFamily: fonts['600'] },
   listContent: { paddingVertical: rem(8) },
+  emptyWrap: {
+    paddingHorizontal: rem(16),
+    paddingVertical: rem(20),
+    alignItems: 'center',
+  },
+  emptyText: {
+    fontFamily: fonts['500'],
+    fontSize: fp(14),
+    color: colors.neutral.darkGrey,
+  },
   separator: { height: 1, backgroundColor: colors.neutral.veryLightGrey },
   userItem: {
     flexDirection: 'row',

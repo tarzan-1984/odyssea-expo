@@ -592,6 +592,7 @@ export default function ChatRoomScreen() {
                   <MessageItem
                     message={message}
                     isSender={isSender}
+                    chatType={chatRoom?.type}
                     onReplyPress={(msg) => {
                       setReplyingTo({
                         avatar: msg.sender.avatar,

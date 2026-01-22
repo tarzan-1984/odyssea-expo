@@ -81,7 +81,7 @@ export default function ChangePasswordScreen() {
               styles.input,
               (localError) && styles.inputError
             ]}
-            placeholder="Password"
+            placeholder="New password"
             value={password}
             onChangeText={(text) => {
               setPassword(text);

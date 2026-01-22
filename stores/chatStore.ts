@@ -4,6 +4,8 @@ import type { ChatRoom, Message } from '@/components/ChatListItem';
 type ChatState = {
   chatRooms: ChatRoom[];
   messagesByRoom: Record<string, Message[]>;
+  messagesTab: 'chats' | 'shipments';
+  setMessagesTab: (tab: 'chats' | 'shipments') => void;
   setChatRooms: (rooms: ChatRoom[]) => void;
   mergeChatRooms: (rooms: ChatRoom[]) => void;
   updateChatRoom: (chatRoomId: string, updates: Partial<ChatRoom>) => void;
@@ -18,6 +20,8 @@ type ChatState = {
 const storeCreator: StateCreator<ChatState> = (set, get) => ({
   chatRooms: [],
   messagesByRoom: {},
+  messagesTab: 'chats',
+  setMessagesTab: (tab) => set({ messagesTab: tab }),
 
   setChatRooms: (rooms) => set({ chatRooms: rooms }),
 
