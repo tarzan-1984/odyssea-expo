@@ -18,6 +18,8 @@ interface WebSocketContextType {
   disconnect: () => void;
   joinChatRoom: (chatRoomId: string) => void;
   leaveChatRoom: (chatRoomId: string) => void;
+  updateChatRoom: (data: { chatRoomId: string; updates: { name?: string; isArchived?: boolean; avatar?: string } }) => void;
+  addParticipants: (data: { chatRoomId: string; participantIds: string[] }) => void;
   removeParticipant: (data: { chatRoomId: string; participantId: string }) => void;
   sendMessage: (data: SendMessageData) => void;
   sendTyping: (chatRoomId: string, isTyping: boolean) => void;
@@ -69,6 +71,17 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   const maxReconnectAttempts = 5;
   const isConnectingRef = useRef(false);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+
+  const normalizeParticipants = useCallback((participants: any[]): any[] => {
+    if (!Array.isArray(participants)) return [];
+    return participants.map((p: any) => ({
+      ...p,
+      user: {
+        ...p.user,
+        avatar: p.user?.avatar ?? p.user?.profilePhoto ?? '',
+      },
+    }));
+  }, []);
 
   // Get authentication token from secure storage
   const getAuthToken = useCallback(async (): Promise<string | null> => {
@@ -455,10 +468,60 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       }
     });
 
-    // Handle chat room updates
-    newSocket.on('chatRoomUpdated', (data: any) => {
-      console.log('💬 [WebSocket] Chat room updated:', data);
-      // TODO: Update chat room in store
+    // Handle chat room updates (name/avatar/archive/etc)
+    newSocket.on('chatRoomUpdated', async (data: any) => {
+      try {
+        const chatRoomId = data?.chatRoomId;
+        const updatedChatRoom = data?.updatedChatRoom ?? data?.chatRoom ?? data;
+        if (!chatRoomId || !updatedChatRoom) return;
+
+        const normalized: ChatRoom = {
+          ...updatedChatRoom,
+          participants: normalizeParticipants(updatedChatRoom.participants || []),
+        };
+
+        const state = useChatStore.getState();
+        state.updateChatRoom(chatRoomId, normalized);
+
+        // Update cache (best-effort)
+        try {
+          const { chatCacheService } = await import('@/services/ChatCacheService');
+          await chatCacheService.updateChatRoom(chatRoomId, normalized);
+        } catch {}
+      } catch (e) {
+        console.error('Failed to handle chatRoomUpdated:', e);
+      }
+    });
+
+    // Handle participants added to chat room
+    newSocket.on('participantsAdded', async (data: any) => {
+      try {
+        const chatRoomId = data?.chatRoomId;
+        const newParticipantsRaw = data?.newParticipants ?? [];
+        if (!chatRoomId || !Array.isArray(newParticipantsRaw)) return;
+
+        const state = useChatStore.getState();
+        const room = state.chatRooms.find((r) => r.id === chatRoomId);
+        if (!room) return;
+
+        const normalizedNew = normalizeParticipants(newParticipantsRaw);
+        const existing = Array.isArray(room.participants) ? room.participants : [];
+        const byUserId = new Set(existing.map((p: any) => (p.user?.id || p.userId)));
+        const merged = [
+          ...existing,
+          ...normalizedNew.filter((p: any) => !byUserId.has(p.user?.id || p.userId)),
+        ];
+
+        state.updateChatRoom(chatRoomId, { participants: merged });
+
+        // Update cache (best-effort)
+        try {
+          const { chatCacheService } = await import('@/services/ChatCacheService');
+          await chatCacheService.updateChatRoom(chatRoomId, { participants: merged });
+        } catch {}
+      } catch (e) {
+        console.error('Failed to handle participantsAdded:', e);
+      }
     });
 
     // Handle chat room deleted (permanently deleted from database)
@@ -902,6 +965,20 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     }
   }, [socket, isConnected]);
 
+  const updateChatRoom = useCallback((data: { chatRoomId: string; updates: { name?: string; isArchived?: boolean; avatar?: string } }) => {
+    if (socket && isConnected) {
+      console.log('📝 [WebSocket] Updating chat room:', data);
+      socket.emit('updateChatRoom', data);
+    }
+  }, [socket, isConnected]);
+
+  const addParticipants = useCallback((data: { chatRoomId: string; participantIds: string[] }) => {
+    if (socket && isConnected) {
+      console.log('➕ [WebSocket] Adding participants to chat room:', data);
+      socket.emit('addParticipants', data);
+    }
+  }, [socket, isConnected]);
+
   const removeParticipant = useCallback((data: { chatRoomId: string; participantId: string }) => {
     if (socket && isConnected) {
       console.log('🚪 [WebSocket] Removing participant from chat room:', data);
@@ -1030,6 +1107,8 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     disconnect,
     joinChatRoom,
     leaveChatRoom,
+    updateChatRoom,
+    addParticipants,
     removeParticipant,
     sendMessage,
     sendTyping,

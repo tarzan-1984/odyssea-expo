@@ -17,6 +17,7 @@ import { useAttachmentHandler } from '@/utils/chatAttachmentHelpers';
 import FilesModal from '@/components/modals/FilesModal';
 import ChatInputSection from '@/components/chat/ChatInputSection';
 import { getChatAvatarSource as getChatAvatarSourceUtil, getChatInitials } from '@/utils/chatAvatarUtils';
+import ChatInfoModal from '@/components/modals/ChatInfoModal';
 
 /**
  * Chat Room Screen
@@ -32,6 +33,7 @@ export default function ChatRoomScreen() {
   const [isKeyboardOpen, setIsKeyboardOpen] = useState(false);
   const [flexToggle, setFlexToggle] = useState(false);
   const [isFilesModalOpen, setIsFilesModalOpen] = useState(false);
+  const [isChatInfoModalOpen, setIsChatInfoModalOpen] = useState(false);
   
   // Message input state
   const [messageText, setMessageText] = useState('');
@@ -448,9 +450,19 @@ export default function ChatRoomScreen() {
               ) : error && !chatRoom ? (
                 <Text style={styles.screenTitle}>Error</Text>
               ) : (
-                <Text style={styles.screenTitle}>
-                  {getChatDisplayName()}
-                </Text>
+                <TouchableOpacity
+                  activeOpacity={0.8}
+                  disabled={!(chatRoom && (chatRoom.type === 'GROUP' || chatRoom.type === 'LOAD'))}
+                  onPress={() => {
+                    if (chatRoom && (chatRoom.type === 'GROUP' || chatRoom.type === 'LOAD')) {
+                      setIsChatInfoModalOpen(true);
+                    }
+                  }}
+                >
+                  <Text style={styles.screenTitle}>
+                    {getChatDisplayName()}
+                  </Text>
+                </TouchableOpacity>
               )}
             </View>
             
@@ -462,6 +474,12 @@ export default function ChatRoomScreen() {
                     }}
                   />
           </View>
+          
+          <ChatInfoModal
+            visible={isChatInfoModalOpen}
+            onClose={() => setIsChatInfoModalOpen(false)}
+            chatRoom={chatRoom || null}
+          />
         
           {isLoadingMessages && messages.length === 0 ? (
             <View style={styles.loadingContainer}>

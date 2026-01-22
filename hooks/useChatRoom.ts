@@ -56,6 +56,22 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
   const isLoadingMoreRef = useRef(false); // Prevent multiple simultaneous loadMoreMessages calls
   const openedChatsRef = useRef<Set<string> | null>(null);
   
+  // Keep chatRoom UI in sync with global store updates (participants/avatar/name/etc).
+  // This is important for cases like ChatInfoModal where updates arrive via WebSocket.
+  const roomFromStore =
+    useChatStore(
+      useCallback(
+        (s) => (chatRoomId ? (s.chatRooms.find((r) => r.id === chatRoomId) as ChatRoom | undefined) : undefined),
+        [chatRoomId],
+      ),
+    ) ?? null;
+
+  useEffect(() => {
+    if (!chatRoomId) return;
+    if (!roomFromStore) return;
+    setChatRoom(roomFromStore);
+  }, [chatRoomId, roomFromStore]);
+  
   // Archive-related state
   const [availableArchives, setAvailableArchives] = useState<ArchiveDay[]>([]);
   const [currentArchiveIndex, setCurrentArchiveIndex] = useState(0);
