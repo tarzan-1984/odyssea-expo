@@ -530,6 +530,14 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         console.log('🗑️ [WebSocket] Chat room deleted:', data.chatRoomId);
         const { removeChatRoom } = useChatStore.getState();
         removeChatRoom(data.chatRoomId);
+
+        // Remove chat room from chat rooms cache so it doesn't reappear on next sync
+        try {
+          const { chatCacheService } = await import('@/services/ChatCacheService');
+          await chatCacheService.deleteChatRoom(data.chatRoomId);
+        } catch (err) {
+          console.error('Failed to delete chat room from cache:', err);
+        }
         
         // Clear messages cache for this chat room
         await messagesCacheService.clearMessages(data.chatRoomId).catch((err) => {
@@ -546,6 +554,14 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         console.log('👁️ [WebSocket] Chat room hidden:', data.chatRoomId);
         const { removeChatRoom } = useChatStore.getState();
         removeChatRoom(data.chatRoomId);
+
+        // Remove chat room from chat rooms cache so it doesn't reappear on next sync
+        try {
+          const { chatCacheService } = await import('@/services/ChatCacheService');
+          await chatCacheService.deleteChatRoom(data.chatRoomId);
+        } catch (err) {
+          console.error('Failed to delete hidden chat room from cache:', err);
+        }
         
         // Clear messages cache for this chat room
         await messagesCacheService.clearMessages(data.chatRoomId).catch((err) => {

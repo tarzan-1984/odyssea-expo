@@ -64,6 +64,10 @@ export default function MessagesScreen() {
   const appStateRef = React.useRef<AppStateStatus>(AppState.currentState);
   const searchInputRef = React.useRef<RNTextInput | null>(null);
   const preventNextSearchFocusRef = React.useRef<boolean>(false);
+  // Prevent infinite re-loading when the user has 0 chats.
+  // When the list is empty, some hook dependencies can change and re-trigger focus effects,
+  // causing "Loading chats..." <-> "No chats yet" flicker.
+  const hasAttemptedInitialEmptyLoadRef = React.useRef<boolean>(false);
   
   // Load driver status from AsyncStorage
   const loadDriverStatus = React.useCallback(async () => {
@@ -83,6 +87,25 @@ export default function MessagesScreen() {
   React.useEffect(() => {
     loadDriverStatus();
   }, [loadDriverStatus]);
+
+  const isExpiredDocumentsDriver =
+    authState.user?.role === 'DRIVER' && driverStatus === 'expired_documents';
+
+  // Force "Chats" tab for expired_documents drivers (shipments/group chats are restricted).
+  React.useEffect(() => {
+    if (!isExpiredDocumentsDriver) return;
+    if (activeTab !== 'chats') {
+      setActiveTab('chats');
+    }
+  }, [isExpiredDocumentsDriver, activeTab, setActiveTab]);
+
+  // Safety: if driver becomes expired_documents while screen is open,
+  // ensure "Add new" menu / group creation isn't left open.
+  React.useEffect(() => {
+    if (!isExpiredDocumentsDriver) return;
+    setIsAddNewMenuOpen(false);
+    setIsCreateGroupOpen(false);
+  }, [isExpiredDocumentsDriver]);
 
   // Listen for driver status updates from WebSocket
   React.useEffect(() => {
@@ -363,6 +386,7 @@ export default function MessagesScreen() {
       // If we already have chat rooms in the store, do not trigger additional loads,
       // regardless of WebSocket connection status.
       if (chatRooms.length > 0) {
+        hasAttemptedInitialEmptyLoadRef.current = false;
         return;
       }
 
@@ -370,6 +394,10 @@ export default function MessagesScreen() {
       // When offline, this will still try once, but won't keep reloading
       // on every focus while there is data in the store.
       if (chatRooms.length === 0) {
+        if (hasAttemptedInitialEmptyLoadRef.current) {
+          return;
+        }
+        hasAttemptedInitialEmptyLoadRef.current = true;
         loadChatRooms(false).catch((error) => {
           console.error('Failed to load chat rooms on focus:', error);
         });
@@ -428,53 +456,67 @@ export default function MessagesScreen() {
                 </Text>
               </View>
             </View>
-            <TouchableOpacity style={styles.contactsButton} onPress={() => setIsAddNewMenuOpen(true)}>
-              <Text style={styles.contactsButtonText}>Add new</Text>
-            </TouchableOpacity>
+            {isExpiredDocumentsDriver ? (
+              <TouchableOpacity
+                style={styles.contactsButton}
+                onPress={() => setIsContactsOpen(true)}
+              >
+                <Text style={styles.contactsButtonText}>Contacts</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={styles.contactsButton}
+                onPress={() => setIsAddNewMenuOpen(true)}
+              >
+                <Text style={styles.contactsButtonText}>Add new</Text>
+              </TouchableOpacity>
+            )}
           </View>
 
           {/* Add New toolbar */}
-          <Modal
-            transparent
-            visible={isAddNewMenuOpen}
-            animationType="fade"
-            onRequestClose={() => setIsAddNewMenuOpen(false)}
-          >
-            <TouchableOpacity
-              activeOpacity={1}
-              style={styles.addNewMenuOverlay}
-              onPress={() => setIsAddNewMenuOpen(false)}
+          {!isExpiredDocumentsDriver && (
+            <Modal
+              transparent
+              visible={isAddNewMenuOpen}
+              animationType="fade"
+              onRequestClose={() => setIsAddNewMenuOpen(false)}
             >
-              <View
-                style={[styles.addNewMenu, { top: insets.top + rem(60) }]}
-                onStartShouldSetResponder={() => true}
+              <TouchableOpacity
+                activeOpacity={1}
+                style={styles.addNewMenuOverlay}
+                onPress={() => setIsAddNewMenuOpen(false)}
               >
-                <TouchableOpacity
-                  style={styles.addNewMenuItem}
-                  activeOpacity={0.7}
-                  onPress={() => {
-                    setIsAddNewMenuOpen(false);
-                    setIsCreateGroupOpen(true);
-                  }}
+                <View
+                  style={[styles.addNewMenu, { top: insets.top + rem(60) }]}
+                  onStartShouldSetResponder={() => true}
                 >
-                  <Text style={styles.addNewMenuItemText}>Add new room</Text>
-                </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.addNewMenuItem}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      setIsAddNewMenuOpen(false);
+                      setIsCreateGroupOpen(true);
+                    }}
+                  >
+                    <Text style={styles.addNewMenuItemText}>Add new room</Text>
+                  </TouchableOpacity>
 
-                <View style={styles.addNewMenuSeparator} />
+                  <View style={styles.addNewMenuSeparator} />
 
-                <TouchableOpacity
-                  style={styles.addNewMenuItem}
-                  activeOpacity={0.7}
-                  onPress={() => {
-                    setIsAddNewMenuOpen(false);
-                    setIsContactsOpen(true);
-                  }}
-                >
-                  <Text style={styles.addNewMenuItemText}>Contacts</Text>
-                </TouchableOpacity>
-              </View>
-            </TouchableOpacity>
-          </Modal>
+                  <TouchableOpacity
+                    style={styles.addNewMenuItem}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                      setIsAddNewMenuOpen(false);
+                      setIsContactsOpen(true);
+                    }}
+                  >
+                    <Text style={styles.addNewMenuItemText}>Contacts</Text>
+                  </TouchableOpacity>
+                </View>
+              </TouchableOpacity>
+            </Modal>
+          )}
           
           {/* Search and Filter Section */}
           <View style={styles.searchFilterSection}>
@@ -518,44 +560,46 @@ export default function MessagesScreen() {
             </View>
 
             {/* Second Row: Tabs (Chats / Shipments) */}
-            <View style={styles.tabsRow}>
-              <TouchableOpacity
-                style={[
-                  styles.tabButton,
-                  activeTab === 'chats' && styles.tabButtonActive,
-                ]}
-                onPress={() => setActiveTab('chats')}
-                activeOpacity={0.8}
-              >
-                <Text
+            {!isExpiredDocumentsDriver && (
+              <View style={styles.tabsRow}>
+                <TouchableOpacity
                   style={[
-                    styles.tabButtonText,
-                    activeTab === 'chats' && styles.tabButtonTextActive,
+                    styles.tabButton,
+                    activeTab === 'chats' && styles.tabButtonActive,
                   ]}
+                  onPress={() => setActiveTab('chats')}
+                  activeOpacity={0.8}
                 >
-                  Chats
-                </Text>
-              </TouchableOpacity>
+                  <Text
+                    style={[
+                      styles.tabButtonText,
+                      activeTab === 'chats' && styles.tabButtonTextActive,
+                    ]}
+                  >
+                    Chats
+                  </Text>
+                </TouchableOpacity>
 
-              <TouchableOpacity
-                style={[
-                  styles.tabButton,
-                  activeTab === 'shipments' && styles.tabButtonActive,
-                ]}
-                onPress={() => setActiveTab('shipments')}
-                activeOpacity={0.8}
-              >
-                <Text
+                <TouchableOpacity
                   style={[
-                    styles.tabButtonText,
-                    activeTab === 'shipments' && styles.tabButtonTextActive,
+                    styles.tabButton,
+                    activeTab === 'shipments' && styles.tabButtonActive,
                   ]}
+                  onPress={() => setActiveTab('shipments')}
+                  activeOpacity={0.8}
                 >
-                  Shipments
-                </Text>
-              </TouchableOpacity>
-            </View>
-            
+                  <Text
+                    style={[
+                      styles.tabButtonText,
+                      activeTab === 'shipments' && styles.tabButtonTextActive,
+                    ]}
+                  >
+                    Shipments
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
             {/* Third Row: Action Buttons and Filter (equal width) */}
             <View style={styles.actionButtonsRow}>
               {/* Mute All Button */}

@@ -9,6 +9,7 @@
 // Get API_BASE_URL from Expo environment variables
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
 const WS_URL = process.env.EXPO_PUBLIC_WS_URL;
+const COMPANY = process.env.EXPO_PUBLIC_COMPANY;
 
 // Validation
 if (!API_BASE_URL) {
@@ -26,9 +27,11 @@ if (!WS_URL) {
 }
 
 export { API_BASE_URL, WS_URL };
+export { COMPANY };
 
 export const config = {
   API_BASE_URL,
   WS_URL,
+  COMPANY,
   // Add other config values here as needed
 } as const;

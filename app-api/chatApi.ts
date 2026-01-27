@@ -1,4 +1,4 @@
-import { API_BASE_URL } from '@/lib/config';
+import { API_BASE_URL, COMPANY } from '@/lib/config';
 import { secureStorage } from '@/utils/secureStorage';
 import { ChatRoom, User, Message } from '@/components/ChatListItem';
 
@@ -228,6 +228,7 @@ class ChatApiClient {
     status?: string; // optional filter
     contactsOnly?: boolean; // when true, backend returns only ACTIVE users
     sort?: any;      // optional sort payload
+    company?: string;
   }): Promise<UsersResponse> {
     const query = new URLSearchParams();
     if (params?.page) query.append('page', String(params.page));
@@ -243,6 +244,8 @@ class ChatApiClient {
     if (params?.status) query.append('status', params.status);
     if (params?.contactsOnly) query.append('contactsOnly', 'true');
     if (params?.sort) query.append('sort', JSON.stringify(params.sort));
+    const company = params?.company ?? COMPANY;
+    if (company) query.append('company', company);
 
     const qs = query.toString();
     const endpoint = `/v1/users${qs ? `?${qs}` : ''}`;

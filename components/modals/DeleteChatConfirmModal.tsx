@@ -9,6 +9,7 @@ import { chatApi } from '@/app-api/chatApi';
 import { useRouter } from 'expo-router';
 import { useChatStore } from '@/stores/chatStore';
 import { messagesCacheService } from '@/services/MessagesCacheService';
+import { chatCacheService } from '@/services/ChatCacheService';
 
 interface DeleteChatConfirmModalProps {
   isOpen: boolean;
@@ -49,6 +50,11 @@ export default function DeleteChatConfirmModal({
         
         // Remove chat room from local store immediately (optimistic update)
         removeChatRoom(chatRoom.id);
+
+        // Remove chat room from chat rooms cache so it doesn't reappear on next sync
+        await chatCacheService.deleteChatRoom(chatRoom.id).catch((err) => {
+          console.error('Failed to delete chat room from cache:', err);
+        });
         
         // Clear messages cache for this chat room
         await messagesCacheService.clearMessages(chatRoom.id).catch((err) => {
@@ -63,6 +69,11 @@ export default function DeleteChatConfirmModal({
         
         // Remove chat room from local store
         removeChatRoom(chatRoom.id);
+
+        // Remove chat room from chat rooms cache so it doesn't reappear on next sync
+        await chatCacheService.deleteChatRoom(chatRoom.id).catch((err) => {
+          console.error('Failed to delete chat room from cache:', err);
+        });
         
         // Clear messages cache for this chat room
         await messagesCacheService.clearMessages(chatRoom.id).catch((err) => {

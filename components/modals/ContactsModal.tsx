@@ -145,7 +145,9 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
           roles: rolesParam,
           contactsOnly: true,
         });
-        setUsers(dedupeById(res.users || []));
+        const currentUserId = authState.user?.id;
+        const list = (res.users || []).filter((u: any) => u?.id && u.id !== currentUserId) as UserItem[];
+        setUsers(dedupeById(list));
         setPage(res.pagination?.current_page || 1);
         setHasNextPage(!!res.pagination?.has_next_page);
       } catch (e) {
@@ -174,7 +176,9 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
         roles: rolesParam,
         contactsOnly: true,
       });
-      setUsers(prev => dedupeById([...(prev || []), ...((res.users as UserItem[]) || [])]));
+      const currentUserId = authState.user?.id;
+      const list = ((res.users as UserItem[]) || []).filter((u: any) => u?.id && u.id !== currentUserId) as UserItem[];
+      setUsers(prev => dedupeById([...(prev || []), ...(list || [])]));
       setPage(res.pagination?.current_page || next);
       setHasNextPage(!!res.pagination?.has_next_page);
     } catch (e) {
@@ -197,7 +201,8 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
     });
     
     // Filter out users that already have DIRECT chats
-    let base = users.filter(u => !directUserIds.has(u.id));
+    const currentUserId = authState.user?.id;
+    let base = users.filter(u => u.id !== currentUserId && !directUserIds.has(u.id));
     
     // Note: Role filtering for expired_documents drivers is now done on API level
     // No need for client-side filtering here
@@ -222,6 +227,8 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
   const handleSelect = (user: UserItem) => {
     setSearch('');
     setDebouncedSearch('');
+    // Safety guard: never allow selecting yourself
+    if (user?.id && user.id === authState.user?.id) return;
     onSelectUser(user);
   };
 

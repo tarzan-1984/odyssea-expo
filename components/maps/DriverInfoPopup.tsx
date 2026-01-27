@@ -7,6 +7,12 @@ interface DriverInfoPopupProps {
   onClose: () => void;
   driverData: any | null; // Data from TMS API
   isLoading?: boolean;
+  // Optional chat action button (handled by parent).
+  showChatButton?: boolean;
+  chatButtonLabel?: string;
+  onChatPress?: () => void;
+  isChatActionLoading?: boolean;
+  isChatActionDisabled?: boolean;
 }
 
 // Format driver status for display
@@ -33,7 +39,17 @@ const formatDriverStatus = (status: string | null | undefined): string => {
   return statusMap[status.toLowerCase()] || status;
 };
 
-export default function DriverInfoPopup({ visible, onClose, driverData, isLoading = false }: DriverInfoPopupProps) {
+export default function DriverInfoPopup({
+  visible,
+  onClose,
+  driverData,
+  isLoading = false,
+  showChatButton = false,
+  chatButtonLabel = 'Go to chat',
+  onChatPress,
+  isChatActionLoading = false,
+  isChatActionDisabled = false,
+}: DriverInfoPopupProps) {
   // Extract data from TMS response structure
   const contactData = driverData?.organized_data?.contact;
   const locationData = driverData?.organized_data?.current_location;
@@ -199,6 +215,25 @@ export default function DriverInfoPopup({ visible, onClose, driverData, isLoadin
               <Text style={styles.errorText}>Failed to load driver data</Text>
             </View>
           )}
+
+          {showChatButton ? (
+            <View style={styles.footer}>
+              <TouchableOpacity
+                style={[
+                  styles.chatButton,
+                  (isChatActionDisabled || isChatActionLoading) && styles.chatButtonDisabled,
+                ]}
+                onPress={() => onChatPress?.()}
+                disabled={isChatActionDisabled || isChatActionLoading}
+                activeOpacity={0.8}
+              >
+                {isChatActionLoading ? (
+                  <ActivityIndicator size="small" color={colors.neutral.white} />
+                ) : null}
+                <Text style={styles.chatButtonText}>{chatButtonLabel}</Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
         </TouchableOpacity>
       </TouchableOpacity>
     </Modal>
@@ -293,6 +328,28 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: colors.neutral.lightGrey,
     marginVertical: 0,
+  },
+  footer: {
+    marginTop: rem(16),
+  },
+  chatButton: {
+    width: '100%',
+    borderRadius: br(10),
+    backgroundColor: colors.primary.blue,
+    paddingVertical: rem(12),
+    paddingHorizontal: rem(14),
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: rem(10),
+  },
+  chatButtonDisabled: {
+    opacity: 0.6,
+  },
+  chatButtonText: {
+    color: colors.neutral.white,
+    fontSize: fp(14),
+    fontFamily: fonts['600'],
   },
   loadingContainer: {
     paddingVertical: rem(40),

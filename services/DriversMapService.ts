@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState } from 'react-native';
-import { API_BASE_URL } from '@/lib/config';
+import { API_BASE_URL, COMPANY } from '@/lib/config';
 import { secureStorage } from '@/utils/secureStorage';
 
 const DRIVERS_CACHE_KEY = '@drivers_cache';
@@ -130,7 +130,8 @@ export async function syncDriversForMap(
         break;
       }
       
-      const url = `${API_BASE_URL}/v1/users/drivers/map?page=${page}&limit=${PAGE_SIZE}`;
+      const companyParam = COMPANY ? `&company=${encodeURIComponent(COMPANY)}` : '';
+      const url = `${API_BASE_URL}/v1/users/drivers/map?page=${page}&limit=${PAGE_SIZE}${companyParam}`;
 
       const response = await fetch(url, {
         method: 'GET',

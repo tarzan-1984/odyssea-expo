@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import ScreenLayout from '@/components/auth/ScreenLayout';
@@ -24,6 +24,15 @@ export default function ChangePasswordScreen() {
   const [success, setSuccess] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
+  useEffect(() => {
+    if (!success) return;
+    const timeoutId = setTimeout(() => {
+      router.replace('/(tabs)/profile');
+    }, 2000);
+
+    return () => clearTimeout(timeoutId);
+  }, [success, router]);
+
   const validate = (): string | null => {
     if (!password.trim() || !confirmPassword.trim()) {
       return 'Password and confirmation are required';
@@ -36,6 +45,9 @@ export default function ChangePasswordScreen() {
     }
     if (!/\d/.test(password)) {
       return 'Password must contain at least one number';
+    }
+    if (password.length < 8) {
+      return 'Password must be at least 8 characters';
     }
     return null;
   };
