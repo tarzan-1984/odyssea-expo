@@ -413,7 +413,7 @@ export default function ChatRoomScreen() {
             <View style={styles.headerLeft}>
               <TouchableOpacity
                 style={styles.backButton}
-                onPress={() => router.back()}
+                onPress={() => router.replace('/(tabs)/messages' as any)}
                 activeOpacity={0.7}
               >
                 <ArrowLeft width={rem(10.46)} height={rem(19)} color={colors.neutral.white} />

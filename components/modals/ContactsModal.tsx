@@ -42,9 +42,17 @@ interface ContactsModalProps {
   visible: boolean;
   onClose: () => void;
   onSelectUser: (user: UserItem) => void;
+  isCreatingDirectChat?: boolean;
+  creatingUserId?: string | null;
 }
 
-export default function ContactsModal({ visible, onClose, onSelectUser }: ContactsModalProps) {
+export default function ContactsModal({
+  visible,
+  onClose,
+  onSelectUser,
+  isCreatingDirectChat = false,
+  creatingUserId = null,
+}: ContactsModalProps) {
   const { isUserOnline } = useOnlineStatusContext();
   const { chatRooms } = useChatRooms();
   const { authState } = useAuth();
@@ -217,6 +225,7 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
 
   // Handlers to clear search on close/select
   const handleClose = () => {
+    if (isCreatingDirectChat) return;
     setSearch('');
     setDebouncedSearch('');
     setPage(1);
@@ -225,6 +234,7 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
   };
 
   const handleSelect = (user: UserItem) => {
+    if (isCreatingDirectChat) return;
     setSearch('');
     setDebouncedSearch('');
     // Safety guard: never allow selecting yourself
@@ -237,8 +247,14 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
     const avatarUri = item.avatar || item.profilePhoto;
     const initials = (item.firstName?.[0] || '') + (item.lastName?.[0] || '');
     const online = isUserOnline(item.id);
+    const isCreatingThis = isCreatingDirectChat && creatingUserId === item.id;
     return (
-      <TouchableOpacity style={styles.userItem} activeOpacity={0.8} onPress={() => handleSelect(item)}>
+      <TouchableOpacity
+        style={styles.userItem}
+        activeOpacity={0.8}
+        onPress={() => handleSelect(item)}
+        disabled={isCreatingDirectChat}
+      >
         <View style={styles.avatarWrap}>
           {avatarUri ? (
             <Image source={{ uri: avatarUri }} style={styles.avatar} />
@@ -253,6 +269,11 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
           <Text style={styles.userName} numberOfLines={1}>{name}</Text>
           {!!item.email && <Text style={styles.userEmail} numberOfLines={1}>{item.email}</Text>}
         </View>
+        {isCreatingThis ? (
+          <View style={styles.creatingWrap}>
+            <ActivityIndicator size="small" color={colors.primary.violet} />
+          </View>
+        ) : null}
       </TouchableOpacity>
     );
   };
@@ -263,8 +284,14 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
         <View style={styles.container}>
           <View style={styles.header}>
             <Text style={styles.title}>Contacts</Text>
-            <TouchableOpacity style={styles.closeBtn} onPress={handleClose}>
-              <Text style={styles.closeText}>Close</Text>
+            <TouchableOpacity
+              style={[styles.closeBtn, isCreatingDirectChat && styles.closeBtnDisabled]}
+              onPress={handleClose}
+              disabled={isCreatingDirectChat}
+            >
+              <Text style={[styles.closeText, isCreatingDirectChat && styles.closeTextDisabled]}>
+                Close
+              </Text>
             </TouchableOpacity>
           </View>
 
@@ -357,6 +384,7 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
               keyboardShouldPersistTaps="handled"
               onEndReachedThreshold={0.6}
               onEndReached={loadMore}
+              scrollEnabled={!isCreatingDirectChat}
               ListEmptyComponent={
                 <View style={styles.emptyWrap}>
                   <Text style={styles.emptyText}>Contact not found</Text>
@@ -367,6 +395,15 @@ export default function ContactsModal({ visible, onClose, onSelectUser }: Contac
               ) : null}
             />
           )}
+
+          {isCreatingDirectChat ? (
+            <View style={styles.creatingOverlay} pointerEvents="auto">
+              <View style={styles.creatingCard}>
+                <ActivityIndicator size="large" color={colors.primary.violet} />
+                <Text style={styles.creatingText}>Creating chat...</Text>
+              </View>
+            </View>
+          ) : null}
         </View>
       </View>
     </Modal>
@@ -411,6 +448,12 @@ const styles = StyleSheet.create({
     color: colors.neutral.white,
     fontFamily: fonts['600'],
     fontSize: fp(12),
+  },
+  closeBtnDisabled: {
+    opacity: 0.7,
+  },
+  closeTextDisabled: {
+    color: colors.neutral.lightGrey,
   },
   searchBox: {
     paddingHorizontal: rem(16),
@@ -490,11 +533,43 @@ const styles = StyleSheet.create({
   userInfo: { marginLeft: rem(12), flex: 1 },
   userName: { fontFamily: fonts['600'], fontSize: fp(14), color: colors.neutral.black },
   userEmail: { fontFamily: fonts['400'], fontSize: fp(12), color: colors.neutral.darkGrey },
+  creatingWrap: {
+    width: rem(28),
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
   roleFilterContainer: {
     paddingHorizontal: rem(16),
     paddingVertical: rem(8),
     borderBottomWidth: 1,
     borderBottomColor: colors.neutral.veryLightGrey,
+  },
+  creatingOverlay: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(255,255,255,0.55)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: rem(16),
+  },
+  creatingCard: {
+    width: '100%',
+    maxWidth: rem(320),
+    backgroundColor: colors.neutral.white,
+    borderRadius: borderRadius.lg || 16,
+    paddingVertical: rem(18),
+    paddingHorizontal: rem(16),
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  creatingText: {
+    marginTop: rem(10),
+    fontSize: fp(14),
+    fontFamily: fonts['600'],
+    color: colors.neutral.black,
   },
   roleSelectButton: {
     flexDirection: 'row',

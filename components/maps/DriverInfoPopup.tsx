@@ -65,6 +65,8 @@ export default function DriverInfoPopup({
   const state = locationData?.state || '';
   const location = city && state ? `${city}, ${state}` : (city || state || 'N/A');
   
+  const isPhoneAvailable = !!driverPhone && driverPhone !== 'N/A';
+
   // Vehicle data
   const dimensions = vehicleData?.overall_dimensions || vehicleData?.cargo_space_dimensions || 'N/A';
   const payload = vehicleData?.payload || 'N/A';
@@ -107,15 +109,10 @@ export default function DriverInfoPopup({
   const additionalDetailsText = additionalDetails.length > 0 ? additionalDetails.join(', ') : 'N/A';
 
   const handlePhonePress = () => {
-    if (driverPhone && driverPhone !== 'N/A') {
+    if (isPhoneAvailable) {
       const phoneNumber = driverPhone.replace(/[^\d+]/g, '');
       Linking.openURL(`tel:${phoneNumber}`);
     }
-  };
-
-  const handleNamePress = () => {
-    // Could navigate to driver profile or open contact
-    // For now, just a placeholder
   };
 
   return (
@@ -152,17 +149,27 @@ export default function DriverInfoPopup({
               {/* Name */}
               <View style={styles.row}>
                 <Text style={styles.label}>Name:</Text>
-                <TouchableOpacity onPress={handleNamePress}>
-                  <Text style={styles.linkValue}>{driverName}</Text>
-                </TouchableOpacity>
+                <Text style={styles.value}>{driverName}</Text>
               </View>
               <View style={styles.divider} />
               
               {/* Phone */}
               <View style={styles.row}>
                 <Text style={styles.label}>Phone:</Text>
-                <TouchableOpacity onPress={handlePhonePress}>
-                  <Text style={styles.linkValue}>{driverPhone}</Text>
+                <TouchableOpacity
+                  onPress={handlePhonePress}
+                  disabled={!isPhoneAvailable}
+                  activeOpacity={0.7}
+                  style={styles.valuePressable}
+                >
+                  <Text
+                    style={[
+                      styles.phoneLink,
+                      !isPhoneAvailable && styles.phoneLinkDisabled,
+                    ]}
+                  >
+                    {driverPhone}
+                  </Text>
                 </TouchableOpacity>
               </View>
               <View style={styles.divider} />
@@ -292,7 +299,7 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     paddingVertical: rem(12),
   },
   label: {
@@ -307,14 +314,24 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     flex: 1,
     marginLeft: rem(16),
+    flexShrink: 1,
+    flexWrap: 'wrap',
   },
-  linkValue: {
-    fontSize: fp(14),
-    fontFamily: fonts['400'],
-    color: colors.primary.blue,
-    textAlign: 'right',
+  valuePressable: {
     flex: 1,
     marginLeft: rem(16),
+    alignItems: 'flex-end',
+  },
+  phoneLink: {
+    fontSize: fp(14),
+    fontFamily: fonts['600'],
+    color: colors.primary.blue,
+    textAlign: 'right',
+    textDecorationLine: 'underline',
+  },
+  phoneLinkDisabled: {
+    color: colors.neutral.darkGrey,
+    textDecorationLine: 'none',
   },
   statusValue: {
     fontSize: fp(14),
@@ -323,6 +340,8 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     flex: 1,
     marginLeft: rem(16),
+    flexShrink: 1,
+    flexWrap: 'wrap',
   },
   divider: {
     height: 1,

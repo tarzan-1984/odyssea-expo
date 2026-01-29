@@ -57,6 +57,8 @@ export default function MessagesScreen() {
   const [selectedFilter, setSelectedFilter] = useState<FilterType>('all');
   const [selectedChatId, setSelectedChatId] = useState<string | null>(null);
   const [isContactsOpen, setIsContactsOpen] = useState(false);
+  const [isCreatingDirectChat, setIsCreatingDirectChat] = useState(false);
+  const [creatingDirectChatUserId, setCreatingDirectChatUserId] = useState<string | null>(null);
   const [isAddNewMenuOpen, setIsAddNewMenuOpen] = useState(false);
   const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false);
   const [openDropdownId, setOpenDropdownId] = useState<string | null>(null);
@@ -793,8 +795,14 @@ export default function MessagesScreen() {
         <ContactsModal
           visible={isContactsOpen}
           onClose={() => setIsContactsOpen(false)}
+          isCreatingDirectChat={isCreatingDirectChat}
+          creatingUserId={creatingDirectChatUserId}
           onSelectUser={async (user) => {
+            if (isCreatingDirectChat) return;
             try {
+              setIsCreatingDirectChat(true);
+              setCreatingDirectChatUserId(user.id);
+
               // If a DIRECT chat with this user already exists, open it instead of creating
               const existing = chatRooms.find(room => 
                 room.type === 'DIRECT' &&
@@ -802,20 +810,29 @@ export default function MessagesScreen() {
                 room.participants.some(p => p.userId === user.id)
               );
               if (existing) {
-                router.push(`/chat/${existing.id}` as any);
                 setIsContactsOpen(false);
+                router.push(`/chat/${existing.id}` as any);
                 return;
               }
               // Otherwise create DIRECT chat
               const participantIds = [authState.user?.id, user.id].filter(Boolean) as string[];
-              await (await import('@/app-api/chatApi')).chatApi.createChatRoom({
+              const created = await (await import('@/app-api/chatApi')).chatApi.createChatRoom({
                 type: 'DIRECT',
                 participantIds,
               });
-              await loadChatRooms(true);
               setIsContactsOpen(false);
+              // Go straight to the new chat; list will be updated by WebSocket.
+              if (created?.id) {
+                router.push(`/chat/${created.id}` as any);
+              } else {
+                // Fallback: refresh list if backend didn't return room id for some reason
+                await loadChatRooms(true);
+              }
             } catch (e) {
               console.error('Failed to create direct chat:', e);
+            } finally {
+              setIsCreatingDirectChat(false);
+              setCreatingDirectChatUserId(null);
             }
           }}
         />
