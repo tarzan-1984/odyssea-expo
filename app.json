@@ -2,7 +2,7 @@
   "expo": {
     "name": "Odysseia App",
     "slug": "odyssea",
-    "version": "1.0.10",
+    "version": "1.0.12",
     "orientation": "portrait",
     "icon": "./assets/app-icon.png",
     "scheme": "odyssea",
@@ -14,7 +14,7 @@
       "backgroundColor": "#292966"
     },
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "com.odyssea.app",
       "icon": "./assets/app-icon.png",
       "splash": {
