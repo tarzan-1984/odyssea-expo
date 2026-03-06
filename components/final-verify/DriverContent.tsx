@@ -9,6 +9,8 @@ import { reverseGeocodeAsync, GeocodedAddress } from '@/utils/geocoding';
 import { colors } from '@/lib/colors';
 import { fonts, fp, rem, typography } from "@/lib";
 import StatusSelect, { StatusValue } from '@/components/common/StatusSelect';
+import ZipEditPopup from './ZipEditPopup';
+import DateEditPopup from './DateEditPopup';
 import CustomSwitch from '@/components/common/CustomSwitch';
 import PinMapIcon from '@/icons/PinMapIcon';
 import { useAuth } from '@/context/AuthContext';
@@ -56,9 +58,16 @@ export default function DriverContent() {
     }
   }, []);
   
-  const formatDate = (d: Date) => `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+  const formatDate = (d: Date) => {
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const y = d.getFullYear().toString().slice(-2);
+    return `${m}/${day}/${y}`;
+  };
   const [date, setDate] = useState(formatDate(new Date()));
   const [locationLabel, setLocationLabel] = useState<string | null>(null);
+  const [editPopupField, setEditPopupField] = useState<'zip' | 'date' | null>(null);
+  const [editPopupValue, setEditPopupValue] = useState('');
   const [isSharingLocation, setIsSharingLocation] = useState(false);
   
   const formatLastUpdate = (date: Date | null): string => {
@@ -86,7 +95,9 @@ export default function DriverContent() {
   const [isLocationReady, setIsLocationReady] = useState(false);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [updateSuccessMessage, setUpdateSuccessMessage] = useState<string | null>(null);
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const messageAnimation = useRef(new Animated.Value(-100)).current; // Start above screen
+  const zipJustSetFromShareRef = useRef(false); // Prevent effects from overwriting ZIP right after Share
 
   const formatAddressLabel = useCallback((info: Partial<GeocodedAddress>): string => {
     const city = info.city || info.subregion || info.district || '';
@@ -612,19 +623,19 @@ export default function DriverContent() {
       return;
     }
 
-    // Statuses that should disable automatic location sharing (inactive group)
+    // Statuses that should disable automatic location sharing and hide the toggle
     const inactiveStatuses: StatusValue[] = [
       'available_off',      // Not available
+      'available_on',       // Available on (ZIP/Date set manually, no auto-tracking)
       'banned',             // Out of service
       'blocked',            // Blocked
       'on_vocation',        // On vocation
       'expired_documents',  // Expired documents
     ];
 
-    // Statuses that should enable automatic location sharing (active group)
+    // Statuses that should show the automatic location sharing toggle
     const activeStatuses: StatusValue[] = [
       'available',         // Available
-      'available_on',      // Available on
       'loaded_enroute',    // Loaded & Enroute
     ];
 
@@ -712,8 +723,8 @@ export default function DriverContent() {
           previousStatusRef.current = null;
           
           // Update visibility and setting based on status group (initial load)
-          const inactiveStatuses: StatusValue[] = ['available_off', 'banned', 'blocked', 'on_vocation', 'expired_documents'];
-          const activeStatuses: StatusValue[] = ['available', 'available_on', 'loaded_enroute'];
+          const inactiveStatuses: StatusValue[] = ['available_off', 'available_on', 'banned', 'blocked', 'on_vocation', 'expired_documents'];
+          const activeStatuses: StatusValue[] = ['available', 'loaded_enroute'];
           
           const isInactiveStatus = inactiveStatuses.includes(parsedStatus);
           const isActiveStatus = activeStatuses.includes(parsedStatus);
@@ -848,8 +859,10 @@ export default function DriverContent() {
         setUserLocation({ latitude, longitude });
       }
       
-      // Update ZIP if available
-      if (authState.userZipCode && authState.userZipCode !== zip) {
+      // Don't auto-fill ZIP for available/available_on/loaded_enroute - user fills via Share or auto-tracking
+      const skipZipRestore = ['available_on', 'available', 'loaded_enroute'].includes(status);
+      const skipDueToShare = zipJustSetFromShareRef.current;
+      if (!skipZipRestore && !skipDueToShare && authState.userZipCode && authState.userZipCode !== zip) {
         setZip(authState.userZipCode);
       }
       
@@ -881,7 +894,7 @@ export default function DriverContent() {
         } catch {}
       })();
     }
-  }, [authState.userLocation, authState.userZipCode, automaticLocationSharing, startBackgroundLocationTracking, formatAddressLabel, setZip]); // Run when location data is available
+  }, [authState.userLocation, authState.userZipCode, automaticLocationSharing, startBackgroundLocationTracking, formatAddressLabel, setZip, status]); // Run when location data is available
 
   // Check for location updates from AsyncStorage (when app opens or returns from background)
   const checkForLocationUpdates = useCallback(async () => {
@@ -898,7 +911,10 @@ export default function DriverContent() {
         // Update local state and map if coordinates exist
         if (latitude && longitude) {
           setUserLocation({ latitude, longitude });
-          if (zipCode) {
+          // Don't auto-fill ZIP for available/available_on/loaded_enroute - user fills via Share or auto-tracking
+          const skipZipRestore = ['available_on', 'available', 'loaded_enroute'].includes(status);
+          const skipDueToShare = zipJustSetFromShareRef.current;
+          if (zipCode && !skipZipRestore && !skipDueToShare) {
             setZip(zipCode);
           }
           
@@ -929,7 +945,7 @@ export default function DriverContent() {
         stack: error instanceof Error ? error.stack : undefined,
       });
     }
-  }, [syncLocationFromAsyncStorage, setZip, formatAddressLabel]);
+  }, [syncLocationFromAsyncStorage, setZip, formatAddressLabel, status]);
 
   useEffect(() => {
     // Always sync once on mount
@@ -1049,19 +1065,31 @@ export default function DriverContent() {
   }, [automaticLocationSharing]);
 
   const handleUpdateStatus = async () => {
+    if (isUpdatingStatus) return;
+    setIsUpdatingStatus(true);
     try {
       // Validate that all fields are filled
       if (!status) {
         console.warn('[DriverContent] Status is required');
         return;
       }
-      if (!zip || zip.trim() === '') {
-        console.warn('[DriverContent] ZIP code is required');
-        return;
-      }
-      if (!date || date.trim() === '') {
-        console.warn('[DriverContent] Date is required');
-        return;
+      const isNotAvailable = status === 'available_off';
+      let zipToSend = zip;
+      let dateToSend = date;
+      if (isNotAvailable) {
+        // For not available, ZIP/Date are not needed - use last saved values so request doesn't fail
+        const savedZip = await AsyncStorage.getItem('@user_zip');
+        zipToSend = (savedZip || zip || '').trim();
+        dateToSend = formatDate(new Date());
+      } else {
+        if (!zip || zip.trim() === '') {
+          console.warn('[DriverContent] ZIP code is required');
+          return;
+        }
+        if (!date || date.trim() === '') {
+          console.warn('[DriverContent] Date is required');
+          return;
+        }
       }
 
       // Check if we have location data
@@ -1072,11 +1100,13 @@ export default function DriverContent() {
       }
 
       // Save zip and date to AsyncStorage (status will be saved after successful TMS update via WebSocket)
-      await AsyncStorage.multiSet([
-        ['@user_zip', zip],
-        ['@user_date', date],
-      ]);
-      console.log('[DriverContent] Updated zip and date saved to AsyncStorage:', { zip, date });
+      if (!isNotAvailable) {
+        await AsyncStorage.multiSet([
+          ['@user_zip', zip],
+          ['@user_date', date],
+        ]);
+      }
+      console.log('[DriverContent] Updated zip and date saved to AsyncStorage:', { zip: zipToSend, date: dateToSend });
       
       // Send location update to TMS API (status from useState will be sent)
       let tmsSuccess = false;
@@ -1084,9 +1114,9 @@ export default function DriverContent() {
         tmsSuccess = await sendLocationUpdate(
           currentLocation.latitude,
           currentLocation.longitude,
-          zip,
+          zipToSend,
           status, // Use status from useState
-          date
+          dateToSend
         );
       } catch (tmsError) {
         console.warn('[DriverContent] TMS API request failed:', tmsError);
@@ -1118,7 +1148,7 @@ export default function DriverContent() {
           if (user?.id) {
             await updateUser(user.id, {
               driverStatus: sentStatus,
-              zip: zip,
+              zip: zipToSend,
               city: city,
               state: state,
             });
@@ -1176,7 +1206,7 @@ export default function DriverContent() {
         location: undefined,
         city: undefined,
         state: undefined,
-        zip: zip,
+        zip: zipToSend,
         latitude: currentLocation.latitude,
         longitude: currentLocation.longitude,
         lastUpdateIso: getLocalIsoString(),
@@ -1187,27 +1217,29 @@ export default function DriverContent() {
         await updateUserLocation(
           currentLocation.latitude,
           currentLocation.longitude,
-          zip
+          zipToSend
         );
         
         // Show success message
-        setUpdateSuccessMessage('Location data sent successfully');
+        setUpdateSuccessMessage('Successful status update');
         setTimeout(() => {
           setUpdateSuccessMessage(null);
         }, 3000);
       } else {
         fileLogger.error('DriverContent', 'Backend update failed in handleUpdateStatus');
-        setUpdateSuccessMessage('Failed to send location data. Please try again.');
+        setUpdateSuccessMessage('Something went wrong. Please try updating the status later.');
         setTimeout(() => {
           setUpdateSuccessMessage(null);
         }, 3000);
       }
     } catch (error) {
       console.error('[DriverContent] Failed to save status update:', error);
-      setUpdateSuccessMessage('Error updating status. Please try again.');
+      setUpdateSuccessMessage('Something went wrong. Please try updating the status later.');
       setTimeout(() => {
         setUpdateSuccessMessage(null);
       }, 3000);
+    } finally {
+      setIsUpdatingStatus(false);
     }
   };
 
@@ -1228,7 +1260,7 @@ export default function DriverContent() {
         if (!granted) {
           fileLogger.error('DriverContent', 'Location permission not granted', { status });
           console.warn('[DriverContent] Location permission not granted:', status);
-          setUpdateSuccessMessage('Location permission is required. Please enable it in settings.');
+          setUpdateSuccessMessage('Something went wrong. Please try updating the status later.');
           setTimeout(() => {
             setUpdateSuccessMessage(null);
           }, 3000);
@@ -1242,7 +1274,7 @@ export default function DriverContent() {
       if (!isLocationEnabled) {
         fileLogger.error('DriverContent', 'Location services are disabled');
         console.warn('[DriverContent] Location services are disabled');
-        setUpdateSuccessMessage('Location services are disabled. Please enable them in device settings.');
+        setUpdateSuccessMessage('Something went wrong. Please try updating the status later.');
         setTimeout(() => {
           setUpdateSuccessMessage(null);
         }, 3000);
@@ -1281,7 +1313,7 @@ export default function DriverContent() {
       if (!pos || !pos.coords) {
         fileLogger.error('DriverContent', 'Invalid location data received');
         console.warn('[DriverContent] Invalid location data received');
-        setUpdateSuccessMessage('Invalid location data. Please try again.');
+        setUpdateSuccessMessage('Something went wrong. Please try updating the status later.');
         setTimeout(() => {
           setUpdateSuccessMessage(null);
         }, 3000);
@@ -1308,7 +1340,9 @@ export default function DriverContent() {
           city = geo.city || geo.subregion || geo.district || undefined;
           state = geo.region ? geo.region.split(' ')[0] : undefined;
           if (postalCode) {
+            zipJustSetFromShareRef.current = true;
             setZip(postalCode);
+            setTimeout(() => { zipJustSetFromShareRef.current = false; }, 3000);
           }
           locationString = formatAddressLabel(geo);
           setLocationLabel(locationString);
@@ -1362,7 +1396,9 @@ export default function DriverContent() {
       } else {
         // Just update local state for map display, don't save to context
         if (postalCode) {
+          zipJustSetFromShareRef.current = true;
           setZip(postalCode);
+          setTimeout(() => { zipJustSetFromShareRef.current = false; }, 3000);
         }
       }
       
@@ -1401,6 +1437,19 @@ export default function DriverContent() {
 
   const handleStatusChange = async (newStatus: StatusValue) => {
     setStatus(newStatus);
+    
+    if (newStatus === 'available_on') {
+      // When "Available on" is selected, clear ZIP and Date and make them editable (before Update is pressed)
+      setZip('');
+      setDate('');
+    } else if (newStatus === 'available' || newStatus === 'loaded_enroute') {
+      // When "Available" or "Loaded & Enroute" is selected, clear ZIP - it will be filled by auto-detection (if enabled) or Share my location
+      setZip('');
+      setDate(formatDate(new Date()));
+    } else {
+      // When selecting any other status (e.g. available_off), fill Date with current date
+      setDate(formatDate(new Date()));
+    }
     
     // Check if new status is basic (selectable)
     const basicStatuses: StatusValue[] = ['available', 'available_on', 'available_off', 'loaded_enroute'];
@@ -1459,7 +1508,10 @@ export default function DriverContent() {
               const postalCode = reverseGeocode[0].postalCode || '';
               if (postalCode) {
                 currentZipCode = postalCode;
-                await setZip(postalCode);
+                // Don't overwrite ZIP when status is available_on (user set it manually)
+                if (status !== 'available_on') {
+                  await setZip(postalCode);
+                }
               }
               setLocationLabel(formatAddressLabel(reverseGeocode[0]));
             }
@@ -1537,8 +1589,8 @@ export default function DriverContent() {
         <Animated.View
           style={[
             styles.topMessageContainer,
-            updateSuccessMessage.includes('successfully') 
-              ? styles.topMessageContainerSuccess 
+            (updateSuccessMessage === 'Successful status update' || updateSuccessMessage.includes('successfully'))
+              ? styles.topMessageContainerSuccess
               : styles.topMessageContainerError,
             {
               transform: [{ translateY: messageAnimation }],
@@ -1548,8 +1600,8 @@ export default function DriverContent() {
           <Text 
             style={[
               styles.topMessageText,
-              updateSuccessMessage.includes('successfully') 
-                ? styles.topMessageTextSuccess 
+              (updateSuccessMessage === 'Successful status update' || updateSuccessMessage.includes('successfully'))
+                ? styles.topMessageTextSuccess
                 : styles.topMessageTextError,
             ]}
           >
@@ -1599,14 +1651,17 @@ export default function DriverContent() {
             {/* Settings section */}
             <View style={styles.settingsSection}>
           <TouchableOpacity
-            style={styles.shareButton}
+            style={[
+              styles.shareButton,
+              (status === 'available_on' || status === 'available_off') && { opacity: 0, pointerEvents: 'none' as const },
+            ]}
             onPress={handleShareLocation}
             disabled={isSharingLocation}
           >
             {isSharingLocation ? (
               <ActivityIndicator color={colors.neutral.white} size="small" />
             ) : (
-              <Text style={styles.buttonText}>Share my location</Text>
+              <Text style={styles.buttonText}>Determine location</Text>
             )}
           </TouchableOpacity>
           
@@ -1660,43 +1715,90 @@ export default function DriverContent() {
                 <StatusSelect value={status} onChange={handleStatusChange} disabled={isStatusDisabled} />
           </View>
           
-          {/* ZIP input */}
-              <View style={styles.settingsWrap}>
+          {/* ZIP - hidden when not available; when available_on: tappable; otherwise read-only */}
+              <View style={[styles.settingsWrap, status === 'available_off' && { opacity: 0, height: 0, marginBottom: 0, overflow: 'hidden' }]} pointerEvents={status === 'available_off' ? 'none' : 'auto'}>
                 <Text style={styles.settingsLabel}>ZIP</Text>
-                <TextInput
-                  style={[styles.input, styles.textInput]}
-                  value={zip}
-                  editable={false}
-                  keyboardType="number-pad"
-                  placeholder="Enter ZIP"
-                  placeholderTextColor={colors.primary.blue}
-                  accessibilityLabel="ZIP code"
-                  accessibilityHint="ZIP code is automatically filled from your location"
-                />
+                {status === 'available_on' ? (
+                  <TouchableOpacity
+                    style={[styles.input, styles.textInput]}
+                    onPress={() => {
+                      setEditPopupValue(zip);
+                      setEditPopupField('zip');
+                    }}
+                    accessibilityLabel="ZIP code"
+                    accessibilityHint="Tap to enter ZIP code"
+                  >
+                    <Text style={[styles.textInput, !zip && { color: colors.primary.blue }]}>
+                      {zip || 'Enter ZIP'}
+                    </Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.input}>
+                    <Text style={styles.textInput}>{zip || '—'}</Text>
+                  </View>
+                )}
           </View>
           
-          {/* Date input */}
-              <View style={styles.settingsWrap}>
+          {/* Date - hidden when not available; when available_on: tappable; otherwise read-only */}
+              <View style={[styles.settingsWrap, status === 'available_off' && { opacity: 0, height: 0, marginBottom: 0, overflow: 'hidden' }]} pointerEvents={status === 'available_off' ? 'none' : 'auto'}>
                 <Text style={styles.settingsLabel}>Date</Text>
-            <View style={styles.input}>
-                  <Text style={styles.textInput}>{date}</Text>
-            </View>
+                {status === 'available_on' ? (
+                  <TouchableOpacity
+                    style={[styles.input, styles.textInput]}
+                    onPress={() => {
+                      setEditPopupValue(date);
+                      setEditPopupField('date');
+                    }}
+                    accessibilityLabel="Date"
+                    accessibilityHint="Tap to enter date"
+                  >
+                    <Text style={[styles.textInput, !date && { color: colors.primary.blue }]}>
+                      {date || 'MM/DD/YY'}
+                    </Text>
+                  </TouchableOpacity>
+                ) : (
+                  <View style={styles.input}>
+                    <Text style={styles.textInput}>{date}</Text>
+                  </View>
+                )}
           </View>
               
               <View style={styles.settingsWrap}>
                 <Text style={styles.settingsLabel}></Text>
           
           <TouchableOpacity 
-            style={[styles.updateButton, isStatusDisabled && styles.updateButtonDisabled]} 
+            style={[styles.updateButton, (isStatusDisabled || isUpdatingStatus) && styles.updateButtonDisabled]} 
             onPress={handleUpdateStatus}
-            disabled={isStatusDisabled}
+            disabled={isStatusDisabled || isUpdatingStatus}
           >
-            <Text style={[styles.updateButtonText, isStatusDisabled && styles.updateButtonTextDisabled]}>
-              Update status
-            </Text>
+            {isUpdatingStatus ? (
+              <ActivityIndicator color={colors.neutral.white} size="small" />
+            ) : (
+              <Text style={[styles.updateButtonText, isStatusDisabled && styles.updateButtonTextDisabled]}>
+                Update status
+              </Text>
+            )}
           </TouchableOpacity>
               </View>
             </View>
+
+      {/* ZIP edit popup with map */}
+      <ZipEditPopup
+        visible={editPopupField === 'zip'}
+        initialValue={zip}
+        onClose={() => setEditPopupField(null)}
+        onSet={(value) => { setZip(value); setEditPopupField(null); }}
+      />
+
+      <DateEditPopup
+        visible={editPopupField === 'date'}
+        initialValue={editPopupValue || date}
+        onClose={() => setEditPopupField(null)}
+        onSet={(value) => {
+          setDate(value);
+          setEditPopupField(null);
+        }}
+      />
     </View>
   );
 }

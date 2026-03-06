@@ -13,6 +13,7 @@ interface DriverInfoPopupProps {
   onChatPress?: () => void;
   isChatActionLoading?: boolean;
   isChatActionDisabled?: boolean;
+  isDriverActive?: boolean;
 }
 
 // Format driver status for display
@@ -49,6 +50,7 @@ export default function DriverInfoPopup({
   onChatPress,
   isChatActionLoading = false,
   isChatActionDisabled = false,
+  isDriverActive = true,
 }: DriverInfoPopupProps) {
   // Extract data from TMS response structure
   const contactData = driverData?.organized_data?.contact;
@@ -225,20 +227,24 @@ export default function DriverInfoPopup({
 
           {showChatButton ? (
             <View style={styles.footer}>
-              <TouchableOpacity
-                style={[
-                  styles.chatButton,
-                  (isChatActionDisabled || isChatActionLoading) && styles.chatButtonDisabled,
-                ]}
-                onPress={() => onChatPress?.()}
-                disabled={isChatActionDisabled || isChatActionLoading}
-                activeOpacity={0.8}
-              >
-                {isChatActionLoading ? (
-                  <ActivityIndicator size="small" color={colors.neutral.white} />
-                ) : null}
-                <Text style={styles.chatButtonText}>{chatButtonLabel}</Text>
-              </TouchableOpacity>
+              {isDriverActive ? (
+                <TouchableOpacity
+                  style={[
+                    styles.chatButton,
+                    (isChatActionDisabled || isChatActionLoading) && styles.chatButtonDisabled,
+                  ]}
+                  onPress={() => onChatPress?.()}
+                  disabled={isChatActionDisabled || isChatActionLoading}
+                  activeOpacity={0.8}
+                >
+                  {isChatActionLoading ? (
+                    <ActivityIndicator size="small" color={colors.neutral.white} />
+                  ) : null}
+                  <Text style={styles.chatButtonText}>{chatButtonLabel}</Text>
+                </TouchableOpacity>
+              ) : (
+                <Text style={styles.driverNotActiveText}>Driver is not using the app</Text>
+              )}
             </View>
           ) : null}
         </TouchableOpacity>
@@ -390,5 +396,12 @@ const styles = StyleSheet.create({
     fontSize: fp(14),
     fontFamily: fonts['500'],
     color: '#FF3B30',
+  },
+  driverNotActiveText: {
+    marginTop: rem(8),
+    fontSize: fp(14),
+    fontFamily: fonts['500'],
+    color: colors.neutral.darkGrey,
+    textAlign: 'center',
   },
 });

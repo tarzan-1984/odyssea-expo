@@ -31,6 +31,7 @@ export default function NonDriverContent({ firstName }: NonDriverContentProps) {
   const { markers, isLoading, isSyncing, totalDrivers } = useDriversMarkersForMap();
   const [selectedDriver, setSelectedDriver] = useState<any | null>(null);
   const [selectedDriverUserId, setSelectedDriverUserId] = useState<string | null>(null); // DB userId (NOT externalId)
+  const [selectedDriverUserStatus, setSelectedDriverUserStatus] = useState<string | null>(null); // ACTIVE/INACTIVE
   const [isPopupVisible, setIsPopupVisible] = useState(false);
   const [isLoadingDriverData, setIsLoadingDriverData] = useState(false);
   const [isChatActionLoading, setIsChatActionLoading] = useState(false);
@@ -74,14 +75,16 @@ export default function NonDriverContent({ firstName }: NonDriverContentProps) {
     driverStatus: string | null;
     latitude: number;
     longitude: number;
+    status?: string | null;
   }) => {
     if (!driverData.externalId) {
       console.warn('[NonDriverContent] No externalId for driver:', driverData.id);
       return;
     }
 
-    // Save DB userId for chat lookup/creation. externalId is only for TMS lookup.
+    // Save DB userId and user status for chat lookup/creation. externalId is only for TMS lookup.
     setSelectedDriverUserId(driverData.id);
+    setSelectedDriverUserStatus(driverData.status || null);
     setIsLoadingDriverData(true);
     setIsPopupVisible(true);
     
@@ -171,10 +174,13 @@ export default function NonDriverContent({ firstName }: NonDriverContentProps) {
   const handleClosePopup = () => {
     if (!isChatActionLoading) {
       setSelectedDriverUserId(null);
+      setSelectedDriverUserStatus(null);
     }
     setIsPopupVisible(false);
     setSelectedDriver(null);
   };
+
+  const isDriverActive = selectedDriverUserStatus === 'ACTIVE';
 
   return (
     <View style={styles.contentWrapper}>
@@ -205,6 +211,7 @@ export default function NonDriverContent({ firstName }: NonDriverContentProps) {
         onChatPress={handleGoToChat}
         isChatActionLoading={isChatActionLoading}
         isChatActionDisabled={!selectedDriverUserId || !authState.user?.id}
+        isDriverActive={isDriverActive}
       />
     </View>
   );

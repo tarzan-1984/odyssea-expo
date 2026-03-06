@@ -14,6 +14,7 @@ export interface DriverForMap {
   latitude: number;
   longitude: number;
   driverStatus: string | null;
+  status?: string | null;
 }
 
 interface DriversMapResponse {

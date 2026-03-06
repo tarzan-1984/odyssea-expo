@@ -55,13 +55,14 @@ export async function reverseGeocodeAsync(params: {
             }
 
             const address = data.address;
-            
+            const postcode = address.postcode || address.postal_code || (address as any).postalCode || '';
+
             // Map OpenStreetMap format to our format (similar to expo-location)
             const result: GeocodedAddress = {
               city: address.city || address.town || address.village || address.municipality || '',
               state: address.state || address.region || '',
               country: address.country || '',
-              postalCode: address.postcode || '',
+              postalCode: postcode,
               region: address.state || address.region || '',
               subregion: address.county || address.state_district || '',
               district: address.district || address.neighbourhood || '',
@@ -105,6 +106,91 @@ export async function reverseGeocodeAsync(params: {
   } catch (error) {
     console.warn('[geocoding] Reverse geocoding failed:', error);
     return [];
+  }
+}
+
+export interface GeocodeResult {
+  latitude: number;
+  longitude: number;
+  postalCode?: string;
+}
+
+/**
+ * Geocode address or ZIP to coordinates using Nominatim search API
+ */
+export async function geocodeAsync(query: string, countryCode: 'us' | 'ca' = 'us'): Promise<{ latitude: number; longitude: number } | null> {
+  const result = await geocodeWithPostalAsync(query, countryCode);
+  return result ? { latitude: result.latitude, longitude: result.longitude } : null;
+}
+
+/**
+ * Geocode address or ZIP to coordinates and return postal code when available.
+ * Uses addressdetails=1; if search doesn't return postcode, falls back to reverse geocode.
+ */
+export async function geocodeWithPostalAsync(query: string, countryCode: 'us' | 'ca' = 'us'): Promise<GeocodeResult | null> {
+  try {
+    const trimmed = query.trim();
+    if (!trimmed) return null;
+
+    const params = new URLSearchParams({
+      q: trimmed,
+      format: 'json',
+      limit: '1',
+      addressdetails: '1',
+    });
+    params.set('countrycodes', countryCode);
+
+    const url = `https://nominatim.openstreetmap.org/search?${params.toString()}`;
+
+    const result = await new Promise<GeocodeResult | null>((resolve) => {
+      const xhr = new XMLHttpRequest();
+      xhr.timeout = 10000;
+      xhr.open('GET', url, true);
+      xhr.setRequestHeader('User-Agent', 'OdysseaApp/1.0');
+
+      let resolved = false;
+      xhr.onload = () => {
+        if (resolved) return;
+        resolved = true;
+        try {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            const data = JSON.parse(xhr.responseText) as Array<{ lat: string; lon: string; address?: { postcode?: string } }>;
+            if (Array.isArray(data) && data.length > 0) {
+              const item = data[0];
+              let postalCode = item.address?.postcode;
+              resolve({
+                latitude: parseFloat(item.lat),
+                longitude: parseFloat(item.lon),
+                postalCode: postalCode || undefined,
+              });
+              return;
+            }
+          }
+          resolve(null);
+        } catch {
+          resolve(null);
+        }
+      };
+      xhr.onerror = xhr.ontimeout = () => {
+        if (!resolved) {
+          resolved = true;
+          resolve(null);
+        }
+      };
+      xhr.send();
+    });
+
+    // If search didn't return postcode, reverse geocode to get it
+    if (result && !result.postalCode) {
+      const reversed = await reverseGeocodeAsync({ latitude: result.latitude, longitude: result.longitude });
+      if (reversed.length > 0 && reversed[0].postalCode) {
+        result.postalCode = reversed[0].postalCode;
+      }
+    }
+
+    return result;
+  } catch {
+    return null;
   }
 }
 

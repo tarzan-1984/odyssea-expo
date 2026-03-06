@@ -42,6 +42,7 @@ export function useDriversMarkersForMap() {
       driverStatus: driver.driverStatus,
       driverId: driver.id,
       driverExternalId: driver.externalId,
+      status: driver.status,
     };
   }, []);
 

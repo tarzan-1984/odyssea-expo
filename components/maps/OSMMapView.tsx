@@ -18,6 +18,7 @@ export interface MarkerData {
   driverStatus?: string | null;
   driverId?: string;
   driverExternalId?: string | null;
+  status?: string | null;
 }
 
 export interface OSMMapViewProps {
@@ -31,12 +32,14 @@ export interface OSMMapViewProps {
   rotateEnabled?: boolean;
   pitchEnabled?: boolean;
   showsCompass?: boolean;
+  onMapPress?: (latitude: number, longitude: number) => void;
   onMarkerPress?: (driverData: {
     id: string;
     externalId: string | null;
     driverStatus: string | null;
     latitude: number;
     longitude: number;
+    status?: string | null;
   }) => void;
 }
 
@@ -45,7 +48,7 @@ export interface OSMMapViewRef {
 }
 
 const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
-  ({ initialRegion, style, markers = [], onMarkerPress }, ref) => {
+  ({ initialRegion, style, markers = [], onMapPress, onMarkerPress }, ref) => {
     const webViewRef = useRef<WebView>(null);
     const mapReadyRef = useRef(false);
     const currentZoomRef = useRef<number | null>(null);
@@ -110,6 +113,7 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
         statusColor: getStatusColor(marker.driverStatus),
         driverId: marker.driverId,
         driverExternalId: marker.driverExternalId,
+        userStatus: marker.status || null,
       }));
 
       const scaleX = width / MAX_MARKER_WIDTH;
@@ -162,7 +166,8 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
                     externalId: markerData.driverExternalId || null,
                     driverStatus: markerData.status || null,
                     latitude: markerData.lat,
-                    longitude: markerData.lng
+                    longitude: markerData.lng,
+                    userStatus: markerData.userStatus || null,
                   }));
                 }
               });
@@ -376,6 +381,17 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
     
     // Store initial zoom
     window.currentZoom = map.getZoom();
+
+    // Map click handler (for placing marker / getting coordinates)
+    map.on('click', function(e) {
+      if (window.ReactNativeWebView) {
+        window.ReactNativeWebView.postMessage(JSON.stringify({
+          type: 'mapClick',
+          lat: e.latlng.lat,
+          lng: e.latlng.lng
+        }));
+      }
+    });
   </script>
 </body>
 </html>
@@ -418,6 +434,8 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
                 // Update zoom ref when zoom changes
                 currentZoomRef.current = data.zoom;
                 // Markers are updated automatically in the zoomend handler
+              } else if (data.type === 'mapClick' && onMapPress) {
+                onMapPress(data.lat, data.lng);
               } else if (data.type === 'markerClick' && onMarkerPress) {
                 // Handle marker click
                 onMarkerPress({
@@ -426,6 +444,7 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
                   driverStatus: data.driverStatus,
                   latitude: data.latitude,
                   longitude: data.longitude,
+                  status: data.userStatus || null,
                 });
               }
             } catch (e) {
