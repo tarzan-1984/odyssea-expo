@@ -5,7 +5,7 @@ import { BlurView } from 'expo-blur';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import * as Notifications from 'expo-notifications';
-import { reverseGeocodeAsync, GeocodedAddress } from '@/utils/geocoding';
+import { reverseGeocodeAsync, GeocodedAddress, geocodeZipToAddress } from '@/utils/geocoding';
 import { colors } from '@/lib/colors';
 import { fonts, fp, rem, typography } from "@/lib";
 import StatusSelect, { StatusValue } from '@/components/common/StatusSelect';
@@ -17,7 +17,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { LOCATION_TASK_NAME, LOCATION_UPDATE_INTERVAL } from '@/tasks/locationTask';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { sendLocationUpdateToTMS, sendLocationUpdateToBackendUser, getLocalIsoString, getLocationDetails } from '@/utils/locationApi';
+import { sendLocationUpdateToTMS, sendLocationUpdateToBackendUser, getLocalIsoString } from '@/utils/locationApi';
 import { fileLogger } from '@/utils/fileLogger';
 import { eventBus } from '@/services/EventBus';
 import { updateUser } from '@/app-api/users';
@@ -64,8 +64,22 @@ export default function DriverContent() {
     const y = d.getFullYear().toString().slice(-2);
     return `${m}/${day}/${y}`;
   };
+
+  /** Format as MM/DD/YY h:mm AM/PM for statusDate in DB */
+  const formatDateWithTime = (d: Date) => {
+    const datePart = formatDate(d);
+    const hours = d.getHours();
+    const minutes = d.getMinutes();
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    const h12 = hours % 12 || 12;
+    const m = String(minutes).padStart(2, '0');
+    return `${datePart} ${h12}:${m} ${ampm}`;
+  };
   const [date, setDate] = useState(formatDate(new Date()));
   const [locationLabel, setLocationLabel] = useState<string | null>(null);
+  const [formCity, setFormCity] = useState<string>('');
+  const [formState, setFormState] = useState<string>('');
+  const [formLocation, setFormLocation] = useState<string>('');
   const [editPopupField, setEditPopupField] = useState<'zip' | 'date' | null>(null);
   const [editPopupValue, setEditPopupValue] = useState('');
   const [isSharingLocation, setIsSharingLocation] = useState(false);
@@ -98,6 +112,7 @@ export default function DriverContent() {
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const messageAnimation = useRef(new Animated.Value(-100)).current; // Start above screen
   const zipJustSetFromShareRef = useRef(false); // Prevent effects from overwriting ZIP right after Share
+  const zipClearedByStatusSelectRef = useRef(false); // Prevent effects from restoring ZIP right after clearing on status select
 
   const formatAddressLabel = useCallback((info: Partial<GeocodedAddress>): string => {
     const city = info.city || info.subregion || info.district || '';
@@ -106,6 +121,23 @@ export default function DriverContent() {
     const country = info.country === 'United States' ? 'USA' : (info.country || info.isoCountryCode || '');
     const parts = [city, regionCode, postalCode, country].filter(Boolean);
     return parts.join(' ');
+  }, []);
+
+  const geocodeZipAndFillLocation = useCallback(async (zipValue: string) => {
+    const trimmed = zipValue.trim();
+    if (!trimmed) return;
+    try {
+      const addr = await geocodeZipToAddress(trimmed, 'us');
+      if (addr && (addr.city || addr.state)) {
+        setFormCity(addr.city || '');
+        setFormState(addr.state || '');
+        setFormLocation(addr.city && addr.state && trimmed
+          ? `${addr.city}, ${addr.state} ${trimmed}`.trim()
+          : addr.city || addr.state || '');
+      }
+    } catch {
+      // Silently ignore geocoding errors
+    }
   }, []);
 
   // Wrapper function to send location update using helper
@@ -859,10 +891,11 @@ export default function DriverContent() {
         setUserLocation({ latitude, longitude });
       }
       
-      // Don't auto-fill ZIP for available/available_on/loaded_enroute - user fills via Share or auto-tracking
-      const skipZipRestore = ['available_on', 'available', 'loaded_enroute'].includes(status);
+      // Don't auto-fill ZIP only for available_on (user sets manually). For available/loaded_enroute: show last ZIP, allow auto-update
+      const skipZipRestore = status === 'available_on';
       const skipDueToShare = zipJustSetFromShareRef.current;
-      if (!skipZipRestore && !skipDueToShare && authState.userZipCode && authState.userZipCode !== zip) {
+      const skipDueToStatusSelectClear = zipClearedByStatusSelectRef.current;
+      if (!skipZipRestore && !skipDueToShare && !skipDueToStatusSelectClear && authState.userZipCode && authState.userZipCode !== zip) {
         setZip(authState.userZipCode);
       }
       
@@ -883,13 +916,19 @@ export default function DriverContent() {
       // Don't auto-start tracking here - tracking should only start when user clicks "Share my location"
       // with automatic sharing enabled
 
-      // Prepare address label for saved location
+      // Prepare address label and form fields for saved location
       (async () => {
         try {
           const reverseGeocode = await reverseGeocodeAsync({ latitude, longitude });
           const geo = reverseGeocode && reverseGeocode.length > 0 ? reverseGeocode[0] : null;
           if (geo) {
             setLocationLabel(formatAddressLabel(geo));
+            const c = geo.city || geo.subregion || geo.district || '';
+            const s = geo.region ? geo.region.split(' ')[0] : '';
+            const zipVal = authState.userZipCode || zip;
+            if (c) setFormCity(c);
+            if (s) setFormState(s);
+            if (c && s && zipVal) setFormLocation(`${c}, ${s} ${zipVal}`.trim());
           }
         } catch {}
       })();
@@ -911,10 +950,11 @@ export default function DriverContent() {
         // Update local state and map if coordinates exist
         if (latitude && longitude) {
           setUserLocation({ latitude, longitude });
-          // Don't auto-fill ZIP for available/available_on/loaded_enroute - user fills via Share or auto-tracking
-          const skipZipRestore = ['available_on', 'available', 'loaded_enroute'].includes(status);
+          // Don't auto-fill ZIP only for available_on (user sets manually). For available/loaded_enroute: show last ZIP, allow auto-update
+          const skipZipRestore = status === 'available_on';
           const skipDueToShare = zipJustSetFromShareRef.current;
-          if (zipCode && !skipZipRestore && !skipDueToShare) {
+          const skipDueToStatusSelectClear = zipClearedByStatusSelectRef.current;
+          if (zipCode && !skipZipRestore && !skipDueToShare && !skipDueToStatusSelectClear) {
             setZip(zipCode);
           }
           
@@ -928,12 +968,17 @@ export default function DriverContent() {
           
           mapRef.current?.animateToRegion(updateRegion, 1000);
           
-          // Update address label
+          // Update address label and form fields
           try {
             const reverseGeocode = await reverseGeocodeAsync({ latitude, longitude });
-          const geo = reverseGeocode && reverseGeocode.length > 0 ? reverseGeocode[0] : null;
+            const geo = reverseGeocode && reverseGeocode.length > 0 ? reverseGeocode[0] : null;
             if (geo) {
               setLocationLabel(formatAddressLabel(geo));
+              const c = geo.city || geo.subregion || geo.district || '';
+              const s = geo.region ? geo.region.split(' ')[0] : '';
+              if (c) setFormCity(c);
+              if (s) setFormState(s);
+              if (c && s && zipCode) setFormLocation(`${c}, ${s} ${zipCode}`.trim());
             }
           } catch {}
         }
@@ -1074,14 +1119,21 @@ export default function DriverContent() {
         return;
       }
       const isNotAvailable = status === 'available_off';
+      const useCurrentDateTime = ['available', 'loaded_enroute', 'available_off'].includes(status);
       let zipToSend = zip;
       let dateToSend = date;
       if (isNotAvailable) {
-        // For not available, ZIP/Date are not needed - use last saved values so request doesn't fail
         const savedZip = await AsyncStorage.getItem('@user_zip');
         zipToSend = (savedZip || zip || '').trim();
-        dateToSend = formatDate(new Date());
+        dateToSend = formatDateWithTime(new Date());
+      } else if (useCurrentDateTime) {
+        if (!zip || zip.trim() === '') {
+          console.warn('[DriverContent] ZIP code is required');
+          return;
+        }
+        dateToSend = formatDateWithTime(new Date());
       } else {
+        // available_on - use date from form (user picks in popup)
         if (!zip || zip.trim() === '') {
           console.warn('[DriverContent] ZIP code is required');
           return;
@@ -1108,6 +1160,10 @@ export default function DriverContent() {
       }
       console.log('[DriverContent] Updated zip and date saved to AsyncStorage:', { zip: zipToSend, date: dateToSend });
       
+      // Use hidden form fields (filled by "Determine location" or ZIP popup)
+      const city = formCity || undefined;
+      const state = formState || undefined;
+
       // Send location update to TMS API (status from useState will be sent)
       let tmsSuccess = false;
       try {
@@ -1128,20 +1184,6 @@ export default function DriverContent() {
         const previousStatus = previousStatusRef.current;
         const sentStatus = status; // Store the status that was sent in the request
         
-        // Get location details (city, state) for backend update
-        let city: string | undefined;
-        let state: string | undefined;
-        try {
-          const locationDetails = await getLocationDetails(
-            currentLocation.latitude,
-            currentLocation.longitude
-          );
-          city = locationDetails.city;
-          state = locationDetails.state;
-        } catch (geoError) {
-          console.warn('[DriverContent] Failed to get location details for backend update:', geoError);
-        }
-        
         // Update user in our backend database (status, zip, city, state)
         // Note: latitude/longitude are updated separately via /location endpoint
         try {
@@ -1151,6 +1193,7 @@ export default function DriverContent() {
               zip: zipToSend,
               city: city,
               state: state,
+              statusDate: dateToSend,
             });
             console.log('[DriverContent] ✅ Backend user updated successfully with status and location data');
             
@@ -1201,11 +1244,13 @@ export default function DriverContent() {
         await updateLocationSharingBasedOnStatus(sentStatus, previousStatus);
       }
 
+      const locationString = formLocation || (city && state ? `${city}, ${state}${zipToSend ? ` ${zipToSend}` : ''}`.trim() : undefined) || undefined;
+
       // Send location update to our backend (independent of TMS API)
       const backendSuccess = await sendLocationUpdateToBackendUser({
-        location: undefined,
-        city: undefined,
-        state: undefined,
+        location: locationString,
+        city,
+        state,
         zip: zipToSend,
         latitude: currentLocation.latitude,
         longitude: currentLocation.longitude,
@@ -1283,21 +1328,33 @@ export default function DriverContent() {
 
       console.warn('[DriverContent] Getting current location');
       let pos;
+      const tryGetLocation = async (accuracy: number) => {
+        return Location.getCurrentPositionAsync({ accuracy });
+      };
       try {
-        pos = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
+        // Try lower accuracy first (quicker fix, more likely to succeed indoors or in simulator)
+        try {
+          pos = await tryGetLocation(Location.Accuracy.Lowest);
+        } catch {
+          pos = await tryGetLocation(Location.Accuracy.Balanced);
+        }
       } catch (locationError: any) {
+        const errCode = locationError?.code;
+        const errMsg = locationError instanceof Error ? locationError.message : String(locationError);
         fileLogger.error('DriverContent', 'Failed to get current location', {
-          error: locationError instanceof Error ? locationError.message : String(locationError),
-          code: locationError?.code,
+          error: errMsg,
+          code: errCode,
         });
         console.error('[DriverContent] Failed to get current location:', locationError);
         
         let errorMessage = 'Failed to get your location. ';
-        if (locationError?.code === 0 || locationError?.message?.includes('KCLErrorDomain')) {
-          errorMessage += 'Please check that location services are enabled and try again.';
-        } else if (locationError?.message?.includes('permission') || locationError?.message?.includes('denied')) {
+        if (
+          errCode === 0 ||
+          errCode === 'ERR_LOCATION_UNAVAILABLE' ||
+          (typeof errMsg === 'string' && (errMsg.includes('KCLErrorDomain') || errMsg.includes('location unavailable')))
+        ) {
+          errorMessage += 'Please ensure location services are enabled, go outdoors or near a window for better signal, and try again.';
+        } else if (errMsg && String(errMsg).toLowerCase().includes('permission')) {
           errorMessage += 'Location permission is required. Please enable it in settings.';
         } else {
           errorMessage += 'Please try again.';
@@ -1306,7 +1363,7 @@ export default function DriverContent() {
         setUpdateSuccessMessage(errorMessage);
         setTimeout(() => {
           setUpdateSuccessMessage(null);
-        }, 4000);
+        }, 5000);
         return;
       }
       
@@ -1344,6 +1401,12 @@ export default function DriverContent() {
             setZip(postalCode);
             setTimeout(() => { zipJustSetFromShareRef.current = false; }, 3000);
           }
+          if (city) setFormCity(city);
+          if (state) setFormState(state);
+          const locStr = city && state && postalCode
+            ? `${city}, ${state} ${postalCode}`.trim()
+            : formatAddressLabel(geo);
+          setFormLocation(locStr);
           locationString = formatAddressLabel(geo);
           setLocationLabel(locationString);
         }
@@ -1442,10 +1505,20 @@ export default function DriverContent() {
       // When "Available on" is selected, clear ZIP and Date and make them editable (before Update is pressed)
       setZip('');
       setDate('');
+      setFormCity('');
+      setFormState('');
+      setFormLocation('');
+      setLocationLabel(null);
     } else if (newStatus === 'available' || newStatus === 'loaded_enroute') {
       // When "Available" or "Loaded & Enroute" is selected, clear ZIP - it will be filled by auto-detection (if enabled) or Share my location
+      zipClearedByStatusSelectRef.current = true;
       setZip('');
       setDate(formatDate(new Date()));
+      setFormCity('');
+      setFormState('');
+      setFormLocation('');
+      setLocationLabel(null);
+      setTimeout(() => { zipClearedByStatusSelectRef.current = false; }, 2000);
     } else {
       // When selecting any other status (e.g. available_off), fill Date with current date
       setDate(formatDate(new Date()));
@@ -1481,6 +1554,8 @@ export default function DriverContent() {
       let currentLatitude: number;
       let currentLongitude: number;
       let currentZipCode: string = zip;
+      let geoCity: string | undefined;
+      let geoState: string | undefined;
       
       // If location is not available, get it
       if (!userLocation) {
@@ -1505,15 +1580,22 @@ export default function DriverContent() {
           try {
             const reverseGeocode = await reverseGeocodeAsync({ latitude: currentLatitude, longitude: currentLongitude });
             if (reverseGeocode && reverseGeocode.length > 0) {
-              const postalCode = reverseGeocode[0].postalCode || '';
+              const geo = reverseGeocode[0];
+              const postalCode = geo.postalCode || '';
+              geoCity = geo.city || geo.subregion || geo.district || undefined;
+              geoState = geo.region ? geo.region.split(' ')[0] : undefined;
               if (postalCode) {
                 currentZipCode = postalCode;
-                // Don't overwrite ZIP when status is available_on (user set it manually)
                 if (status !== 'available_on') {
                   await setZip(postalCode);
                 }
               }
-              setLocationLabel(formatAddressLabel(reverseGeocode[0]));
+              if (geoCity) setFormCity(geoCity);
+              if (geoState) setFormState(geoState);
+              if (geoCity && geoState && currentZipCode) {
+                setFormLocation(`${geoCity}, ${geoState} ${currentZipCode}`.trim());
+              }
+              setLocationLabel(formatAddressLabel(geo));
             }
           } catch (geoError) {
             console.warn('Failed to get ZIP code from geocoding:', geoError);
@@ -1560,11 +1642,13 @@ export default function DriverContent() {
       // Send location update to our backend (independent of TMS API)
       if (status && currentZipCode) {
         console.log('[DriverContent] Sending location update to backend after enabling auto-sharing...');
-        
+        const cityToSend = geoCity ?? (formCity || undefined);
+        const stateToSend = geoState ?? (formState || undefined);
+        const locStr = cityToSend && stateToSend ? `${cityToSend}, ${stateToSend} ${currentZipCode}`.trim() : undefined;
         const backendSuccess = await sendLocationUpdateToBackendUser({
-          location: undefined,
-          city: undefined,
-          state: undefined,
+          location: locStr,
+          city: cityToSend,
+          state: stateToSend,
           zip: currentZipCode,
           latitude: currentLatitude,
           longitude: currentLongitude,
@@ -1661,7 +1745,7 @@ export default function DriverContent() {
             {isSharingLocation ? (
               <ActivityIndicator color={colors.neutral.white} size="small" />
             ) : (
-              <Text style={styles.buttonText}>Determine location</Text>
+              <Text style={styles.buttonText}>Share my location</Text>
             )}
           </TouchableOpacity>
           
@@ -1787,7 +1871,11 @@ export default function DriverContent() {
         visible={editPopupField === 'zip'}
         initialValue={zip}
         onClose={() => setEditPopupField(null)}
-        onSet={(value) => { setZip(value); setEditPopupField(null); }}
+        onSet={(value) => {
+          setZip(value);
+          setEditPopupField(null);
+          geocodeZipAndFillLocation(value);
+        }}
       />
 
       <DateEditPopup

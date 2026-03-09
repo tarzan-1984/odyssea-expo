@@ -8,7 +8,7 @@ import { fileLogger } from '@/utils/fileLogger';
 
 /**
  * Format date and time for TMS API
- * Format: "01/15/2024 10:30 AM"
+ * Output format: "01/15/2024 10:30 AM"
  */
 export function formatStatusDate(statusDate?: string): string {
   const now = new Date();
@@ -16,17 +16,29 @@ export function formatStatusDate(statusDate?: string): string {
   const minutes = String(now.getMinutes()).padStart(2, '0');
   const ampm = hours >= 12 ? 'PM' : 'AM';
   const displayHours = hours % 12 || 12;
-  
-  if (statusDate && statusDate.trim() !== '') {
-    // If statusDate is provided (e.g., "11/24/2025"), combine it with current time
-    return `${statusDate} ${displayHours}:${minutes} ${ampm}`;
-  } else {
-    // Use current date and time
+
+  if (!statusDate || statusDate.trim() === '') {
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const day = String(now.getDate()).padStart(2, '0');
     const year = now.getFullYear();
     return `${month}/${day}/${year} ${displayHours}:${minutes} ${ampm}`;
   }
+
+  const trimmed = statusDate.trim();
+  // If already contains time (e.g. "02/11/26 2:30 PM"), use it and ensure 4-digit year
+  const timeMatch = trimmed.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(\d{1,2}:\d{2}\s*(?:AM|PM))/i);
+  if (timeMatch) {
+    const datePart = timeMatch[1];
+    const timePart = timeMatch[2];
+    const dateSegments = datePart.split('/');
+    if (dateSegments.length === 3) {
+      let year = parseInt(dateSegments[2], 10);
+      if (year < 100) year += 2000;
+      return `${dateSegments[0]}/${dateSegments[1]}/${year} ${timePart}`;
+    }
+  }
+  // Date only (e.g. "11/24/25"), combine with current time
+  return `${trimmed} ${displayHours}:${minutes} ${ampm}`;
 }
 
 /**

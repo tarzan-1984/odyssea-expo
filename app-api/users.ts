@@ -118,6 +118,7 @@ export async function updateUser(userId: string, updateData: {
   location?: string;
   latitude?: number;
   longitude?: number;
+  statusDate?: string;
 }): Promise<any> {
   if (!API_BASE_URL) {
     throw new Error('API_BASE_URL is not configured');

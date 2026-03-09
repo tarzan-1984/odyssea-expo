@@ -194,3 +194,24 @@ export async function geocodeWithPostalAsync(query: string, countryCode: 'us' | 
   }
 }
 
+/**
+ * Geocode ZIP or address string to get city and state.
+ * Use when user manually enters ZIP - ensures city/state match the entered location.
+ */
+export async function geocodeZipToAddress(
+  zipOrAddress: string,
+  countryCode: 'us' | 'ca' = 'us'
+): Promise<{ city: string; state: string } | null> {
+  const coords = await geocodeWithPostalAsync(zipOrAddress.trim(), countryCode);
+  if (!coords) return null;
+  const reversed = await reverseGeocodeAsync({
+    latitude: coords.latitude,
+    longitude: coords.longitude,
+  });
+  if (reversed.length === 0) return null;
+  const g = reversed[0];
+  const city = g.city || g.subregion || g.district || '';
+  const state = g.region ? g.region.split(' ')[0] : '';
+  return { city, state };
+}
+

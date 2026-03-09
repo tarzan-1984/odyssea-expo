@@ -473,8 +473,9 @@ try {
               if (externalId) {
                 try {
                   if (sendLocationUpdateToBackendUser) {
+                    const locationStr = city && state ? `${city}, ${state}${finalPostalCode ? ` ${finalPostalCode}` : ''}`.trim() : undefined;
                     backendUpdateSuccess = await sendLocationUpdateToBackendUser({
-                      location: undefined, // Skip location string in background
+                      location: locationStr,
                       city: city || undefined,
                       state: state || undefined,
                       zip: finalPostalCode,
