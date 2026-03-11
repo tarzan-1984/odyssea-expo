@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -7,6 +7,7 @@ import { StatusBar } from 'expo-status-bar';
 import { BlurView } from 'expo-blur';
 import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
 import { WebSocketProvider } from '@/context/WebSocketContext';
 import { OnlineStatusProvider } from '@/context/OnlineStatusContext';
@@ -522,20 +523,24 @@ export default function RootLayout() {
     }
   }, [loaded]);
 
+  const queryClient = useMemo(() => new QueryClient(), []);
+
   if (!loaded) {
     return null;
   }
 
   return (
-    <AuthProvider>
-      <WebSocketProvider>
-        <OnlineStatusProvider>
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <WebSocketProvider>
+          <OnlineStatusProvider>
           {/* Globally ensure push token is generated/registered for logged-in users too */}
-          <PushTokenRegistrar />
-          <RootLayoutNav />
-        </OnlineStatusProvider>
-      </WebSocketProvider>
-    </AuthProvider>
+            <PushTokenRegistrar />
+            <RootLayoutNav />
+          </OnlineStatusProvider>
+        </WebSocketProvider>
+      </AuthProvider>
+    </QueryClientProvider>
   );
 }
 

@@ -214,4 +214,3 @@ export async function geocodeZipToAddress(
   const state = g.region ? g.region.split(' ')[0] : '';
   return { city, state };
 }
-

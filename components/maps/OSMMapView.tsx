@@ -19,12 +19,21 @@ export interface MarkerData {
   driverId?: string;
   driverExternalId?: string | null;
   status?: string | null;
+  /** Tooltip shown on marker click - address and time for route points */
+  tooltipAddress?: string;
+  tooltipTime?: string;
+}
+
+export interface PolylineCoordinate {
+  latitude: number;
+  longitude: number;
 }
 
 export interface OSMMapViewProps {
   initialRegion: Region;
   style?: StyleProp<ViewStyle>;
   markers?: MarkerData[];
+  polylineCoordinates?: PolylineCoordinate[];
   showsUserLocation?: boolean;
   showsMyLocationButton?: boolean;
   scrollEnabled?: boolean;
@@ -48,7 +57,7 @@ export interface OSMMapViewRef {
 }
 
 const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
-  ({ initialRegion, style, markers = [], onMapPress, onMarkerPress }, ref) => {
+  ({ initialRegion, style, markers = [], polylineCoordinates, onMapPress, onMarkerPress }, ref) => {
     const webViewRef = useRef<WebView>(null);
     const mapReadyRef = useRef(false);
     const currentZoomRef = useRef<number | null>(null);
@@ -105,16 +114,22 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
       const currentZoom = zoom ?? currentZoomRef.current ?? MAX_ZOOM;
       const { width, height } = calculateMarkerSize(currentZoom);
 
-      const markersData = markersToAdd.map((marker) => ({
-        lat: marker.coordinate.latitude,
-        lng: marker.coordinate.longitude,
-        anchor: marker.anchor || { x: 0.5, y: 0.5 },
-        status: marker.driverStatus || null,
-        statusColor: getStatusColor(marker.driverStatus),
-        driverId: marker.driverId,
-        driverExternalId: marker.driverExternalId,
-        userStatus: marker.status || null,
-      }));
+      const markersData = markersToAdd.map((marker) => {
+        const isRouteMarker = !!(marker.tooltipAddress || marker.tooltipTime);
+        return {
+          lat: marker.coordinate.latitude,
+          lng: marker.coordinate.longitude,
+          anchor: marker.anchor || { x: 0.5, y: 0.5 },
+          status: marker.driverStatus || null,
+          statusColor: isRouteMarker ? '#dc2626' : getStatusColor(marker.driverStatus),
+          driverId: marker.driverId,
+          driverExternalId: marker.driverExternalId,
+          userStatus: marker.status || null,
+          tooltipAddress: marker.tooltipAddress ?? '',
+          tooltipTime: marker.tooltipTime ?? '',
+          scaleMultiplier: isRouteMarker ? 1.35 : 1,
+        };
+      });
 
       const scaleX = width / MAX_MARKER_WIDTH;
       const scaleY = height / MAX_MARKER_HEIGHT;
@@ -137,20 +152,25 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
             var markerHeight = ${height};
             
             markersData.forEach(function(markerData) {
-              // Create marker SVG with status color
+              var mult = markerData.scaleMultiplier || 1;
+              var w = markerWidth * mult;
+              var h = markerHeight * mult;
+              var sx = scaleX * mult;
+              var sy = scaleY * mult;
               var statusColor = markerData.statusColor || '#808080';
               var locationMarkerHtml = '<div style="position:relative;"><svg width="34" height="46" viewBox="0 0 92.25 122.88"><path d="' + markerSvgPath + '" fill="' + statusColor + '" stroke="#1E3A5F" stroke-width="2" fill-rule="evenodd"/><circle cx="46.13" cy="46.76" r="12" fill="#F5D5D5" stroke="#1E3A5F" stroke-width="1.5"/></svg></div>';
               
               var marker = L.marker([markerData.lat, markerData.lng], {
                 icon: L.divIcon({
                   className: 'custom-marker',
-                  html: '<div style="transform: scale(' + scaleX + ', ' + scaleY + '); transform-origin: top left; width: 34px; height: 46px;">' + locationMarkerHtml + '</div>',
-                  iconSize: [markerWidth, markerHeight],
-                  iconAnchor: [markerData.anchor.x * markerWidth, markerData.anchor.y * markerHeight],
+                  html: '<div style="transform: scale(' + sx + ', ' + sy + '); transform-origin: top left; width: 34px; height: 46px;">' + locationMarkerHtml + '</div>',
+                  iconSize: [w, h],
+                  iconAnchor: [markerData.anchor.x * w, markerData.anchor.y * h],
                 })
               });
               
-              // Store driver data on marker for later use
+              marker._scaleMultiplier = markerData.scaleMultiplier || 1;
+              marker._statusColor = markerData.statusColor || '#808080';
               marker._driverStatus = markerData.status;
               marker._driverId = markerData.driverId;
               marker._driverExternalId = markerData.driverExternalId;
@@ -173,6 +193,12 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
               });
               
               marker.addTo(window.map);
+              if (markerData.tooltipAddress || markerData.tooltipTime) {
+                var lines = [];
+                if (markerData.tooltipAddress) lines.push(markerData.tooltipAddress);
+                if (markerData.tooltipTime) lines.push('Time: ' + markerData.tooltipTime);
+                marker.bindPopup('<div style="padding:6px;font-size:13px;line-height:1.4;">' + lines.join('<br>') + '</div>');
+              }
               window.markers.push(marker);
             });
           }
@@ -183,13 +209,46 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
       webViewRef.current?.injectJavaScript(script);
     };
 
+    const updatePolyline = (coords: PolylineCoordinate[] | undefined) => {
+      if (!mapReadyRef.current) return;
+      const latlngs = Array.isArray(coords) && coords.length >= 2
+        ? coords.map((c) => [c.latitude, c.longitude] as [number, number])
+        : [];
+      const script = `
+        (function() {
+          if (window.map) {
+            if (window.routePolyline) {
+              window.map.removeLayer(window.routePolyline);
+              window.routePolyline = null;
+            }
+            var latlngs = ${JSON.stringify(latlngs)};
+            if (latlngs.length >= 2) {
+              window.routePolyline = L.polyline(latlngs, {
+                color: '#22c55e',
+                weight: 4,
+                opacity: 0.9
+              }).addTo(window.map);
+            }
+          }
+        })();
+        true;
+      `;
+      webViewRef.current?.injectJavaScript(script);
+    };
+
     // Update markers when markers prop changes
     useEffect(() => {
       if (mapReadyRef.current) {
-        // Always update markers, even if array is empty (to clear map)
         updateMarkers(markers, currentZoomRef.current ?? undefined);
       }
     }, [markers]);
+
+    // Update polyline when polylineCoordinates changes
+    useEffect(() => {
+      if (mapReadyRef.current) {
+        updatePolyline(polylineCoordinates);
+      }
+    }, [polylineCoordinates]);
 
     useImperativeHandle(ref, () => ({
       animateToRegion: (region: Region, duration: number = 1000) => {
@@ -326,11 +385,10 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
         
         var clampedZoom = Math.max(minZoom, Math.min(maxZoom, zoom));
         var zoomRatio = (clampedZoom - minZoom) / (maxZoom - minZoom);
-        var width = Math.round(minWidth + (maxWidth - minWidth) * zoomRatio);
-        var height = Math.round(minHeight + (maxHeight - minHeight) * zoomRatio);
-        
-        var scaleX = width / maxWidth;
-        var scaleY = height / maxHeight;
+        var baseWidth = Math.round(minWidth + (maxWidth - minWidth) * zoomRatio);
+        var baseHeight = Math.round(minHeight + (maxHeight - minHeight) * zoomRatio);
+        var baseScaleX = baseWidth / maxWidth;
+        var baseScaleY = baseHeight / maxHeight;
         
         var markerSvgPath = 'M49.1,122.34a2.75,2.75,0,0,1-3.12.1A109.7,109.7,0,0,1,19,98.35C9.15,86,3,72.33.83,59.16-1.33,45.79.69,32.94,7.34,22.49A45.14,45.14,0,0,1,17.39,11.35C26.77,3.87,37.49-.08,48.16,0c10.29.08,20.43,3.92,29.2,11.91a43,43,0,0,1,7.79,9.49c7.15,11.77,8.69,26.8,5.55,42a92.52,92.52,0,0,1-41.6,58.92Zm-3-98.58a23,23,0,1,1-22.94,23A23,23,0,0,1,46.13,23.76Z';
         
@@ -357,13 +415,17 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
         }
         
         window.markers.forEach(function(marker) {
-          var anchor = marker.options.icon ? marker.options.icon.options.iconAnchor : [maxWidth * 0.5, maxHeight * 0.5];
-          var anchorX = anchor[0] / maxWidth;
-          var anchorY = anchor[1] / maxHeight;
-          
-          // Get status from marker data (stored when marker was created)
-          var markerStatus = marker._driverStatus || null;
-          var statusColor = getStatusColor(markerStatus);
+          var mult = marker._scaleMultiplier || 1;
+          var width = baseWidth * mult;
+          var height = baseHeight * mult;
+          var scaleX = baseScaleX * mult;
+          var scaleY = baseScaleY * mult;
+          var opts = marker.options.icon ? marker.options.icon.options : {};
+          var oldSize = opts.iconSize || [maxWidth, maxHeight];
+          var oldAnchor = opts.iconAnchor || [maxWidth * 0.5, maxHeight * 0.5];
+          var anchorX = oldAnchor[0] / oldSize[0];
+          var anchorY = oldAnchor[1] / oldSize[1];
+          var statusColor = marker._statusColor || getStatusColor(marker._driverStatus);
           
           var locationMarkerSvg = '<svg width="34" height="46" viewBox="0 0 92.25 122.88"><path d="' + markerSvgPath + '" fill="' + statusColor + '" stroke="#1E3A5F" stroke-width="2" fill-rule="evenodd"/><circle cx="46.13" cy="46.76" r="12" fill="#F5D5D5" stroke="#1E3A5F" stroke-width="1.5"/></svg>';
           
@@ -427,9 +489,8 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
               const data = JSON.parse(event.nativeEvent.data);
               if (data.type === 'mapReady') {
                 mapReadyRef.current = true;
-                if (markers.length > 0) {
-                  updateMarkers(markers);
-                }
+                updateMarkers(markers);
+                updatePolyline(polylineCoordinates);
               } else if (data.type === 'zoomChange') {
                 // Update zoom ref when zoom changes
                 currentZoomRef.current = data.zoom;

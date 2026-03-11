@@ -1,8 +1,9 @@
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { View, TouchableOpacity, Text, StyleSheet, Dimensions, Platform } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, usePathname } from 'expo-router';
 import { colors, fonts, fp, rem } from '@/lib';
 import Home from '@/icons/Home';
+import WorkIcon from '@/icons/WorkIcon';
 import ChatIcon from '@/icons/ChatIcon';
 import ProfileIcon from '@/icons/ProfileIcon';
 import SettingsIcon from '@/icons/SettingsIcon';
@@ -12,6 +13,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { eventBus } from '@/services/EventBus';
 import { AppState, AppStateStatus } from 'react-native';
 const { width } = Dimensions.get('window');
+const INACTIVE_COLOR = '#8E8E93';
+const ACTIVE_COLOR = colors.neutral.white;
 
 interface NavItemProps {
   icon: React.ReactNode;
@@ -55,7 +58,9 @@ interface BottomNavigationProps {
   currentRoute?: string;
 }
 
-export default function BottomNavigation({ currentRoute }: BottomNavigationProps) {
+export default function BottomNavigation({ currentRoute: currentRouteProp }: BottomNavigationProps) {
+  const pathname = usePathname();
+  const currentRoute = currentRouteProp ?? pathname;
   const { chatRooms } = useChatRooms();
   const { authState } = useAuth();
   const [driverStatus, setDriverStatus] = useState<string | null>(null);
@@ -149,32 +154,39 @@ export default function BottomNavigation({ currentRoute }: BottomNavigationProps
   return (
     <View style={styles.bottomNav}>
       <NavItem 
-        icon={<Home width={20} height={20} color={currentRoute === '/home' ? colors.primary.blue : '#8E8E93'} />}
+        icon={<Home width={22} height={22} color={currentRoute?.includes('final-verify') ? ACTIVE_COLOR : INACTIVE_COLOR} />}
         label=""
         route="/final-verify"
-        isActive={currentRoute === '/final-verify'}
+        isActive={currentRoute?.includes('final-verify')}
       />
       
       <NavItem 
-        icon={<ChatIcon width={20} height={20} color={currentRoute === '/messages' ? colors.primary.blue : '#8E8E93'} />}
+        icon={<WorkIcon width={22} height={22} color={currentRoute?.includes('work') ? ACTIVE_COLOR : INACTIVE_COLOR} />}
+        label=""
+        route="/work"
+        isActive={currentRoute?.includes('work')}
+      />
+      
+      <NavItem 
+        icon={<ChatIcon width={22} height={22} color={currentRoute?.includes('messages') || currentRoute?.includes('chat') ? ACTIVE_COLOR : INACTIVE_COLOR} />}
         label=""
         route="/messages"
-        isActive={currentRoute === '/messages'}
+        isActive={currentRoute?.includes('messages') || currentRoute?.includes('chat')}
         badgeCount={totalUnreadCount}
       />
       
       <NavItem 
-        icon={<ProfileIcon width={20} height={20} color={currentRoute === '/profile' ? colors.primary.blue : '#8E8E93'} />}
+        icon={<ProfileIcon width={22} height={22} color={currentRoute?.includes('profile') ? ACTIVE_COLOR : INACTIVE_COLOR} />}
         label=""
         route="/profile"
-        isActive={currentRoute === '/profile'}
+        isActive={currentRoute?.includes('profile')}
       />
       
       <NavItem
-        icon={<SettingsIcon width={20} height={20} color="#8E8E93" />}
+        icon={<SettingsIcon width={22} height={22} color={currentRoute?.includes('settings') ? ACTIVE_COLOR : INACTIVE_COLOR} />}
         label=""
         route="/settings"
-        isActive={false}
+        isActive={currentRoute?.includes('settings')}
         isLast
       />
     </View>
@@ -207,6 +219,10 @@ const styles = StyleSheet.create({
   },
   iconContainer: {
     position: 'relative',
+    width: 22,
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   iconContainerActive: {
     // Additional styling for active state if needed
@@ -228,7 +244,7 @@ const styles = StyleSheet.create({
     lineHeight: 8,
     includeFontPadding: false,
     textAlignVertical: 'center',
-    color: colors.primary.blue,
+    color: ACTIVE_COLOR,
     padding: 0,
     fontFamily: fonts['700'],
   },
@@ -238,7 +254,7 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
   },
   navTextActive: {
-    color: colors.primary.blue,
+    color: ACTIVE_COLOR,
   },
 });
 
