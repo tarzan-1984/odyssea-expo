@@ -211,13 +211,23 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               console.warn('⚠️ [AuthContext] Failed to cache user role:', cacheError);
             }
           }
-          // Save driverStatus for DRIVER role users
-          if (userRole === 'DRIVER' && user?.driverStatus) {
+          // Save driverStatus, zip, statusDate for DRIVER role users (used by DriverContent and background location)
+          if (userRole === 'DRIVER') {
             try {
-              await AsyncStorage.setItem('@user_status', user.driverStatus);
-              console.log(`💾 [AuthContext] Driver status cached in AsyncStorage: ${user.driverStatus}`);
+              if (user?.driverStatus) {
+                await AsyncStorage.setItem('@user_status', user.driverStatus);
+                console.log(`💾 [AuthContext] Driver status cached in AsyncStorage: ${user.driverStatus}`);
+              }
+              if (user?.zip) {
+                await AsyncStorage.setItem('@user_zip', user.zip);
+                console.log('💾 [AuthContext] Driver zip cached in AsyncStorage');
+              }
+              if (user?.statusDate) {
+                await AsyncStorage.setItem('@user_date', user.statusDate);
+                console.log('💾 [AuthContext] Driver statusDate cached in AsyncStorage');
+              }
             } catch (cacheError) {
-              console.warn('⚠️ [AuthContext] Failed to cache driver status:', cacheError);
+              console.warn('⚠️ [AuthContext] Failed to cache driver data:', cacheError);
             }
           }
           console.log('💾 [AuthContext] Tokens and user saved (Face ID can now unlock this session)');
@@ -477,7 +487,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             console.warn('⚠️ [AuthContext] Failed to cache user role:', cacheError);
           }
         }
-        
+        // Restore zip, statusDate for DRIVER when AsyncStorage is empty (first load after login; don't overwrite if locationTask or status update already wrote newer data)
+        if ((user?.role ?? '').toUpperCase() === 'DRIVER') {
+          try {
+            const existingZip = await AsyncStorage.getItem('@user_zip');
+            if (!existingZip && user?.zip) await AsyncStorage.setItem('@user_zip', user.zip);
+            const existingDate = await AsyncStorage.getItem('@user_date');
+            if (!existingDate && user?.statusDate) await AsyncStorage.setItem('@user_date', user.statusDate);
+          } catch (cacheError) {
+            console.warn('⚠️ [AuthContext] Failed to cache driver zip/statusDate:', cacheError);
+          }
+        }
+
         console.log('✅ [AuthContext] Found stored auth data');
         console.log('👤 [AuthContext] User:', user.email);
         console.log('🔑 [AuthContext] Access token:', accessToken.substring(0, 20) + '...');
