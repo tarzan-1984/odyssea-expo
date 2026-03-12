@@ -5,7 +5,7 @@ import { BlurView } from 'expo-blur';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import * as Notifications from 'expo-notifications';
-import { reverseGeocodeAsync, GeocodedAddress, geocodeZipToAddress } from '@/utils/geocoding';
+import { reverseGeocodeAsync, GeocodedAddress, geocodeZipToAddress, geocodeAsync } from '@/utils/geocoding';
 import { colors } from '@/lib/colors';
 import { fonts, fp, rem, typography } from "@/lib";
 import StatusSelect, { StatusValue } from '@/components/common/StatusSelect';
@@ -75,6 +75,24 @@ export default function DriverContent() {
     const m = String(minutes).padStart(2, '0');
     return `${datePart} ${h12}:${m} ${ampm}`;
   };
+
+  /** Parse statusDate from DB (MM/DD/YY h:mm AM/PM or YYYY-MM-DD HH:mm:ss) to display string */
+  const parseStatusDateForDisplay = useCallback((value: string | null | undefined): string => {
+    const s = (value || '').trim();
+    if (!s) return formatDate(new Date());
+    // Already in display format (MM/DD/YY or MM/DD/YY h:mm AM/PM)
+    if (/^\d{1,2}\/\d{1,2}\/\d{2,4}/.test(s)) return s;
+    // ISO-like: 2026-03-19 14:42:00
+    const isoMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{1,2}):(\d{2})/);
+    if (isoMatch) {
+      const [, y, m, d, h, min] = isoMatch;
+      const hh = parseInt(h!, 10);
+      const ampm = hh >= 12 ? 'PM' : 'AM';
+      const h12 = hh % 12 || 12;
+      return `${m}/${d}/${y.slice(-2)} ${h12}:${min} ${ampm}`;
+    }
+    return formatDate(new Date());
+  }, []);
   const [date, setDate] = useState(formatDate(new Date()));
   const [locationLabel, setLocationLabel] = useState<string | null>(null);
   const [formCity, setFormCity] = useState<string>('');
@@ -734,7 +752,7 @@ export default function DriverContent() {
     // If both statuses are in the same group (active->active or inactive->inactive), don't change the setting
   }, [setAutomaticLocationSharing, stopBackgroundLocationTracking, startBackgroundLocationTracking, userLocation, automaticLocationSharing]);
 
-  // Load saved status, zip, and date from AsyncStorage on mount
+  // Load saved status, zip, and date from AsyncStorage; use user (from login) as fallback when empty
   useEffect(() => {
     const loadSavedData = async () => {
       try {
@@ -803,16 +821,31 @@ export default function DriverContent() {
           previousStatusRef.current = 'available';
         }
         
-        // Load zip
+        // Load zip: from AsyncStorage first; if empty (first login), use user from authState and persist
         const savedZip = await AsyncStorage.getItem('@user_zip');
         if (savedZip) {
           setZip(savedZip);
+        } else {
+          const userZip = (user?.zip ?? '').trim();
+          if (userZip) {
+            setZip(userZip);
+            await AsyncStorage.setItem('@user_zip', userZip);
+          }
         }
-        
-        // Load date
+
+        // Load date: from AsyncStorage first; if empty (first login), use statusDate from user and persist
         const savedDate = await AsyncStorage.getItem('@user_date');
         if (savedDate) {
           setDate(savedDate);
+        } else {
+          const userStatusDate = (user?.statusDate ?? '').trim();
+          if (userStatusDate) {
+            const displayDate = parseStatusDateForDisplay(userStatusDate);
+            setDate(displayDate);
+            await AsyncStorage.setItem('@user_date', displayDate);
+          } else {
+            setDate(formatDate(new Date()));
+          }
         }
       } catch (error) {
         console.error('[DriverContent] Failed to load saved data:', error);
@@ -823,7 +856,7 @@ export default function DriverContent() {
     };
     
     loadSavedData();
-  }, [setZip, setAutomaticLocationSharing, stopBackgroundLocationTracking]);
+  }, [user?.zip, user?.statusDate, setZip, setAutomaticLocationSharing, stopBackgroundLocationTracking, parseStatusDateForDisplay]);
 
   // Listen for driver status updates from AuthContext
   useEffect(() => {
@@ -890,7 +923,7 @@ export default function DriverContent() {
       if (!userLocation || userLocation.latitude !== latitude || userLocation.longitude !== longitude) {
         setUserLocation({ latitude, longitude });
       }
-      
+
       // Don't auto-fill ZIP only for available_on (user sets manually). For available/loaded_enroute: show last ZIP, allow auto-update
       const skipZipRestore = status === 'available_on';
       const skipDueToShare = zipJustSetFromShareRef.current;
@@ -1115,11 +1148,12 @@ export default function DriverContent() {
     try {
       // Validate that all fields are filled
       if (!status) {
-        console.warn('[DriverContent] Status is required');
+        setUpdateSuccessMessage('Status is required');
+        setTimeout(() => setUpdateSuccessMessage(null), 3000);
         return;
       }
       const isNotAvailable = status === 'available_off';
-      const useCurrentDateTime = ['available', 'loaded_enroute', 'available_off'].includes(status);
+      const useCurrentDateTime = status === 'available' || status === 'loaded_enroute';
       let zipToSend = zip;
       let dateToSend = date;
       if (isNotAvailable) {
@@ -1127,39 +1161,52 @@ export default function DriverContent() {
         zipToSend = (savedZip || zip || '').trim();
         dateToSend = formatDateWithTime(new Date());
       } else if (useCurrentDateTime) {
+        // available, loaded_enroute - use current date/time (date field is hidden)
+        dateToSend = formatDateWithTime(new Date());
         if (!zip || zip.trim() === '') {
-          console.warn('[DriverContent] ZIP code is required');
+          setUpdateSuccessMessage('ZIP code is required');
+          setTimeout(() => setUpdateSuccessMessage(null), 3000);
           return;
         }
-        dateToSend = formatDateWithTime(new Date());
       } else {
-        // available_on - use date from form (user picks in popup)
+        // available_on - use date from form (user can edit)
         if (!zip || zip.trim() === '') {
-          console.warn('[DriverContent] ZIP code is required');
+          setUpdateSuccessMessage('ZIP code is required');
+          setTimeout(() => setUpdateSuccessMessage(null), 3000);
           return;
         }
         if (!date || date.trim() === '') {
-          console.warn('[DriverContent] Date is required');
+          setUpdateSuccessMessage('Date is required');
+          setTimeout(() => setUpdateSuccessMessage(null), 3000);
           return;
         }
+        // date already has time (MM/DD/YY h:mm AM/PM) or date only - formatStatusDate handles both
+        dateToSend = date.trim();
       }
 
       // Check if we have location data
-      const currentLocation = authState.userLocation || userLocation;
+      let currentLocation = authState.userLocation || userLocation;
+      // For available_on: geocode ZIP to get coordinates (Share my location button is hidden). Only geocode if zip changed.
+      const zipChanged = (authState.userZipCode || '').trim() !== (zipToSend || '').trim();
+      if (status === 'available_on' && zipToSend?.trim() && (!currentLocation || zipChanged)) {
+        try {
+          const coords = await geocodeAsync(zipToSend.trim(), 'us');
+          if (coords) {
+            await updateUserLocation(coords.latitude, coords.longitude, zipToSend);
+            setUserLocation({ latitude: coords.latitude, longitude: coords.longitude });
+            currentLocation = coords;
+          }
+        } catch (e) {
+          setUpdateSuccessMessage('Failed to determine location from ZIP code');
+          setTimeout(() => setUpdateSuccessMessage(null), 3000);
+        }
+      }
       if (!currentLocation) {
-        console.warn('[DriverContent] Location data is required. Please share your location first.');
+        setUpdateSuccessMessage('Location data is required. Please share your location first.');
+        setTimeout(() => setUpdateSuccessMessage(null), 3000);
         return;
       }
 
-      // Save zip and date to AsyncStorage (status will be saved after successful TMS update via WebSocket)
-      if (!isNotAvailable) {
-        await AsyncStorage.multiSet([
-          ['@user_zip', zip],
-          ['@user_date', date],
-        ]);
-      }
-      console.log('[DriverContent] Updated zip and date saved to AsyncStorage:', { zip: zipToSend, date: dateToSend });
-      
       // Use hidden form fields (filled by "Determine location" or ZIP popup)
       const city = formCity || undefined;
       const state = formState || undefined;
@@ -1197,12 +1244,16 @@ export default function DriverContent() {
             });
             console.log('[DriverContent] ✅ Backend user updated successfully with status and location data');
             
-            // After successful backend update, save status to AsyncStorage and sync local state
-            await AsyncStorage.setItem('@user_status', sentStatus);
+            // After successful backend update, save status, zip, date to AsyncStorage and sync local state
+            await AsyncStorage.multiSet([
+              ['@user_status', sentStatus],
+              ['@user_zip', zipToSend],
+              ['@user_date', dateToSend],
+            ]);
             setDriverStatusFromStorage(sentStatus); // Update marker status
             previousStatusRef.current = sentStatus; // Update previous status ref
-            
-            console.log('[DriverContent] ✅ Status saved to AsyncStorage and local state synced:', sentStatus);
+
+            console.log('[DriverContent] ✅ Status, zip, date saved to AsyncStorage:', { status: sentStatus, zip: zipToSend, date: dateToSend });
           }
         } catch (updateError: any) {
           // Extract error message properly
@@ -1500,29 +1551,37 @@ export default function DriverContent() {
 
   const handleStatusChange = async (newStatus: StatusValue) => {
     setStatus(newStatus);
-    
-    if (newStatus === 'available_on') {
-      // When "Available on" is selected, clear ZIP and Date and make them editable (before Update is pressed)
-      setZip('');
+
+    if (newStatus === driverStatusFromStorage) {
+      // User selected the status they're actually in - restore zip and date from AsyncStorage
+      try {
+        const savedZip = await AsyncStorage.getItem('@user_zip');
+        const savedDate = await AsyncStorage.getItem('@user_date');
+        if (savedZip) setZip(savedZip);
+        if (savedDate) setDate(savedDate);
+        if (savedZip) await geocodeZipAndFillLocation(savedZip);
+      } catch {
+        // Ignore
+      }
+    } else if (newStatus === 'available_on') {
+      // Switching TO available_on from another status - clear fields (user enters zip and date via popups)
+      setZipState('');
       setDate('');
       setFormCity('');
       setFormState('');
       setFormLocation('');
       setLocationLabel(null);
     } else if (newStatus === 'available' || newStatus === 'loaded_enroute') {
-      // When "Available" or "Loaded & Enroute" is selected, clear ZIP - it will be filled by auto-detection (if enabled) or Share my location
+      // When "Available" or "Loaded & Enroute" is selected, clear ZIP - coords will come from GPS
       zipClearedByStatusSelectRef.current = true;
-      setZip('');
-      setDate(formatDate(new Date()));
+      setZipState('');
       setFormCity('');
       setFormState('');
       setFormLocation('');
       setLocationLabel(null);
       setTimeout(() => { zipClearedByStatusSelectRef.current = false; }, 2000);
-    } else {
-      // When selecting any other status (e.g. available_off), fill Date with current date
-      setDate(formatDate(new Date()));
     }
+    // Don't auto-fill date when selecting any status - user enters via popup when available_on
     
     // Check if new status is basic (selectable)
     const basicStatuses: StatusValue[] = ['available', 'available_on', 'available_off', 'loaded_enroute'];
@@ -1823,28 +1882,22 @@ export default function DriverContent() {
                 )}
           </View>
           
-          {/* Date - hidden when not available; when available_on: tappable; otherwise read-only */}
-              <View style={[styles.settingsWrap, status === 'available_off' && { opacity: 0, height: 0, marginBottom: 0, overflow: 'hidden' }]} pointerEvents={status === 'available_off' ? 'none' : 'auto'}>
+          {/* Date - hidden for available_off, available, loaded_enroute; always tappable when shown (pick date and time) */}
+              <View style={[styles.settingsWrap, (status === 'available_off' || status === 'available' || status === 'loaded_enroute') && { opacity: 0, height: 0, marginBottom: 0, overflow: 'hidden' }]} pointerEvents={(status === 'available_off' || status === 'available' || status === 'loaded_enroute') ? 'none' : 'auto'}>
                 <Text style={styles.settingsLabel}>Date</Text>
-                {status === 'available_on' ? (
-                  <TouchableOpacity
-                    style={[styles.input, styles.textInput]}
-                    onPress={() => {
-                      setEditPopupValue(date);
-                      setEditPopupField('date');
-                    }}
-                    accessibilityLabel="Date"
-                    accessibilityHint="Tap to enter date"
-                  >
-                    <Text style={[styles.textInput, !date && { color: colors.primary.blue }]}>
-                      {date || 'MM/DD/YY'}
-                    </Text>
-                  </TouchableOpacity>
-                ) : (
-                  <View style={styles.input}>
-                    <Text style={styles.textInput}>{date}</Text>
-                  </View>
-                )}
+                <TouchableOpacity
+                  style={[styles.input, styles.textInput]}
+                  onPress={() => {
+                    setEditPopupValue(date);
+                    setEditPopupField('date');
+                  }}
+                  accessibilityLabel="Date"
+                  accessibilityHint="Tap to select date and time"
+                >
+                  <Text style={[styles.textInput, !date && { color: colors.primary.blue }]}>
+                    {date || 'MM/DD/YY h:mm AM/PM'}
+                  </Text>
+                </TouchableOpacity>
           </View>
               
               <View style={styles.settingsWrap}>

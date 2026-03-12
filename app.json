@@ -2,7 +2,7 @@
   "expo": {
     "name": "Odysseia App",
     "slug": "odyssea",
-    "version": "1.0.14",
+    "version": "1.0.15",
     "orientation": "portrait",
     "icon": "./assets/app-icon.png",
     "scheme": "odyssea",
