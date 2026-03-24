@@ -9,6 +9,7 @@ import ProfileIcon from '@/icons/ProfileIcon';
 import SettingsIcon from '@/icons/SettingsIcon';
 import { useChatRooms } from '@/hooks/useChatRooms';
 import { useAuth } from '@/context/AuthContext';
+import { canAccessWorkTab } from '@/constants/roleAccess';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { eventBus } from '@/services/EventBus';
 import { AppState, AppStateStatus } from 'react-native';
@@ -63,6 +64,7 @@ export default function BottomNavigation({ currentRoute: currentRouteProp }: Bot
   const currentRoute = currentRouteProp ?? pathname;
   const { chatRooms } = useChatRooms();
   const { authState } = useAuth();
+  const canAccessOffers = canAccessWorkTab(authState.user?.role);
   const [driverStatus, setDriverStatus] = useState<string | null>(null);
 
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
@@ -160,12 +162,14 @@ export default function BottomNavigation({ currentRoute: currentRouteProp }: Bot
         isActive={currentRoute?.includes('final-verify')}
       />
       
-      <NavItem 
-        icon={<WorkIcon width={22} height={22} color={currentRoute?.includes('work') ? ACTIVE_COLOR : INACTIVE_COLOR} />}
-        label=""
-        route="/work"
-        isActive={currentRoute?.includes('work')}
-      />
+      {canAccessOffers && (
+        <NavItem 
+          icon={<WorkIcon width={22} height={22} color={currentRoute?.includes('work') ? ACTIVE_COLOR : INACTIVE_COLOR} />}
+          label=""
+          route="/work"
+          isActive={currentRoute?.includes('work')}
+        />
+      )}
       
       <NavItem 
         icon={<ChatIcon width={22} height={22} color={currentRoute?.includes('messages') || currentRoute?.includes('chat') ? ACTIVE_COLOR : INACTIVE_COLOR} />}

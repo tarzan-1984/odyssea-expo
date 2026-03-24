@@ -60,21 +60,21 @@ export default function ChatRoomScreen() {
   // Get WebSocket connection status
   const { isConnected, sendTyping, typingByRoom } = useWebSocket();
 
-  // Get chat room display name
+  // Get chat room display name (interlocutor for DIRECT/OFFER)
   const getChatDisplayName = (): string => {
     if (!chatRoom) {
       return 'Loading...';
     }
 
-    // For DIRECT chats, show the other participant's name
-    if (chatRoom.type === 'DIRECT' && chatRoom.participants.length === 2) {
+    // For DIRECT and OFFER chats, show the other participant's name
+    if ((chatRoom.type === 'DIRECT' || chatRoom.type === 'OFFER') && chatRoom.participants.length === 2) {
       const otherParticipant = chatRoom.participants.find(
         p => p.user.id !== authState.user?.id
       );
       if (otherParticipant) {
         const name = `${otherParticipant.user.firstName} ${otherParticipant.user.lastName}`;
-        // Add unit if available
-        if (otherParticipant.user.unit) {
+        // Add unit if available (DIRECT only)
+        if (chatRoom.type === 'DIRECT' && otherParticipant.user.unit) {
           return `${name} (Unit ${otherParticipant.user.unit})`;
         }
         return name;
@@ -96,6 +96,18 @@ export default function ChatRoomScreen() {
     }
 
     return 'Unknown Chat';
+  };
+
+  // For OFFER chats: parse chat name to get offer title and id for subtitle
+  const getOfferSubtitle = (): string | null => {
+    if (!chatRoom || chatRoom.type !== 'OFFER' || !chatRoom.name) return null;
+    const lines = chatRoom.name.trim().split('\n');
+    const idMatch = chatRoom.name.match(/\(id:\s*(\d+)\)/);
+    const offerIdVal = chatRoom.offerId ?? (idMatch ? parseInt(idMatch[1], 10) : null);
+    const routeStr = lines.length > 1 ? lines[1].trim() : '';
+    const offerName = routeStr || 'Offer';
+    const idPart = offerIdVal != null ? ` (id: ${offerIdVal})` : '';
+    return `"${offerName}${idPart}"`;
   };
 
   // Format date for date separator
@@ -448,9 +460,12 @@ export default function ChatRoomScreen() {
               {!chatRoom && isLoadingChatRoom ? (
                 <ActivityIndicator size="small" color={colors.neutral.white} />
               ) : error && !chatRoom ? (
-                <Text style={styles.screenTitle}>Error</Text>
+                <View style={styles.headerTitleWrap}>
+                  <Text style={styles.screenTitle}>Error</Text>
+                </View>
               ) : (
                 <TouchableOpacity
+                  style={styles.headerTitleWrap}
                   activeOpacity={0.8}
                   disabled={!(chatRoom && (chatRoom.type === 'GROUP' || chatRoom.type === 'LOAD'))}
                   onPress={() => {
@@ -459,20 +474,29 @@ export default function ChatRoomScreen() {
                     }
                   }}
                 >
-                  <Text style={styles.screenTitle}>
-                    {getChatDisplayName()}
-                  </Text>
+                  <View style={styles.headerTitleContent}>
+                    <Text style={styles.screenTitle}>
+                      {getChatDisplayName()}
+                    </Text>
+                    {getOfferSubtitle() ? (
+                      <Text style={styles.headerOfferSubtitle}>
+                        {getOfferSubtitle()}
+                      </Text>
+                    ) : null}
+                  </View>
                 </TouchableOpacity>
               )}
             </View>
-            
-                  <ChatHeaderDropdown
-                    chatRoom={chatRoom || null}
-                    chatRoomType={chatRoom?.type}
-                    onFilesPress={() => {
-                      setIsFilesModalOpen(true);
-                    }}
-                  />
+
+            <View style={styles.headerRight}>
+              <ChatHeaderDropdown
+                chatRoom={chatRoom || null}
+                chatRoomType={chatRoom?.type}
+                onFilesPress={() => {
+                  setIsFilesModalOpen(true);
+                }}
+              />
+            </View>
           </View>
           
           <ChatInfoModal
@@ -492,6 +516,11 @@ export default function ChatRoomScreen() {
             </View>
           ) : messages.length === 0 ? (
             <View style={styles.emptyContainer}>
+              <Image
+                source={require('@/icons/noMessage.png')}
+                style={styles.emptyIcon}
+                resizeMode="contain"
+              />
               <Text style={styles.emptyText}>No messages yet</Text>
             </View>
           ) : (
@@ -765,9 +794,15 @@ const styles = StyleSheet.create({
   },
   screenTitle: {
     color: colors.neutral.white,
-    fontFamily: fonts["700"],
+    fontFamily: fonts['700'],
     fontSize: fp(18),
     textTransform: 'capitalize',
+  },
+  headerOfferSubtitle: {
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontFamily: fonts['400'],
+    fontSize: fp(13),
+    marginTop: rem(2),
   },
   screenWrap: {
     flex: 1,
@@ -780,20 +815,39 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingTop: 0,
+    paddingHorizontal: rem(20),
+    paddingTop: rem(12),
     paddingBottom: rem(16),
+    minHeight: rem(80),
     backgroundColor: colors.primary.violet,
     width: '100%',
     position: 'relative',
     zIndex: 20,
+    flexShrink: 0,
   },
   headerLeft: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     flex: 1,
+    minWidth: 0,
+    flexBasis: 0,
+  },
+  headerTitleWrap: {
+    flex: 1,
+    minWidth: 0,
+    flexBasis: 0,
+    marginRight: rem(8),
+  },
+  headerTitleContent: {
+    flex: 1,
+    minWidth: 0,
+  },
+  headerRight: {
+    flexShrink: 0,
+    marginLeft: rem(8),
+    paddingTop: rem(10),
   },
   headerAvatarContainer: {
     width: rem(48),
@@ -826,6 +880,7 @@ const styles = StyleSheet.create({
     marginRight: rem(18),
     justifyContent: 'center',
     alignItems: 'center',
+    alignSelf: 'center',
   },
   loadingContainer: {
     flex: 1,
@@ -896,6 +951,11 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingTop: rem(100),
+  },
+  emptyIcon: {
+    width: rem(200),
+    height: rem(200),
+    marginBottom: rem(16),
   },
   emptyText: {
     fontSize: fp(16),

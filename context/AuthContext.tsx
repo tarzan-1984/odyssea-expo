@@ -4,7 +4,6 @@ import { secureStorage } from '@/utils/secureStorage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authApi, CheckEmailResponse, LoginResponse, OtpVerificationResponse } from '@/services/authApi';
 import { registerForPushNotificationsAsync, registerPushTokenToBackend } from '@/services/NotificationsService';
-import { syncDriversForMapAfterLogin } from '@/services/DriversMapService';
 import { getDriverStatus } from '@/app-api/users';
 import { fileLogger } from '@/utils/fileLogger';
 import * as Location from 'expo-location';
@@ -300,20 +299,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           }, 500); // Small delay to ensure UI is ready
         } else {
           console.log('⏸️ [AuthContext] User is not DRIVER, skipping location permission request');
-          console.log('🗺️ [AuthContext] Starting drivers sync for map (non-DRIVER user)...');
-
-          // Start background drivers sync for non-DRIVER users.
-          // This will fetch drivers for map with pagination and cache them in AsyncStorage.
-          setTimeout(() => {
-            console.log('🗺️ [AuthContext] Executing drivers sync after 2s delay...');
-            syncDriversForMapAfterLogin(accessToken)
-              .then(() => {
-                console.log('✅ [AuthContext] Drivers sync completed successfully');
-              })
-              .catch((error) => {
-                console.error('❌ [AuthContext] Failed to sync drivers for map after login:', error);
-              });
-          }, 2000);
+          // Drivers for map are fetched via useDriversForMapInfinite (useInfiniteQuery) in NonDriverContent
         }
 
         // Request notification permissions for ALL users (any role)

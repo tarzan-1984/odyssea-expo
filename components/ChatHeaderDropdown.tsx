@@ -9,7 +9,7 @@ import { ChatRoom } from '@/components/ChatListItem';
 
 interface ChatHeaderDropdownProps {
   chatRoom?: ChatRoom | null;
-  chatRoomType?: 'DIRECT' | 'GROUP' | 'LOAD';
+  chatRoomType?: 'DIRECT' | 'GROUP' | 'LOAD' | 'OFFER';
   onFilesPress?: () => void;
 }
 
@@ -65,8 +65,8 @@ export default function ChatHeaderDropdown({
               <Text style={styles.menuItemText}>Files</Text>
             </TouchableOpacity>
 
-            {/* Show Delete button only for DIRECT and GROUP chats, not for LOAD chats */}
-            {(chatRoomType === 'DIRECT' || chatRoomType === 'GROUP') && (
+            {/* Show Delete button for DIRECT, OFFER and GROUP chats, not for LOAD */}
+            {(chatRoomType === 'DIRECT' || chatRoomType === 'OFFER' || chatRoomType === 'GROUP') && (
               <TouchableOpacity
                 style={styles.menuItem}
                 onPress={handleDeletePress}
@@ -95,6 +95,7 @@ export default function ChatHeaderDropdown({
 const styles = StyleSheet.create({
   container: {
     position: 'relative',
+    flexShrink: 0,
   },
   triggerButton: {
     padding: rem(4),

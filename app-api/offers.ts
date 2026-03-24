@@ -9,8 +9,11 @@ export interface OfferDriver {
   email: string;
   phone: string | null;
   status: string;
+  active: boolean;
+  is_selected: boolean;
   rate: number | null;
-  action_time?: string | null;
+  action_time?: number | null;
+  action_time_display?: string | null;
   empty_miles: number | null;
   total_miles: number | null;
 }
@@ -24,6 +27,7 @@ export interface OfferRoutePoint {
 export interface OfferRow {
   id: number;
   active?: boolean;
+  is_driver_selected: boolean;
   external_user_id: string | null;
   create_time: string;
   update_time: string;
@@ -43,7 +47,7 @@ export interface GetOffersParams {
   user_id?: string;
   driver_id?: string;
   sort_order?: 'action_time_asc' | 'action_time_desc';
-  status?: 'active' | 'inactive';
+  status?: 'active' | 'inactive' | 'assigned';
 }
 
 export interface GetOffersResponse {
@@ -58,6 +62,41 @@ export interface GetOffersResponse {
   };
 }
 
+export interface SetDriverRatePayload {
+  rate: number;
+  rateTimeMinutes: number;
+  driverEta: string;
+}
+
+export interface ExtendDriverTimePayload {
+  extendTimeMinutes: number;
+}
+
+export interface SetDriverRateResponse {
+  offer_id: number;
+  driver_id: string;
+  rate: number | null;
+  driver_eta: string | null;
+  action_time: number | null;
+  action_time_display: string | null;
+}
+
+export interface RemoveDriverFromOfferResponse {
+  success: boolean;
+  message?: string;
+}
+
+export interface SelectDriverForOfferResponse {
+  success: boolean;
+  message?: string;
+  error?: string;
+}
+
+export interface DeactivateOfferResponse {
+  success: boolean;
+  error?: string;
+}
+
 /** First and last locations from route for short display (e.g. "Wauseon, Ohio 43567 → Los Angeles, California 90003") */
 export function routeSummary(
   route: Array<{ location?: string }> | null | undefined
@@ -67,6 +106,42 @@ export function routeSummary(
   const last =
     route.length > 1 ? route[route.length - 1]?.location ?? '' : first;
   return last ? `${first} → ${last}` : first;
+}
+
+export interface DriverParticipationCountResponse {
+  count: number;
+}
+
+export async function getDriverParticipationCount(): Promise<DriverParticipationCountResponse> {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is not configured');
+  }
+
+  const accessToken = await secureStorage.getItemAsync('accessToken');
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
+
+  const url = `${API_BASE_URL}/v1/offers/driver-participation-count`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      errorData.message ||
+        `Failed to fetch driver participation count. Status: ${response.status}`
+    );
+  }
+
+  const data = await response.json();
+  const payload = data.data ?? data;
+  return { count: payload.count ?? 0 };
 }
 
 export async function getOffers(
@@ -124,4 +199,278 @@ export async function getOffers(
       has_prev_page: false,
     },
   };
+}
+
+export async function getOfferById(
+  offerId: number,
+  driverId?: string
+): Promise<OfferRow> {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is not configured');
+  }
+
+  const accessToken = await secureStorage.getItemAsync('accessToken');
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
+
+  const searchParams = new URLSearchParams();
+  if (driverId != null && driverId !== '') {
+    searchParams.set('driver_id', driverId);
+  }
+
+  const url = `${API_BASE_URL}/v1/offers/${offerId}${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  const data = await response.json().catch(() => ({}));
+  const payload = data.data ?? data;
+
+  if (!response.ok) {
+    throw new Error(
+      (payload && (payload.error || payload.message)) ||
+        `Failed to fetch offer. Status: ${response.status}`
+    );
+  }
+
+  return payload as OfferRow;
+}
+
+export async function setDriverRateForOfferDriver(
+  offerId: number,
+  driverExternalId: string,
+  payload: SetDriverRatePayload
+): Promise<SetDriverRateResponse> {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is not configured');
+  }
+
+  const accessToken = await secureStorage.getItemAsync('accessToken');
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
+
+  const url = `${API_BASE_URL}/v1/offers/${offerId}/drivers/${encodeURIComponent(
+    driverExternalId
+  )}/rate`;
+
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      (data && (data.error || data.message)) ||
+        `Failed to set driver rate. Status: ${response.status}`
+    );
+  }
+
+  return data as SetDriverRateResponse;
+}
+
+export async function extendDriverTimeForOfferDriver(
+  offerId: number,
+  driverExternalId: string,
+  payload: ExtendDriverTimePayload
+): Promise<SetDriverRateResponse> {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is not configured');
+  }
+
+  const accessToken = await secureStorage.getItemAsync('accessToken');
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
+
+  const url = `${API_BASE_URL}/v1/offers/${offerId}/drivers/${encodeURIComponent(
+    driverExternalId
+  )}/extend-time`;
+
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      (data && (data.error || data.message)) ||
+        `Failed to extend driver time. Status: ${response.status}`
+    );
+  }
+
+  return data as SetDriverRateResponse;
+}
+
+export async function removeDriverFromOfferDriver(
+  offerId: number,
+  driverExternalId: string
+): Promise<RemoveDriverFromOfferResponse> {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is not configured');
+  }
+
+  const accessToken = await secureStorage.getItemAsync('accessToken');
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
+
+  const url = `${API_BASE_URL}/v1/offers/${offerId}/drivers/${encodeURIComponent(
+    driverExternalId
+  )}`;
+
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      (data && (data.error || data.message)) ||
+        `Failed to decline offer. Status: ${response.status}`
+    );
+  }
+
+  return data as RemoveDriverFromOfferResponse;
+}
+
+export interface ReturnDriverToOfferResponse {
+  success: boolean;
+  message?: string;
+  error?: string;
+}
+
+export async function returnDriverToOffer(
+  offerId: number,
+  driverExternalId: string
+): Promise<ReturnDriverToOfferResponse> {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is not configured');
+  }
+
+  const accessToken = await secureStorage.getItemAsync('accessToken');
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
+
+  const url = `${API_BASE_URL}/v1/offers/${offerId}/drivers/${encodeURIComponent(
+    driverExternalId
+  )}/return`;
+
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      (data && (data.error || data.message)) ||
+        `Failed to return driver. Status: ${response.status}`
+    );
+  }
+
+  const payload = data.data ?? data;
+  return {
+    success: payload?.success ?? true,
+    message: payload?.message,
+  };
+}
+
+export async function selectDriverForOffer(
+  offerId: number,
+  driverExternalId: string
+): Promise<SelectDriverForOfferResponse> {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is not configured');
+  }
+
+  const accessToken = await secureStorage.getItemAsync('accessToken');
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
+
+  const url = `${API_BASE_URL}/v1/offers/${offerId}/drivers/${encodeURIComponent(
+    driverExternalId
+  )}/select`;
+
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      (data && (data.error || data.message)) ||
+        `Failed to select driver. Status: ${response.status}`
+    );
+  }
+
+  const payload = data.data ?? data;
+  return {
+    success: payload?.success ?? true,
+    message: payload?.message,
+  };
+}
+
+export async function deactivateOffer(offerId: number): Promise<DeactivateOfferResponse> {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is not configured');
+  }
+
+  const accessToken = await secureStorage.getItemAsync('accessToken');
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
+
+  const response = await fetch(`${API_BASE_URL}/v1/offers/${offerId}/deactivate-offer`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      (data && (data.error || data.message)) ||
+        `Failed to deactivate offer. Status: ${response.status}`
+    );
+  }
+
+  const payload = data.data ?? data;
+  return { success: payload?.success ?? true };
 }

@@ -3,8 +3,10 @@ import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { View, StyleSheet, LogBox, Platform } from 'react-native';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
 import { BlurView } from 'expo-blur';
+import { Asset } from 'expo-asset';
 import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -509,6 +511,17 @@ export default function RootLayout() {
     'Mulish-Light': require('@/assets/fonts/Mulish-Light.ttf'),
   });
 
+  useEffect(() => {
+    Asset.loadAsync([
+      require('@/icons/hazmat.png'),
+      require('@/icons/stop.png'),
+      require('@/icons/unavailableOffer.png'),
+      require('@/icons/no_offers_found.png'),
+    ]).catch((assetError) => {
+      console.warn('[RootLayout] Failed to preload offer icons:', assetError);
+    });
+  }, []);
+
 
   useEffect(() => {
     if (error) {
@@ -530,17 +543,19 @@ export default function RootLayout() {
   }
 
   return (
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <WebSocketProvider>
-          <OnlineStatusProvider>
-          {/* Globally ensure push token is generated/registered for logged-in users too */}
-            <PushTokenRegistrar />
-            <RootLayoutNav />
-          </OnlineStatusProvider>
-        </WebSocketProvider>
-      </AuthProvider>
-    </QueryClientProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <WebSocketProvider>
+            <OnlineStatusProvider>
+            {/* Globally ensure push token is generated/registered for logged-in users too */}
+              <PushTokenRegistrar />
+              <RootLayoutNav />
+            </OnlineStatusProvider>
+          </WebSocketProvider>
+        </AuthProvider>
+      </QueryClientProvider>
+    </GestureHandlerRootView>
   );
 }
 

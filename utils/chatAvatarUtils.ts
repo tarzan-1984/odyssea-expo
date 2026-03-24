@@ -16,8 +16,8 @@ export function getChatAvatarSource(
     return null;
   }
 
-  // For DIRECT chats, always use the other participant's avatar
-  if (chatRoom.type === 'DIRECT' && chatRoom.participants.length === 2) {
+  // For DIRECT and OFFER chats, use the other participant's avatar
+  if ((chatRoom.type === 'DIRECT' || chatRoom.type === 'OFFER') && chatRoom.participants.length === 2) {
     const otherParticipant = chatRoom.participants.find(
       p => p.user.id !== currentUserId
     );
@@ -52,7 +52,7 @@ export function getChatDisplayName(
     return 'Unknown Chat';
   }
 
-  // For DIRECT chats, always show the other participant's name
+  // For DIRECT chats, show the other participant's name
   if (chatRoom.type === 'DIRECT' && chatRoom.participants.length === 2) {
     const otherParticipant = chatRoom.participants.find(
       p => p.user.id !== currentUserId

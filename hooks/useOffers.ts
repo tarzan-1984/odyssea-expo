@@ -41,10 +41,17 @@ export function useOffers(params?: UseOffersParams) {
     if (externalId) {
       baseParams.driver_id = externalId;
     }
-  } else if (isDispatcherLike) {
+  } else if (isAdmin) {
+    // Administrator: all offers from DB (no filter)
+    baseParams.user_id = undefined;
+    baseParams.driver_id = undefined;
+  } else {
+    // Dispatcher-like (DISPATCHER, DISPATCHER_TL, etc.): only offers they created
+    // user_id = external_user_id of creator, backend filters by externalUserId
     if (externalId) {
       baseParams.user_id = externalId;
     }
+    baseParams.driver_id = undefined;
   }
 
   const hasAccess = isDriver || isAdmin || isDispatcherLike;

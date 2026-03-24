@@ -20,6 +20,8 @@ export interface MarkerData {
   driverExternalId?: string | null;
   status?: string | null;
   /** Tooltip shown on marker click - address and time for route points */
+  markerColor?: string;
+  tooltipType?: string;
   tooltipAddress?: string;
   tooltipTime?: string;
 }
@@ -121,10 +123,13 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
           lng: marker.coordinate.longitude,
           anchor: marker.anchor || { x: 0.5, y: 0.5 },
           status: marker.driverStatus || null,
-          statusColor: isRouteMarker ? '#dc2626' : getStatusColor(marker.driverStatus),
+          statusColor: isRouteMarker
+            ? (marker.markerColor ?? '#dc2626')
+            : getStatusColor(marker.driverStatus),
           driverId: marker.driverId,
           driverExternalId: marker.driverExternalId,
           userStatus: marker.status || null,
+          tooltipType: marker.tooltipType ?? '',
           tooltipAddress: marker.tooltipAddress ?? '',
           tooltipTime: marker.tooltipTime ?? '',
           scaleMultiplier: isRouteMarker ? 1.35 : 1,
@@ -195,6 +200,7 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
               marker.addTo(window.map);
               if (markerData.tooltipAddress || markerData.tooltipTime) {
                 var lines = [];
+                if (markerData.tooltipType) lines.push(markerData.tooltipType);
                 if (markerData.tooltipAddress) lines.push(markerData.tooltipAddress);
                 if (markerData.tooltipTime) lines.push('Time: ' + markerData.tooltipTime);
                 marker.bindPopup('<div style="padding:6px;font-size:13px;line-height:1.4;">' + lines.join('<br>') + '</div>');

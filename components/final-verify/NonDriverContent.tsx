@@ -1,10 +1,12 @@
-import React, { useRef, useEffect, useMemo, useState, useCallback } from 'react';
-import { View, StyleSheet, ActivityIndicator, Alert } from 'react-native';
+import React, { useRef, useMemo, useState, useCallback } from 'react';
+import { View, StyleSheet, Alert } from 'react-native';
 import OSMMapView, { Region } from '@/components/maps/OSMMapView';
 import DriverInfoPopup from '@/components/maps/DriverInfoPopup';
+import DriversMapFiltersCard from '@/components/maps/DriversMapFiltersCard';
 import { colors } from '@/lib/colors';
-import { useDriversMarkersForMap } from '@/hooks/useDriversMarkersForMap';
+import { useDriversForMapInfinite } from '@/hooks/useDriversForMapInfinite';
 import { getUserById } from '@/app-api/users';
+import type { DriversMapSearchFilters } from '@/app-api/driversSearch';
 import { useChatRooms } from '@/hooks/useChatRooms';
 import { useAuth } from '@/context/AuthContext';
 import type { ChatRoom } from '@/components/ChatListItem';
@@ -25,10 +27,31 @@ function findDirectChatWithUser(rooms: ChatRoom[], myUserId: string, otherUserId
   });
 }
 
+const DEFAULT_FILTERS: DriversMapSearchFilters = {
+  statusFilter: '',
+  capabilitiesFilter: [],
+  addressFilter: '',
+  radiusFilter: '500',
+  locationFilter: 'USA',
+  role: 'administrator',
+};
+
+function driversToMarkers(drivers: { id: string; externalId: string | null; latitude: number; longitude: number; driverStatus: string | null; status?: string | null }[]) {
+  return drivers.map((d) => ({
+    coordinate: { latitude: d.latitude, longitude: d.longitude },
+    driverStatus: d.driverStatus,
+    driverId: d.id,
+    driverExternalId: d.externalId,
+    status: d.status,
+  }));
+}
+
 export default function NonDriverContent({ firstName }: NonDriverContentProps) {
   const router = useRouter();
   const mapRef = useRef<{ animateToRegion: (region: Region, duration?: number) => void }>(null);
-  const { markers, isLoading, isSyncing, totalDrivers } = useDriversMarkersForMap();
+  const [filters, setFilters] = useState<DriversMapSearchFilters>(DEFAULT_FILTERS);
+  const { drivers, isLoading, isFetching } = useDriversForMapInfinite(filters);
+  const markers = useMemo(() => driversToMarkers(drivers), [drivers]);
   const [selectedDriver, setSelectedDriver] = useState<any | null>(null);
   const [selectedDriverUserId, setSelectedDriverUserId] = useState<string | null>(null); // DB userId (NOT externalId)
   const [selectedDriverUserStatus, setSelectedDriverUserStatus] = useState<string | null>(null); // ACTIVE/INACTIVE
@@ -45,29 +68,6 @@ export default function NonDriverContent({ firstName }: NonDriverContentProps) {
     latitudeDelta: 7, // Much wider view (smaller zoom level)
     longitudeDelta: 7,
   };
-
-  // Log markers updates
-  useEffect(() => {
-    if (markers.length > 0) {
-      console.log(`[NonDriverContent] 🗺️ Map markers updated: ${markers.length} markers on map`);
-    }
-  }, [markers.length]);
-
-  useEffect(() => {
-    if (isLoading) {
-      console.log('[NonDriverContent] ⏳ Loading initial markers from cache...');
-    } else {
-      console.log(`[NonDriverContent] ✅ Initial load complete. Markers: ${markers.length}`);
-    }
-  }, [isLoading, markers.length]);
-
-  useEffect(() => {
-    if (isSyncing) {
-      console.log('[NonDriverContent] 🔄 Syncing drivers from backend...');
-    } else {
-      console.log(`[NonDriverContent] ✅ Sync complete. Total drivers: ${totalDrivers}`);
-    }
-  }, [isSyncing, totalDrivers]);
 
   const handleMarkerPress = async (driverData: {
     id: string;
@@ -200,7 +200,11 @@ export default function NonDriverContent({ firstName }: NonDriverContentProps) {
           onMarkerPress={handleMarkerPress}
         />
       </View>
-      
+
+      <View style={styles.filtersSection}>
+        <DriversMapFiltersCard filters={filters} onChange={setFilters} />
+      </View>
+
       <DriverInfoPopup
         visible={isPopupVisible}
         onClose={handleClosePopup}
@@ -221,16 +225,19 @@ const styles = StyleSheet.create({
   contentWrapper: {
     backgroundColor: colors.neutral.white,
     flex: 1,
-    position: "relative",
+    position: 'relative',
     zIndex: 5,
     marginTop: -20,
   },
   mapContainer: {
     flex: 1,
-    position: "relative",
-    zIndex: 5,
+    position: 'relative',
     overflow: 'hidden',
-    minHeight: 0,
+    minHeight: 200,
+  },
+  filtersSection: {
+    flexShrink: 0,
+    marginTop: -20,
   },
 });
 

@@ -107,6 +107,8 @@ export default function DeleteChatConfirmModal({
       return 'group chat';
     } else if (chatRoom.type === 'LOAD') {
       return 'load chat';
+    } else if (chatRoom.type === 'OFFER') {
+      return 'offer chat';
     }
 
     return '';
@@ -128,6 +130,8 @@ export default function DeleteChatConfirmModal({
       }
     } else if (chatRoom.type === 'LOAD') {
       return 'Are you sure you want to delete this load chat? This will permanently delete the chat and archive all messages for all participants.';
+    } else if (chatRoom.type === 'OFFER') {
+      return 'Are you sure you want to delete this offer chat? The conversation will be hidden for you. If the other person sends a message, the chat will reappear.';
     }
 
     return '';
@@ -160,13 +164,16 @@ export default function DeleteChatConfirmModal({
   const getChatDisplayName = (): string => {
     if (!chatRoom) return 'Unknown Chat';
 
-    if (chatRoom.type === 'DIRECT' && chatRoom.participants.length === 2) {
-      // For direct chats, show the other participant's name
+    if ((chatRoom.type === 'DIRECT' || chatRoom.type === 'OFFER') && chatRoom.participants.length === 2) {
+      // For direct and offer chats, show the other participant's name or chat name
       const otherParticipant = chatRoom.participants.find(p => p.userId !== currentUser?.id);
+      if (chatRoom.type === 'OFFER' && chatRoom.name) {
+        return chatRoom.name;
+      }
       if (otherParticipant && otherParticipant.user) {
         return `${otherParticipant.user.firstName} ${otherParticipant.user.lastName}`;
       }
-      return 'Direct Chat';
+      return chatRoom.type === 'OFFER' ? 'Offer Chat' : 'Direct Chat';
     }
 
     return chatRoom.name || 'Group Chat';

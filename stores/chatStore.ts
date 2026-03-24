@@ -4,8 +4,8 @@ import type { ChatRoom, Message } from '@/components/ChatListItem';
 type ChatState = {
   chatRooms: ChatRoom[];
   messagesByRoom: Record<string, Message[]>;
-  messagesTab: 'chats' | 'shipments';
-  setMessagesTab: (tab: 'chats' | 'shipments') => void;
+  messagesTab: 'chats' | 'shipments' | 'offers';
+  setMessagesTab: (tab: 'chats' | 'shipments' | 'offers') => void;
   setChatRooms: (rooms: ChatRoom[]) => void;
   mergeChatRooms: (rooms: ChatRoom[]) => void;
   updateChatRoom: (chatRoomId: string, updates: Partial<ChatRoom>) => void;

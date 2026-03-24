@@ -52,7 +52,7 @@ export interface ChatRoomParticipant {
 export interface ChatRoom {
   id: string;
   name?: string;
-  type: 'DIRECT' | 'GROUP' | 'LOAD';
+  type: 'DIRECT' | 'GROUP' | 'LOAD' | 'OFFER';
   avatar?: string;
   participants: ChatRoomParticipant[];
   lastMessage?: Message;
@@ -61,6 +61,7 @@ export interface ChatRoom {
   isPinned?: boolean;
   adminId?: string;
   loadId?: string;
+  offerId?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -202,10 +203,9 @@ export default function ChatListItem({
     }
   };
   // Get display name for the chat
-  // For DIRECT chats, always show the other participant's name
+  // For DIRECT and OFFER chats, show the other participant's (interlocutor's) name
   const getDisplayName = (): string => {
-    // For DIRECT chats, always show the other participant's name
-    if (chatRoom.type === 'DIRECT' && chatRoom.participants.length === 2) {
+    if ((chatRoom.type === 'DIRECT' || chatRoom.type === 'OFFER') && chatRoom.participants.length === 2) {
       const otherParticipant = chatRoom.participants.find(
         p => p.user.id !== currentUserId
       );
@@ -229,6 +229,19 @@ export default function ChatListItem({
     }
 
     return 'Unknown Chat';
+  };
+
+  // For OFFER chats: parse chat name to get offer title and id for subtitle
+  // Chat name format: "DriverName (id: offerId)\npickUp - delivery"
+  const getOfferSubtitle = (): string | null => {
+    if (chatRoom.type !== 'OFFER' || !chatRoom.name) return null;
+    const lines = chatRoom.name.trim().split('\n');
+    const idMatch = chatRoom.name.match(/\(id:\s*(\d+)\)/);
+    const offerIdVal = chatRoom.offerId ?? (idMatch ? parseInt(idMatch[1], 10) : null);
+    const routeStr = lines.length > 1 ? lines[1].trim() : '';
+    const offerName = routeStr || 'Offer';
+    const idPart = offerIdVal != null ? ` (id: ${offerIdVal})` : '';
+    return `"${offerName}${idPart}"`;
   };
 
   // Get role from the participant
@@ -336,10 +349,9 @@ export default function ChatListItem({
   };
 
   // Get avatar source
-  // For DIRECT chats, always use the other participant's avatar
+  // For DIRECT and OFFER chats, use the other participant's avatar
   const getAvatarSource = () => {
-    // For DIRECT chats, always use the other participant's avatar
-    if (chatRoom.type === 'DIRECT' && chatRoom.participants.length === 2) {
+    if ((chatRoom.type === 'DIRECT' || chatRoom.type === 'OFFER') && chatRoom.participants.length === 2) {
       const otherParticipant = chatRoom.participants.find(
         p => p.user.id !== currentUserId
       );
@@ -413,6 +425,7 @@ export default function ChatListItem({
   };
 
   const displayName = getDisplayName();
+  const offerSubtitle = getOfferSubtitle();
   const role = getRole();
   const avatarSource = getAvatarSource();
   const initials = getInitials();
@@ -544,7 +557,7 @@ export default function ChatListItem({
           </View>
         )}
         {/* Online status indicator */}
-        {status === 'online' && chatRoom.type === 'DIRECT' ? (
+        {status === 'online' && (chatRoom.type === 'DIRECT' || chatRoom.type === 'OFFER') ? (
           <View style={styles.statusIndicator} />
         ) : null}
         {/* Unread Count Badge */}
@@ -559,11 +572,16 @@ export default function ChatListItem({
 
       {/* Content */}
       <View style={styles.contentContainer}>
-        {/* Name and Timestamp Row */}
+        {/* Name Row */}
         <Text style={styles.name} numberOfLines={1}>
           {displayName}
         </Text>
-
+        {/* Offer subtitle: "Offer Name (id: X)" - only for OFFER chats */}
+        {offerSubtitle ? (
+          <Text style={styles.offerSubtitle} numberOfLines={1}>
+            {offerSubtitle}
+          </Text>
+        ) : null}
         {/* Last Message Row */}
         <View style={styles.messageRow}>
           <Text style={styles.lastMessage} numberOfLines={1}>
@@ -680,7 +698,13 @@ const styles = StyleSheet.create({
     fontSize: fp(16),
     fontFamily: fonts['600'],
     color: colors.primary.blue,
-    marginBottom: rem(10),
+    marginBottom: rem(4),
+  },
+  offerSubtitle: {
+    fontSize: fp(12),
+    fontFamily: fonts['400'],
+    color: colors.neutral.darkGrey,
+    marginBottom: rem(6),
   },
   timestamp: {
     fontSize: fp(10),
@@ -711,7 +735,8 @@ const styles = StyleSheet.create({
   },
   rightSection: {
     alignItems: 'flex-end',
-    minWidth: rem(70),
+    minWidth: rem(36),
+    flexShrink: 0,
   },
   roleTag: {
     paddingHorizontal: rem(10),

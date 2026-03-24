@@ -50,6 +50,7 @@
     "expo-image": "~3.0.10",
     "expo-image-picker": "^17.0.8",
     "expo-intent-launcher": "^13.0.8",
+    "expo-linear-gradient": "^55.0.9",
     "expo-linking": "~8.0.8",
     "expo-local-authentication": "~17.0.7",
     "expo-location": "~19.0.7",
