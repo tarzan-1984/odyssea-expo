@@ -27,6 +27,7 @@ import { sendLocationUpdateToTMS, sendLocationUpdateToBackendUser, getLocalIsoSt
 import { fileLogger } from '@/utils/fileLogger';
 import { eventBus } from '@/services/EventBus';
 import { updateUser } from '@/app-api/users';
+import { saveLastSuccessfulReverseGeocodeTimestamp } from '@/constants/reverseGeocodeThrottle';
 
 /**
  * DriverContent - Location tracking component for DRIVER role users
@@ -1450,6 +1451,7 @@ export default function DriverContent() {
         const reverseGeocode = await reverseGeocodeWithDeviceFallback({ latitude, longitude });
         if (reverseGeocode && reverseGeocode.length > 0) {
           const geo = reverseGeocode[0];
+          await saveLastSuccessfulReverseGeocodeTimestamp();
           postalCode = (geo.postalCode || '').trim();
           city = geo.city || geo.subregion || geo.district || undefined;
           state = geo.region ? geo.region.split(' ')[0] : undefined;

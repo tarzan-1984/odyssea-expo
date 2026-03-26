@@ -7,6 +7,7 @@ import { registerForPushNotificationsAsync, registerPushTokenToBackend } from '@
 import { syncDriversForMapAfterLogin } from '@/services/DriversMapService';
 import { getDriverStatus } from '@/app-api/users';
 import { fileLogger } from '@/utils/fileLogger';
+import { LAST_SUCCESSFUL_REVERSE_GEOCODE_UNIX_KEY } from '@/constants/reverseGeocodeThrottle';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 
@@ -670,6 +671,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await AsyncStorage.removeItem('@user_location');
       await AsyncStorage.removeItem('@pending_location_update');
       await AsyncStorage.removeItem('@location_last_update');
+      await AsyncStorage.removeItem(LAST_SUCCESSFUL_REVERSE_GEOCODE_UNIX_KEY);
       
       // Clear user profile data (status, zip, date)
       await AsyncStorage.removeItem('@user_status');

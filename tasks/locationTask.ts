@@ -4,6 +4,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { secureStorage } from '@/utils/secureStorage';
 import { fileLogger } from '@/utils/fileLogger';
 import { Platform, AppState } from 'react-native';
+import {
+  LAST_SUCCESSFUL_REVERSE_GEOCODE_UNIX_KEY,
+  getReverseGeocodeIntervalSecondsForDriverStatus,
+  saveLastSuccessfulReverseGeocodeTimestamp,
+} from '@/constants/reverseGeocodeThrottle';
 
 const LOCATION_TASK_NAME = 'background-location-task';
 // Interval for desired background location updates.
@@ -150,49 +155,109 @@ try {
       console.log(`📍 [LocationTask] Processing location update...`);
       
       try {
-        // Perform reverse geocoding to get zip, city, state from new coordinates
-        // Uses XMLHttpRequest (works in headless JS on Android) - same as locationApi.ts
-        // IMPORTANT: Add timeout to prevent blocking - if geocoding fails, continue with saved values
+        // Nominatim in background only for loaded_enroute & available (throttled).
+        // Coordinates still update every tick; other statuses use cached ZIP/city/state.
         let postalCode = '';
         let city = '';
         let state = '';
-        
-        // Try reverse geocoding with timeout (3 seconds max) to prevent blocking
-        try {
-          // Use reverse geocoding with timeout to prevent blocking
-          const reverseGeocodePromise = (async () => {
-            try {
-              const reverseGeocodeModule = require('@/utils/geocoding');
-              const reverseGeocodeAsync = reverseGeocodeModule.reverseGeocodeAsync;
-              if (!reverseGeocodeAsync) {
+
+        const savedStatusForGeocode = await AsyncStorage.getItem('@user_status');
+        const intervalSec =
+          getReverseGeocodeIntervalSecondsForDriverStatus(savedStatusForGeocode);
+        const nowUnix = Math.floor(Date.now() / 1000);
+        let shouldRunReverseGeocode = false;
+
+        const statusLabel =
+          savedStatusForGeocode?.trim() || '(missing in storage — edge case)';
+
+        if (intervalSec === null) {
+          console.log(
+            `[LocationTask] Nominatim skipped (status ${statusLabel}) — background reverse geocode only for loaded_enroute & available; using cached ZIP/city/state`
+          );
+        } else {
+          const lastStr = await AsyncStorage.getItem(
+            LAST_SUCCESSFUL_REVERSE_GEOCODE_UNIX_KEY
+          );
+          const lastUnix = lastStr ? parseInt(lastStr, 10) : NaN;
+          if (!Number.isFinite(lastUnix)) {
+            shouldRunReverseGeocode = true;
+            console.log(
+              `[LocationTask] Nominatim: no prior success timestamp — running reverse geocode`
+            );
+          } else if (nowUnix - lastUnix >= intervalSec) {
+            shouldRunReverseGeocode = true;
+            console.log(
+              `[LocationTask] Nominatim: interval elapsed (${nowUnix - lastUnix}s >= ${intervalSec}s for ${statusLabel})`
+            );
+          } else {
+            console.log(
+              `[LocationTask] Nominatim throttled (${nowUnix - lastUnix}s < ${intervalSec}s for ${statusLabel}) — using cache`
+            );
+          }
+        }
+
+        const loadZipCityStateFromCache = async () => {
+          const z = await AsyncStorage.getItem('@user_zip');
+          if (z) postalCode = z;
+          try {
+            const locJson = await AsyncStorage.getItem(USER_LOCATION_KEY);
+            if (locJson) {
+              const loc = JSON.parse(locJson) as {
+                zipCode?: string;
+                city?: string;
+                state?: string;
+              };
+              if (loc.zipCode && !postalCode) postalCode = loc.zipCode;
+              if (loc.city) city = loc.city;
+              if (loc.state) state = loc.state;
+            }
+          } catch {
+            // ignore
+          }
+        };
+
+        if (!shouldRunReverseGeocode) {
+          await loadZipCityStateFromCache();
+        } else {
+          try {
+            const reverseGeocodePromise = (async () => {
+              try {
+                const reverseGeocodeModule = require('@/utils/geocoding');
+                const reverseGeocodeAsync = reverseGeocodeModule.reverseGeocodeAsync;
+                if (!reverseGeocodeAsync) {
+                  return [];
+                }
+                return await reverseGeocodeAsync({ latitude, longitude });
+              } catch {
                 return [];
               }
-              return await reverseGeocodeAsync({ latitude, longitude });
-            } catch (requireError) {
-              return [];
+            })();
+
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              setTimeout(() => reject(new Error('Geocoding timeout')), 3000);
+            });
+
+            const reverseGeocode = await Promise.race([
+              reverseGeocodePromise,
+              timeoutPromise,
+            ]).catch(() => [] as Awaited<typeof reverseGeocodePromise>);
+
+            if (reverseGeocode && reverseGeocode.length > 0) {
+              const geo = reverseGeocode[0];
+              postalCode = geo.postalCode || '';
+              city = geo.city || geo.subregion || geo.district || '';
+              state = geo.region ? geo.region.split(' ')[0] : '';
+              await saveLastSuccessfulReverseGeocodeTimestamp();
+            } else {
+              await loadZipCityStateFromCache();
             }
-          })();
-          
-          // Race between geocoding and timeout (3 seconds - shorter to avoid blocking)
-          const timeoutPromise = new Promise<never>((_, reject) => {
-            setTimeout(() => reject(new Error('Geocoding timeout')), 3000);
-          });
-          
-          const reverseGeocode = await Promise.race([reverseGeocodePromise, timeoutPromise]).catch(() => {
-            return [];
-          });
-          
-          if (reverseGeocode && reverseGeocode.length > 0) {
-            const geo = reverseGeocode[0];
-            postalCode = geo.postalCode || '';
-            city = geo.city || geo.subregion || geo.district || '';
-            state = geo.region ? geo.region.split(' ')[0] : '';
+          } catch (geoError) {
+            fileLogger.error('LocationTask', 'GEOCODING_ERROR', {
+              error:
+                geoError instanceof Error ? geoError.message : String(geoError),
+            });
+            await loadZipCityStateFromCache();
           }
-        } catch (geoError) {
-          fileLogger.error('LocationTask', 'GEOCODING_ERROR', {
-            error: geoError instanceof Error ? geoError.message : String(geoError),
-          });
-          // Continue execution - don't let geocoding errors block location updates
         }
 
         // Double-check if automatic location sharing is still enabled (user might have disabled it during geocoding)
