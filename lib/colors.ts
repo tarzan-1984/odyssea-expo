@@ -22,6 +22,8 @@ export const colors = {
   neutral: {
     black: '#000000',       // Main text color
     white: '#ffffff',       // Background and text on colored backgrounds
+    /** Secondary labels and input placeholders (readable on white) */
+    grey: '#6B7280',
     darkGrey: '#8E8E93',    // Placeholder text and secondary text
     mediumGrey: '#C7C7CC',  // Disabled buttons and inactive elements
     lightGrey: '#E0E0E0',   // Borders and dividers

@@ -10,6 +10,14 @@ import { useChatStore } from '@/stores/chatStore';
 import { getChatAvatarSource, getChatDisplayName } from '@/utils/chatAvatarUtils';
 import { ChatRoom } from '@/components/ChatListItem';
 
+/** Cold start: user tapped an offer-related push before navigation was ready */
+export const PENDING_OFFERS_NAVIGATION_KEY = '@pending_offers_navigation';
+
+function isOfferRelatedPushData(data: Record<string, unknown> | null | undefined): boolean {
+  const t = data?.type;
+  return typeof t === 'string' && t.startsWith('offer_');
+}
+
 /**
  * Get chat room avatar URL for notification
  * Uses the same logic as ChatListItem component
@@ -410,27 +418,32 @@ export function addNotificationListeners() {
 	});
 	
 	const responseSub = Notifications.addNotificationResponseReceivedListener(async (response) => {
-		// Handle tap on notification - navigate to chat room
 		try {
-			const data = response.notification.request.content.data as any;
+			const data = response.notification.request.content.data as Record<string, unknown> | undefined;
 			const chatRoomId = data?.chatRoomId as string | undefined;
-			
+
 			if (chatRoomId) {
 				console.log('[NotificationsService] Notification tapped, navigating to chat:', chatRoomId);
-				
-				// Save chatRoomId to AsyncStorage for navigation after app loads (if app was closed)
 				try {
-					const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
 					await AsyncStorage.setItem('@pending_chat_navigation', chatRoomId);
 					console.log('[NotificationsService] Saved pending chat navigation:', chatRoomId);
 				} catch (storageError) {
 					console.warn('[NotificationsService] Failed to save pending navigation:', storageError);
 				}
-				
-				// Emit event that can be listened to by navigation components
-				// This works if app is already running
 				const { eventBus, AppEvents } = await import('@/services/EventBus');
 				eventBus.emit(AppEvents.NavigateToChat, { chatRoomId });
+				return;
+			}
+
+			if (isOfferRelatedPushData(data)) {
+				console.log('[NotificationsService] Offer push tapped → Work / Offers');
+				try {
+					await AsyncStorage.setItem(PENDING_OFFERS_NAVIGATION_KEY, '1');
+				} catch (storageError) {
+					console.warn('[NotificationsService] Failed to save pending offers navigation:', storageError);
+				}
+				const { eventBus, AppEvents } = await import('@/services/EventBus');
+				eventBus.emit(AppEvents.NavigateToOffers, {});
 			}
 		} catch (e) {
 			console.error('[NotificationsService] Failed to handle notification tap:', e);

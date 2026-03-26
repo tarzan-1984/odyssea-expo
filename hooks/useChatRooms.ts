@@ -179,6 +179,8 @@ export const useChatRooms = (): UseChatRoomsReturn => {
                   unreadCount: finalUnreadCount,
                   lastMessage: storeRoom.lastMessage || cachedRoom.lastMessage,
                   updatedAt: storeRoom.updatedAt || cachedRoom.updatedAt,
+                  isMuted: storeRoom.isMuted,
+                  isPinned: storeRoom.isPinned,
                 } as ChatRoom;
               }
               // If no store room (component just mounted), use cached data as-is
@@ -217,6 +219,8 @@ export const useChatRooms = (): UseChatRoomsReturn => {
                     unreadCount: finalUnreadCount,
                     lastMessage: storeRoom.lastMessage || cachedRoom.lastMessage,
                     updatedAt: storeRoom.updatedAt || cachedRoom.updatedAt,
+                    isMuted: storeRoom.isMuted,
+                    isPinned: storeRoom.isPinned,
                   } as ChatRoom;
                 }
                 // If no store room (component just mounted), use cached data as-is
@@ -297,6 +301,8 @@ export const useChatRooms = (): UseChatRoomsReturn => {
                     unreadCount: finalUnreadCount,
                     lastMessage: storeRoom.lastMessage || cachedRoom.lastMessage,
                     updatedAt: storeRoom.updatedAt || cachedRoom.updatedAt,
+                    isMuted: storeRoom.isMuted,
+                    isPinned: storeRoom.isPinned,
                   } as ChatRoom;
                 }
                 // If no store room, use cached data as-is (preserves unreadCount from cache)

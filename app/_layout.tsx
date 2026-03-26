@@ -24,6 +24,7 @@ import { flushLocationQueue, LOCATION_TASK_NAME } from '@/tasks/locationTask';
 import * as TaskManager from 'expo-task-manager';
 // Ensure notifications handler is always registered regardless of auth flow
 import '@/services/NotificationsService';
+import { PENDING_OFFERS_NAVIGATION_KEY } from '@/services/NotificationsService';
 import PushTokenRegistrar from '@/components/notifications/PushTokenRegistrar';
 
 // Prevent the splash screen from auto-hiding
@@ -104,10 +105,17 @@ function RootLayoutNav() {
         router.replace(`/chat/${data.chatRoomId}` as any);
       }
     };
-    
+    const handleNavigateToOffers = () => {
+      if (authState.isAuthenticated) {
+        router.replace('/work' as any);
+      }
+    };
+
     eventBus.on(AppEvents.NavigateToChat, handleNavigateToChat);
+    eventBus.on(AppEvents.NavigateToOffers, handleNavigateToOffers);
     return () => {
       eventBus.off(AppEvents.NavigateToChat, handleNavigateToChat);
+      eventBus.off(AppEvents.NavigateToOffers, handleNavigateToOffers);
     };
   }, [authState.isAuthenticated, router]);
 
@@ -118,12 +126,14 @@ function RootLayoutNav() {
     const checkPendingNavigation = async () => {
       try {
         const pendingChatId = await AsyncStorage.getItem('@pending_chat_navigation');
-        
+        const pendingOffers = await AsyncStorage.getItem(PENDING_OFFERS_NAVIGATION_KEY);
+
         if (pendingChatId) {
-          // Clear the pending navigation
           await AsyncStorage.removeItem('@pending_chat_navigation');
-          // Navigate to chat
           router.replace(`/chat/${pendingChatId}` as any);
+        } else if (pendingOffers) {
+          await AsyncStorage.removeItem(PENDING_OFFERS_NAVIGATION_KEY);
+          router.replace('/work' as any);
         }
       } catch (error) {
         console.error('[RootLayoutNav] Failed to check pending navigation:', error);

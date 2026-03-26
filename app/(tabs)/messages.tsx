@@ -216,8 +216,8 @@ export default function MessagesScreen() {
         updateChatRoom(chatRoomId, { isMuted: true });
       });
 
-      // Refresh chat list to update UI
-      await loadChatRooms();
+      // Force API refresh so mute state is not overwritten by stale cache merge (see useChatRooms)
+      await loadChatRooms(true);
     } catch (error) {
       console.error('Failed to mute all chats:', error);
     }
@@ -249,8 +249,7 @@ export default function MessagesScreen() {
         updateChatRoom(chatRoomId, { isMuted: false });
       });
 
-      // Refresh chat list to update UI
-      await loadChatRooms();
+      await loadChatRooms(true);
     } catch (error) {
       console.error('Failed to unmute all chats:', error);
     }

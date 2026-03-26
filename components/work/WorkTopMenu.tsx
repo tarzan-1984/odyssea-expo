@@ -3,21 +3,39 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { colors, fonts, rem, fp } from '@/lib';
 
-type WorkMenuPage = 'loads' | 'offers';
+export type WorkMenuPage = 'loads' | 'offers' | 'drivers';
 
 interface WorkTopMenuProps {
   currentPage: WorkMenuPage;
   /** When true, removes bottom margin (e.g. when status filter buttons follow) */
   compactBottom?: boolean;
+  /** Show Drivers tab (DISPATCHER*, EXPEDITE_MANAGER, tracking roles, ADMINISTRATOR — not DRIVER) */
+  showDriversTab?: boolean;
 }
 
-export default function WorkTopMenu({ currentPage, compactBottom }: WorkTopMenuProps) {
+export default function WorkTopMenu({
+  currentPage,
+  compactBottom,
+  showDriversTab = false,
+}: WorkTopMenuProps) {
   const router = useRouter();
+  const three = showDriversTab;
+
+  const underlineStyle =
+    currentPage === 'loads'
+      ? three
+        ? styles.underlineThird0
+        : styles.underlineLeft
+      : currentPage === 'offers'
+        ? three
+          ? styles.underlineThird1
+          : styles.underlineRight
+        : styles.underlineThird2;
 
   return (
     <View style={[styles.header, !compactBottom && styles.headerWithMargin]}>
       <TouchableOpacity
-        style={[styles.link, styles.linkHalf]}
+        style={[styles.link, three ? styles.linkThird : styles.linkHalf]}
         onPress={() => {
           if (currentPage !== 'loads') {
             router.push('/work/loads');
@@ -30,7 +48,7 @@ export default function WorkTopMenu({ currentPage, compactBottom }: WorkTopMenuP
       </TouchableOpacity>
 
       <TouchableOpacity
-        style={[styles.link, styles.linkHalf]}
+        style={[styles.link, three ? styles.linkThird : styles.linkHalf]}
         onPress={() => {
           if (currentPage !== 'offers') {
             router.push('/work');
@@ -42,12 +60,22 @@ export default function WorkTopMenu({ currentPage, compactBottom }: WorkTopMenuP
         </Text>
       </TouchableOpacity>
 
-      <View
-        style={[
-          styles.underline,
-          currentPage === 'loads' ? styles.underlineLeft : styles.underlineRight,
-        ]}
-      />
+      {three ? (
+        <TouchableOpacity
+          style={[styles.link, styles.linkThird]}
+          onPress={() => {
+            if (currentPage !== 'drivers') {
+              router.push('/work/drivers');
+            }
+          }}
+        >
+          <Text style={[styles.linkText, currentPage === 'drivers' && styles.linkTextActive]}>
+            DRIVERS
+          </Text>
+        </TouchableOpacity>
+      ) : null}
+
+      <View style={[styles.underline, underlineStyle]} />
     </View>
   );
 }
@@ -65,14 +93,16 @@ const styles = StyleSheet.create({
     marginBottom: rem(8),
   },
   link: {
-    flex: 1,
     paddingVertical: rem(14),
     paddingBottom: rem(16),
-    paddingHorizontal: rem(12),
+    paddingHorizontal: rem(8),
     justifyContent: 'center',
     alignItems: 'center',
   },
   linkHalf: {
+    flex: 1,
+  },
+  linkThird: {
     flex: 1,
   },
   underline: {
@@ -83,11 +113,23 @@ const styles = StyleSheet.create({
   },
   underlineLeft: {
     left: 0,
-    right: '50%',
+    width: '50%',
   },
   underlineRight: {
     left: '50%',
-    right: 0,
+    width: '50%',
+  },
+  underlineThird0: {
+    left: 0,
+    width: '33.33%',
+  },
+  underlineThird1: {
+    left: '33.33%',
+    width: '33.33%',
+  },
+  underlineThird2: {
+    left: '66.66%',
+    width: '33.34%',
   },
   linkText: {
     fontSize: fp(20),

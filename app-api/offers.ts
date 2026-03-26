@@ -97,6 +97,25 @@ export interface DeactivateOfferResponse {
   error?: string;
 }
 
+export interface CreateOfferPayload {
+  externalId?: string;
+  driverIds: string[];
+  route: OfferRoutePoint[];
+  loadedMiles: number;
+  driverEmptyMiles?: Record<string, number>;
+  weight: number;
+  commodity?: string;
+  specialRequirements?: string[];
+  notes?: string;
+}
+
+export interface CreateOfferResult {
+  success: boolean;
+  data?: { id: number; [key: string]: unknown };
+  error?: string;
+  errors?: string[];
+}
+
 /** First and last locations from route for short display (e.g. "Wauseon, Ohio 43567 → Los Angeles, California 90003") */
 export function routeSummary(
   route: Array<{ location?: string }> | null | undefined
@@ -441,6 +460,49 @@ export async function selectDriverForOffer(
   return {
     success: payload?.success ?? true,
     message: payload?.message,
+  };
+}
+
+/**
+ * Create offer (Nest POST /v1/offers) — same payload as Next.js /api/offers/create proxy.
+ */
+export async function createOffer(payload: CreateOfferPayload): Promise<CreateOfferResult> {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is not configured');
+  }
+
+  const accessToken = await secureStorage.getItemAsync('accessToken');
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
+
+  const response = await fetch(`${API_BASE_URL}/v1/offers`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (response.ok) {
+    const inner = (data as { data?: unknown }).data ?? data;
+    return {
+      success: true,
+      data: inner as { id: number },
+    };
+  }
+
+  const err = data as { message?: string; error?: string; errors?: string[] };
+  const errorMsg = err?.message ?? err?.error ?? 'Failed to create offer';
+  const details =
+    Array.isArray(err?.errors) && err.errors.length > 0 ? err.errors.join('. ') : '';
+  return {
+    success: false,
+    error: details ? `${errorMsg}: ${details}` : errorMsg,
+    errors: err?.errors,
   };
 }
 

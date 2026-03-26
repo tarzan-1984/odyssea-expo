@@ -6,13 +6,15 @@ import { colors, fonts, rem, fp } from '@/lib';
 import BottomNavigation from '@/components/navigation/BottomNavigation';
 import WorkTopMenu from '@/components/work/WorkTopMenu';
 import { useAuth } from '@/context/AuthContext';
-import { canAccessWorkTab } from '@/constants/roleAccess';
+import { canAccessWorkTab, canAccessDriversAndOffers } from '@/constants/roleAccess';
 
 export default function LoadsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { authState } = useAuth();
-  const canAccess = canAccessWorkTab(authState.user?.role);
+  const role = authState.user?.role?.trim().toUpperCase() ?? '';
+  const canAccess = canAccessWorkTab(role);
+  const showDriversTab = canAccessDriversAndOffers(role);
 
   useEffect(() => {
     if (authState.isAuthenticated && !canAccess) {
@@ -25,7 +27,7 @@ export default function LoadsScreen() {
       <View style={styles.screenContent}>
         <View style={{ height: insets.top, backgroundColor: colors.primary.violet }} />
         <View style={styles.container}>
-          <WorkTopMenu currentPage="loads" />
+          <WorkTopMenu currentPage="loads" showDriversTab={showDriversTab} />
 
           <View style={styles.content}>
             <View style={styles.placeholder}>

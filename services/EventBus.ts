@@ -23,6 +23,8 @@ export const eventBus = new EventBus();
 // App event names
 export const AppEvents = {
 	NavigateToChat: 'navigate-to-chat',
+	/** Open Work → Offers list (e.g. after tapping an offer-related push) */
+	NavigateToOffers: 'navigate-to-offers',
   ChatRoomAdded: 'chatRoomAdded',
   ChatRoomUpdated: 'chatRoomUpdated',
   WebSocketReconnected: 'webSocketReconnected',

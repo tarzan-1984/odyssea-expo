@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -25,8 +25,11 @@ import { useWebSocketConnectionCheck } from '@/hooks/useWebSocketConnectionCheck
 import OfferCard from '@/components/offers/OfferCard';
 import { OfferRow, deactivateOffer, removeDriverFromOfferDriver } from '@/app-api/offers';
 import WorkTopMenu from '@/components/work/WorkTopMenu';
-import { canAccessWorkTab, canAccessDriversAndOffers } from '@/constants/roleAccess';
-import { useEffect } from 'react';
+import OffersAdminUserFilter from '@/components/offers/OffersAdminUserFilter';
+import {
+  canAccessWorkTab,
+  canAccessDriversAndOffers,
+} from '@/constants/roleAccess';
 
 export default function OffersScreen() {
   useWebSocketConnectionCheck();
@@ -37,6 +40,7 @@ export default function OffersScreen() {
   const role = authState.user?.role?.trim().toUpperCase() ?? '';
   const isDriver = role === 'DRIVER';
   const isStaff = canAccessDriversAndOffers(role);
+  const isAdmin = role === 'ADMINISTRATOR';
 
   // Redirect if user doesn't have access (staff or driver only)
   useEffect(() => {
@@ -46,9 +50,11 @@ export default function OffersScreen() {
   }, [authState.isAuthenticated, role, router]);
 
   const driverExternalId = (authState.user?.externalId ?? '').trim();
-  const [decliningOfferId, setDecliningOfferId] = React.useState<number | null>(null);
-  const [deactivatingOfferId, setDeactivatingOfferId] = React.useState<number | null>(null);
-  const [statusFilter, setStatusFilter] = React.useState<'active' | 'assigned' | 'inactive'>('active');
+  const [decliningOfferId, setDecliningOfferId] = useState<number | null>(null);
+  const [deactivatingOfferId, setDeactivatingOfferId] = useState<number | null>(null);
+  const [statusFilter, setStatusFilter] = useState<'active' | 'assigned' | 'inactive'>('active');
+  /** Admin-only: filter offers by creator (external_user_id), mirrors Next.js "User" filter */
+  const [adminOffersUserId, setAdminOffersUserId] = useState('');
 
   const {
     data,
@@ -60,6 +66,7 @@ export default function OffersScreen() {
   } = useOffers({
     enabled: isDriver || isStaff,
     status: statusFilter,
+    user_id: isAdmin ? adminOffersUserId : undefined,
   });
 
   const rawOffers = data?.pages?.flatMap((page) => page.results) ?? [];
@@ -150,7 +157,11 @@ export default function OffersScreen() {
       <View style={styles.screenContent}>
         <View style={{ height: insets.top, backgroundColor: colors.primary.violet }} />
         <View style={styles.container}>
-          <WorkTopMenu currentPage="offers" compactBottom={isDriver || isStaff} />
+          <WorkTopMenu
+            currentPage="offers"
+            compactBottom={isDriver || isStaff}
+            showDriversTab={isStaff}
+          />
 
           {(isDriver || isStaff) && (
             <View style={styles.statusFilterRow}>
@@ -203,6 +214,10 @@ export default function OffersScreen() {
                 </Text>
               </TouchableOpacity>
             </View>
+          )}
+
+          {isAdmin && (
+            <OffersAdminUserFilter value={adminOffersUserId} onChange={setAdminOffersUserId} />
           )}
 
           <View style={styles.content}>

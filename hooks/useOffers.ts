@@ -28,37 +28,37 @@ export function useOffers(params?: UseOffersParams) {
   const limit = params?.limit ?? 20;
   // Drivers must see both active and inactive offers (inactive shown with red border)
   const defaultStatus = isDriver ? undefined : (params?.status ?? 'active');
+  const externalIdTrimmed = externalId.trim();
+
+  // Set user_id / driver_id only inside role branches so staff never inherit a stray params.user_id
+  // and never call the API without user_id (backend would return all offers — wrong for dispatchers).
   const baseParams: Omit<GetOffersParams, 'page'> = {
     limit,
     status: params?.status ?? defaultStatus,
     sort_order: params?.sort_order ?? 'action_time_asc',
     is_expired: params?.is_expired,
-    user_id: params?.user_id,
-    driver_id: params?.driver_id,
   };
 
   if (isDriver) {
-    if (externalId) {
-      baseParams.driver_id = externalId;
-    }
-  } else if (isAdmin) {
-    // Administrator: all offers from DB (no filter)
+    baseParams.driver_id = externalIdTrimmed || undefined;
     baseParams.user_id = undefined;
+  } else if (isAdmin) {
+    // Administrator: all offers, or filter by creator external id (same as Next.js User filter)
+    const uid = (params?.user_id ?? '').trim();
+    baseParams.user_id = uid !== '' ? uid : undefined;
     baseParams.driver_id = undefined;
   } else {
-    // Dispatcher-like (DISPATCHER, DISPATCHER_TL, etc.): only offers they created
-    // user_id = external_user_id of creator, backend filters by externalUserId
-    if (externalId) {
-      baseParams.user_id = externalId;
-    }
+    // Dispatcher-like: only offers they created (external_user_id on offer = their TMS external id)
+    baseParams.user_id = externalIdTrimmed !== '' ? externalIdTrimmed : undefined;
     baseParams.driver_id = undefined;
   }
 
   const hasAccess = isDriver || isAdmin || isDispatcherLike;
+  const needsExternalIdForScope = isDriver || isDispatcherLike;
   const queryEnabled =
     authState.isAuthenticated &&
     hasAccess &&
-    (isDriver ? !!externalId : true) &&
+    (needsExternalIdForScope ? externalIdTrimmed !== '' : true) &&
     (params?.enabled !== false);
 
   return useInfiniteQuery({
