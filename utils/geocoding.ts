@@ -3,6 +3,8 @@
  * No API key required, completely free
  */
 
+import * as Location from 'expo-location';
+
 export interface GeocodedAddress {
   city?: string;
   state?: string;
@@ -55,7 +57,13 @@ export async function reverseGeocodeAsync(params: {
             }
 
             const address = data.address;
-            const postcode = address.postcode || address.postal_code || (address as any).postalCode || '';
+            const addr = address as Record<string, string | undefined>;
+            const postcode =
+              addr.postcode ||
+              addr.postal_code ||
+              addr['postal code'] ||
+              addr['addr:postcode'] ||
+              '';
 
             // Map OpenStreetMap format to our format (similar to expo-location)
             const result: GeocodedAddress = {
@@ -107,6 +115,65 @@ export async function reverseGeocodeAsync(params: {
     console.warn('[geocoding] Reverse geocoding failed:', error);
     return [];
   }
+}
+
+/**
+ * Nominatim first (works everywhere, no Google key), then device geocoder for missing postcode/city.
+ * Apple/Google reverse geocode often returns postal codes where OSM omits them (e.g. Ukraine, EU).
+ */
+export async function reverseGeocodeWithDeviceFallback(params: {
+  latitude: number;
+  longitude: number;
+}): Promise<GeocodedAddress[]> {
+  const nominatimRows = await reverseGeocodeAsync(params);
+  const base: GeocodedAddress = nominatimRows[0] || {
+    postalCode: '',
+    city: '',
+    region: '',
+    country: '',
+    subregion: '',
+    district: '',
+    isoCountryCode: '',
+  };
+
+  const needPostal = !(base.postalCode && String(base.postalCode).trim());
+  const needCity = !(base.city && String(base.city).trim());
+
+  if (!needPostal && !needCity) {
+    return [base];
+  }
+
+  try {
+    const nativeList = await Location.reverseGeocodeAsync({
+      latitude: params.latitude,
+      longitude: params.longitude,
+    });
+    const n = nativeList[0];
+    if (n) {
+      const merged: GeocodedAddress = { ...base };
+      if (needPostal && n.postalCode) {
+        merged.postalCode = n.postalCode;
+      }
+      if (needCity) {
+        merged.city =
+          n.city || n.district || n.subregion || base.city || '';
+      }
+      if ((!merged.region || !String(merged.region).trim()) && n.region) {
+        merged.region = n.region;
+      }
+      if ((!merged.country || !String(merged.country).trim()) && n.country) {
+        merged.country = n.country;
+      }
+      if ((!merged.isoCountryCode || !String(merged.isoCountryCode).trim()) && n.isoCountryCode) {
+        merged.isoCountryCode = n.isoCountryCode;
+      }
+      return [merged];
+    }
+  } catch (e) {
+    console.warn('[geocoding] Device reverseGeocodeAsync failed:', e);
+  }
+
+  return [base];
 }
 
 export interface GeocodeResult {

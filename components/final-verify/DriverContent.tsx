@@ -5,7 +5,13 @@ import { BlurView } from 'expo-blur';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import * as Notifications from 'expo-notifications';
-import { reverseGeocodeAsync, GeocodedAddress, geocodeZipToAddress, geocodeAsync } from '@/utils/geocoding';
+import {
+  reverseGeocodeAsync,
+  reverseGeocodeWithDeviceFallback,
+  GeocodedAddress,
+  geocodeZipToAddress,
+  geocodeAsync,
+} from '@/utils/geocoding';
 import { colors } from '@/lib/colors';
 import { fonts, fp, rem, typography } from "@/lib";
 import StatusSelect, { StatusValue } from '@/components/common/StatusSelect';
@@ -1441,16 +1447,18 @@ export default function DriverContent() {
       let state: string | undefined;
       let locationString: string | undefined;
       try {
-        const reverseGeocode = await reverseGeocodeAsync({ latitude, longitude });
+        const reverseGeocode = await reverseGeocodeWithDeviceFallback({ latitude, longitude });
         if (reverseGeocode && reverseGeocode.length > 0) {
           const geo = reverseGeocode[0];
-          postalCode = geo.postalCode || '';
+          postalCode = (geo.postalCode || '').trim();
           city = geo.city || geo.subregion || geo.district || undefined;
           state = geo.region ? geo.region.split(' ')[0] : undefined;
           if (postalCode) {
             zipJustSetFromShareRef.current = true;
             setZip(postalCode);
-            setTimeout(() => { zipJustSetFromShareRef.current = false; }, 3000);
+            setTimeout(() => {
+              zipJustSetFromShareRef.current = false;
+            }, 6000);
           }
           if (city) setFormCity(city);
           if (state) setFormState(state);
@@ -1512,7 +1520,9 @@ export default function DriverContent() {
         if (postalCode) {
           zipJustSetFromShareRef.current = true;
           setZip(postalCode);
-          setTimeout(() => { zipJustSetFromShareRef.current = false; }, 3000);
+          setTimeout(() => {
+            zipJustSetFromShareRef.current = false;
+          }, 6000);
         }
       }
       
@@ -1521,11 +1531,19 @@ export default function DriverContent() {
       setUserLocation({ latitude, longitude });
       setIsLocationReady(true);
       
-      // Show success message if location was obtained
-      setUpdateSuccessMessage('Location obtained successfully');
-      setTimeout(() => {
-        setUpdateSuccessMessage(null);
-      }, 2000);
+      if (postalCode) {
+        setUpdateSuccessMessage('Location obtained successfully');
+        setTimeout(() => {
+          setUpdateSuccessMessage(null);
+        }, 2000);
+      } else {
+        setUpdateSuccessMessage(
+          'Location found, but postal code was not detected. Move outdoors for better GPS, try again, or choose “Available on” to enter ZIP manually.'
+        );
+        setTimeout(() => {
+          setUpdateSuccessMessage(null);
+        }, 6000);
+      }
     } catch (e: any) {
       fileLogger.error('DriverContent', 'Unexpected error in handleShareLocation', {
         error: e instanceof Error ? e.message : String(e),
