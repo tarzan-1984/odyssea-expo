@@ -26,6 +26,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { sendLocationUpdateToTMS, sendLocationUpdateToBackendUser, getLocalIsoString } from '@/utils/locationApi';
 import { fileLogger } from '@/utils/fileLogger';
 import { eventBus } from '@/services/EventBus';
+import type { DriverProfileSyncPayload } from '@/utils/driverProfileSync';
 import { updateUser } from '@/app-api/users';
 import { saveLastSuccessfulReverseGeocodeTimestamp } from '@/constants/reverseGeocodeThrottle';
 
@@ -865,10 +866,10 @@ export default function DriverContent() {
     loadSavedData();
   }, [user?.zip, user?.statusDate, setZip, setAutomaticLocationSharing, stopBackgroundLocationTracking, parseStatusDateForDisplay]);
 
-  // Listen for driver status updates from AuthContext
+  // Listen for driver status updates from AuthContext / WebSocket
   useEffect(() => {
     const handleDriverStatusUpdate = async (data: { driverStatus: string | null }) => {
-      if (data.driverStatus === null || data.driverStatus === undefined) {
+      if (data.driverStatus === undefined || data.driverStatus === null) {
         return;
       }
 
@@ -898,6 +899,33 @@ export default function DriverContent() {
       unsubscribe();
     };
   }, [updateLocationSharingBasedOnStatus]);
+
+  // Full profile from backend (webhook / GET driver-status) — zip, date, status
+  useEffect(() => {
+    const applyProfile = async (p: DriverProfileSyncPayload) => {
+      if (p.driverStatus !== undefined && p.driverStatus !== null) {
+        const newStatus = p.driverStatus as StatusValue;
+        const previousStatus = previousStatusRef.current;
+        const basicStatuses: StatusValue[] = ['available', 'available_on', 'available_off', 'loaded_enroute'];
+        const isBasic = basicStatuses.includes(newStatus);
+        setStatus(newStatus);
+        setDriverStatusFromStorage(newStatus);
+        setIsStatusDisabled(!isBasic);
+        await updateLocationSharingBasedOnStatus(newStatus, previousStatus);
+        previousStatusRef.current = newStatus;
+      }
+      if (p.zip !== null) {
+        const z = (p.zip || '').trim();
+        if (z) setZip(z);
+      }
+      if (p.statusDate !== null && p.statusDate !== '') {
+        setDate(parseStatusDateForDisplay(p.statusDate));
+      }
+    };
+
+    const unsubscribe = eventBus.on('DRIVER_PROFILE_SYNCED', applyProfile);
+    return () => unsubscribe();
+  }, [parseStatusDateForDisplay, updateLocationSharingBasedOnStatus]);
 
   // Animate message when updateSuccessMessage changes
   useEffect(() => {
@@ -1475,6 +1503,9 @@ export default function DriverContent() {
         fileLogger.error('DriverContent', 'Reverse geocoding failed', { error: geoError instanceof Error ? geoError.message : String(geoError) });
         console.warn('Failed to get ZIP code from geocoding:', geoError);
       }
+
+      // TMS driver_status must match server-cached value (WebSocket / profile sync), not the select UI
+      const storedStatusForTms = (await AsyncStorage.getItem('@user_status'))?.trim() ?? '';
       
       // Save location and ZIP to AuthContext only if automatic location sharing is enabled
       if (automaticLocationSharing) {
@@ -1482,13 +1513,15 @@ export default function DriverContent() {
         
         // Send location update to TMS API
         let tmsSuccess = false;
-        if (status && finalZipCode) {
-          console.log('[DriverContent] Sending location update to TMS API after Share my location...');
+        if (finalZipCode) {
+          console.log(
+            `[DriverContent] Sending location update to TMS after Share my location (driver_status from AsyncStorage: "${storedStatusForTms || '(empty)'}")...`
+          );
           tmsSuccess = await sendLocationUpdate(
             latitude,
             longitude,
             finalZipCode,
-            status,
+            storedStatusForTms as StatusValue,
             '' // Empty string - function will use current date/time
           );
         }

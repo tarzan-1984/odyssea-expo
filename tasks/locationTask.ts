@@ -354,11 +354,6 @@ try {
                 });
               }
               
-              // Get status from AsyncStorage
-              const savedStatus = await AsyncStorage.getItem('@user_status');
-              const statusValue = savedStatus || 'available'; // Default to 'available' if not set
-              console.log(`📋 [LocationTask] User status: ${statusValue}`);
-              
               // Get user role from AsyncStorage (cached when app is active)
               let userRole: string | null = null;
               try {
@@ -396,7 +391,11 @@ try {
               // Normalize role: trim whitespace and convert to uppercase for comparison
               const normalizedRole = userRole ? userRole.trim().toUpperCase() : null;
               const isDriver = normalizedRole === 'DRIVER';
-              
+
+              // Background TMS location pings must not send driver_status — only manual / explicit
+              // updates should change status in TMS (empty string in API payload).
+              const tmsStatusForBackgroundTask = '';
+
               console.log(`🔍 [LocationTask] Checking conditions: externalId=${!!externalId}, postalCode=${!!postalCode}, userRole=${userRole || 'not found'}, isDriver=${isDriver}`);
               console.log(`🔍 [LocationTask] Role check: userRole="${userRole}", isDriver=${isDriver}, will send to TMS: ${isDriver}`);
               
@@ -434,7 +433,7 @@ try {
                     latitude: latitude.toFixed(6),
                     longitude: longitude.toFixed(6),
                     postalCode: finalPostalCode,
-                    status: statusValue
+                    driver_status: '(empty — background auto location only)',
                   });
                   
                   // Log final values that will be sent in the request
@@ -472,7 +471,7 @@ try {
                         latitude,
                         longitude,
                         finalPostalCode,
-                        statusValue as any,
+                        tmsStatusForBackgroundTask as any,
                         ''
                       );
                     } catch (fetchError) {
@@ -519,7 +518,7 @@ try {
                           latitude,
                           longitude,
                           postalCode: finalPostalCode,
-                          status: statusValue,
+                          status: tmsStatusForBackgroundTask,
                           timestamp: new Date().toISOString(),
                         });
                       } catch (queueError) {
@@ -822,7 +821,7 @@ export async function flushLocationQueue(): Promise<void> {
           update.latitude,
           update.longitude,
           update.postalCode,
-          update.status as any,
+          '' as any,
           ''
         );
         const itemDuration = Date.now() - itemStartTime;

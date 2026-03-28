@@ -662,7 +662,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       }
     });
 
-    // Handle driver status update from server
+    // Handle driver status update from server (legacy; full profile uses driverProfileSync)
     newSocket.on('driverStatusUpdate', async (data: { driverStatus: string | null }) => {
       console.log('[WebSocket] Driver status update received:', data);
       
@@ -671,17 +671,48 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       }
 
       try {
-        // Update AsyncStorage
-        await AsyncStorage.setItem('@user_status', data.driverStatus || '');
-        console.log(`✅ [WebSocket] Driver status updated: ${data.driverStatus || 'null'}`);
-        
-        // Emit event to notify DriverContent component
+        const { persistDriverProfileLocally } = await import('@/utils/driverProfileSync');
         const { eventBus } = await import('@/services/EventBus');
+        await persistDriverProfileLocally({
+          driverStatus: data.driverStatus ?? null,
+          zip: null,
+          city: null,
+          state: null,
+          location: null,
+          statusDate: null,
+        });
+        console.log(`✅ [WebSocket] Driver status persisted: ${data.driverStatus || 'null'}`);
         eventBus.emit('DRIVER_STATUS_UPDATED', { driverStatus: data.driverStatus });
       } catch (error) {
         console.error('[WebSocket] Failed to update driver status:', error);
       }
     });
+
+    newSocket.on(
+      'driverProfileSync',
+      async (data: {
+        driverStatus: string | null;
+        zip: string | null;
+        city: string | null;
+        state: string | null;
+        location: string | null;
+        statusDate: string | null;
+      }) => {
+        console.log('[WebSocket] driverProfileSync received:', data);
+        if (!currentUser || currentUser.role !== 'DRIVER') {
+          return;
+        }
+        try {
+          const { persistDriverProfileLocally, emitDriverProfileSyncEvents } = await import(
+            '@/utils/driverProfileSync'
+          );
+          await persistDriverProfileLocally(data);
+          emitDriverProfileSyncEvents(data);
+        } catch (error) {
+          console.error('[WebSocket] Failed to apply driverProfileSync:', error);
+        }
+      }
+    );
 
     // Handle participant removed from chat room
     newSocket.on('participantRemoved', async (data: { chatRoomId: string; removedUserId: string; removedBy: string }) => {
