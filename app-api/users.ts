@@ -70,11 +70,20 @@ export async function getUserFromBackend(userId: string): Promise<any> {
   return data.data || data;
 }
 
+/** Driver profile slice from GET /users/:id/driver-status (mobile sync). */
+export type DriverProfileFromApi = {
+  driverStatus: string | null;
+  zip: string | null;
+  city: string | null;
+  state: string | null;
+  location: string | null;
+  statusDate: string | null;
+};
+
 /**
- * Get driver status from backend (for DRIVER role users)
- * Returns only driverStatus field
+ * Get driver profile fields from backend (DRIVER role only).
  */
-export async function getDriverStatus(userId: string): Promise<{ driverStatus: string | null }> {
+export async function getDriverStatus(userId: string): Promise<DriverProfileFromApi> {
   if (!API_BASE_URL) {
     throw new Error('API_BASE_URL is not configured');
   }

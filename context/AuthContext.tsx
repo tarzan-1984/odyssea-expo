@@ -6,6 +6,13 @@ import { authApi, CheckEmailResponse, LoginResponse, OtpVerificationResponse } f
 import { registerForPushNotificationsAsync, registerPushTokenToBackend } from '@/services/NotificationsService';
 import { syncDriversForMapAfterLogin } from '@/services/DriversMapService';
 import { getDriverStatus } from '@/app-api/users';
+import {
+  persistDriverProfileLocally,
+  emitDriverProfileSyncEvents,
+  DRIVER_PROFILE_SYNC_LAST_FETCH_KEY,
+  type DriverProfileSyncPayload,
+} from '@/utils/driverProfileSync';
+import { eventBus } from '@/services/EventBus';
 import { fileLogger } from '@/utils/fileLogger';
 import { LAST_SUCCESSFUL_REVERSE_GEOCODE_UNIX_KEY } from '@/constants/reverseGeocodeThrottle';
 import * as Location from 'expo-location';
@@ -57,6 +64,32 @@ export interface AuthContextValue {
 
 // Create context
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+function mergeDriverProfileIntoUser(
+  user: User,
+  p: DriverProfileSyncPayload
+): User {
+  const next: User = { ...user };
+  if (p.driverStatus !== undefined) {
+    next.driverStatus = p.driverStatus ?? '';
+  }
+  if (p.zip !== null) {
+    next.zip = p.zip ?? '';
+  }
+  if (p.city !== null) {
+    next.city = p.city ?? '';
+  }
+  if (p.state !== null) {
+    next.state = p.state ?? '';
+  }
+  if (p.location !== null) {
+    next.location = p.location ?? '';
+  }
+  if (p.statusDate !== null) {
+    next.statusDate = p.statusDate ?? '';
+  }
+  return next;
+}
 
 // Provider props
 interface AuthProviderProps {
@@ -247,6 +280,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           password: null, // Clear password after successful auth
           error: null,
         }));
+
+        if (userRole === 'DRIVER' && user?.id) {
+          void (async () => {
+            try {
+              const result = await getDriverStatus(user.id);
+              await persistDriverProfileLocally(result);
+              emitDriverProfileSyncEvents(result);
+            } catch (e) {
+              fileLogger.error('AuthContext', 'DRIVER_PROFILE_REFRESH_AFTER_LOGIN', {
+                error: e instanceof Error ? e.message : String(e),
+              });
+            }
+          })();
+        }
 
         // Request location permissions immediately after successful login
         // Only for DRIVER role users
@@ -519,6 +566,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         });
         
         console.log('✅ [AuthContext] Auth state restored');
+
+        if ((user?.role ?? '').toUpperCase() === 'DRIVER' && user?.id) {
+          void (async () => {
+            try {
+              const result = await getDriverStatus(user.id);
+              await persistDriverProfileLocally(result);
+              emitDriverProfileSyncEvents(result);
+            } catch (e) {
+              fileLogger.error('AuthContext', 'DRIVER_PROFILE_REFRESH_AFTER_RESTORE', {
+                error: e instanceof Error ? e.message : String(e),
+              });
+            }
+          })();
+        }
       } else {
         console.log('ℹ️ [AuthContext] No stored auth data found');
       }
@@ -672,6 +733,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await AsyncStorage.removeItem('@pending_location_update');
       await AsyncStorage.removeItem('@location_last_update');
       await AsyncStorage.removeItem(LAST_SUCCESSFUL_REVERSE_GEOCODE_UNIX_KEY);
+      await AsyncStorage.removeItem(DRIVER_PROFILE_SYNC_LAST_FETCH_KEY);
       
       // Clear user profile data (status, zip, date)
       await AsyncStorage.removeItem('@user_status');
@@ -725,6 +787,32 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     });
   }, []);
 
+  // Merge server driver profile into auth user (WebSocket / refresh).
+  useEffect(() => {
+    const unsubProfile = eventBus.on('DRIVER_PROFILE_SYNCED', (p: DriverProfileSyncPayload) => {
+      setAuthState((prev) => {
+        if (prev.user?.role !== 'DRIVER' || !prev.user) return prev;
+        return { ...prev, user: mergeDriverProfileIntoUser(prev.user, p) };
+      });
+    });
+    const unsubStatus = eventBus.on(
+      'DRIVER_STATUS_UPDATED',
+      (data: { driverStatus: string | null }) => {
+        setAuthState((prev) => {
+          if (prev.user?.role !== 'DRIVER' || !prev.user) return prev;
+          return {
+            ...prev,
+            user: { ...prev.user, driverStatus: data.driverStatus ?? '' },
+          };
+        });
+      }
+    );
+    return () => {
+      unsubProfile();
+      unsubStatus();
+    };
+  }, []);
+
   // Track app state to detect when app returns from background and update driver status
   useEffect(() => {
     if (!authState.isAuthenticated || !authState.user) {
@@ -749,7 +837,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       // When app becomes active again after being in background
       if (nextAppState === 'active' && wasInBackground) {
         wasInBackground = false;
-        console.log('📱 [AuthContext] App became active after being in background, updating driver status...');
+        console.log('📱 [AuthContext] App became active after being in background, refreshing driver profile...');
         
         try {
           const userId = authState.user?.id;
@@ -759,18 +847,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           }
 
           const result = await getDriverStatus(userId);
-          
-          if (result.driverStatus !== undefined) {
-            // Update driverStatus in AsyncStorage
-            await AsyncStorage.setItem('@user_status', result.driverStatus || '');
-            console.log(`✅ [AuthContext] Driver status updated from backend: ${result.driverStatus || 'null'}`);
-            
-            // Emit event to notify DriverContent component if it's mounted
-            const { eventBus } = await import('@/services/EventBus');
-            eventBus.emit('DRIVER_STATUS_UPDATED', { driverStatus: result.driverStatus });
-          } else {
-            console.log('ℹ️ [AuthContext] Driver status is undefined from backend');
-          }
+          await persistDriverProfileLocally(result);
+          emitDriverProfileSyncEvents(result);
+          console.log(`✅ [AuthContext] Driver profile synced from backend (foreground)`);
         } catch (error) {
           console.error('❌ [AuthContext] Failed to update driver status:', error);
           fileLogger.error('AuthContext', 'FAILED_TO_UPDATE_DRIVER_STATUS', {
