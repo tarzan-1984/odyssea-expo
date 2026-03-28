@@ -667,7 +667,7 @@ export default function OfferDetailScreen() {
                                 activeOpacity={0.8}
                                 disabled={isActioningDriver}
                               >
-                                <Text style={styles.driversSwipeActionText}>Assigned</Text>
+                                <Text style={styles.driversSwipeActionText}>Assign</Text>
                               </TouchableOpacity>
                             </View>
                           ) : (

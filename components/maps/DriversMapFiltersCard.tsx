@@ -11,7 +11,7 @@ import {
 import { colors, fonts, fp, rem } from '@/lib';
 import SelectArrow from '@/icons/SelectArrow';
 import {
-  DRIVER_STATUS_FILTER_OPTIONS,
+  getDriverMapStatusFilterLabels,
   CAPABILITIES_OPTIONS,
   RADIUS_OPTIONS,
   LOCATION_OPTIONS,
@@ -23,9 +23,14 @@ const ADDRESS_DEBOUNCE_MS = 1500;
 interface DriversMapFiltersCardProps {
   filters: DriversMapSearchFilters;
   onChange: (filters: DriversMapSearchFilters) => void;
+  isAdministrator?: boolean;
 }
 
-export default function DriversMapFiltersCard({ filters, onChange }: DriversMapFiltersCardProps) {
+export default function DriversMapFiltersCard({
+  filters,
+  onChange,
+  isAdministrator = false,
+}: DriversMapFiltersCardProps) {
   const [statusModalVisible, setStatusModalVisible] = useState(false);
   const [locationModalVisible, setLocationModalVisible] = useState(false);
   const [radiusModalVisible, setRadiusModalVisible] = useState(false);
@@ -146,8 +151,7 @@ export default function DriversMapFiltersCard({ filters, onChange }: DriversMapF
               showsVerticalScrollIndicator={true}
               keyboardShouldPersistTaps="handled"
             >
-              {['', ...DRIVER_STATUS_FILTER_OPTIONS.filter((s) => s !== 'All statuses')].map(
-                (opt) => (
+              {['', ...getDriverMapStatusFilterLabels(isAdministrator)].map((opt) => (
                   <TouchableOpacity
                     key={opt || 'all'}
                     style={[
@@ -168,8 +172,7 @@ export default function DriversMapFiltersCard({ filters, onChange }: DriversMapF
                       {opt || 'All statuses'}
                     </Text>
                   </TouchableOpacity>
-                )
-              )}
+              ))}
             </ScrollView>
             <TouchableOpacity
               style={styles.cancelButton}

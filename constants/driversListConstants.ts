@@ -73,17 +73,32 @@ export function getContrastTextOnStatusBackground(bgHex: string): '#ffffff' | '#
   return yiq >= 138 ? '#0f172a' : '#ffffff';
 }
 
+/**
+ * Status picker for drivers list / TMS filters (modal).
+ * Excludes Out of service, On vacation, No updates. "Blocked" is admin-only — use
+ * getDriverStatusFilterModalOptions(isAdministrator).
+ */
 export const DRIVER_STATUS_FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: '', label: 'All statuses' },
   { value: 'Available', label: 'Available' },
   { value: 'Available on', label: 'Available on' },
   { value: 'Not available', label: 'Not available' },
   { value: 'Loaded & Enroute', label: 'Loaded & Enroute' },
-  { value: 'Out of service', label: 'Out of service' },
-  { value: 'On vacation', label: 'On vacation' },
-  { value: 'No updates', label: 'No updates' },
-  { value: 'Blocked', label: 'Blocked' },
 ];
+
+export const DRIVER_STATUS_FILTER_OPTION_BLOCKED = {
+  value: 'Blocked',
+  label: 'Blocked',
+} as const;
+
+export function getDriverStatusFilterModalOptions(
+  isAdministrator: boolean
+): { value: string; label: string }[] {
+  if (isAdministrator) {
+    return [...DRIVER_STATUS_FILTER_OPTIONS, DRIVER_STATUS_FILTER_OPTION_BLOCKED];
+  }
+  return DRIVER_STATUS_FILTER_OPTIONS;
+}
 
 export const RADIUS_MILES_OPTIONS = [
   '50',

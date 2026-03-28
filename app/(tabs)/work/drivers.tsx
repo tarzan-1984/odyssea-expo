@@ -27,6 +27,13 @@ import CreateOfferSheet from '@/components/drivers/CreateOfferSheet';
 
 const ITEMS_PER_PAGE = 20;
 
+const DISALLOWED_DRIVER_STATUS_FILTER_FOR_NON_ADMIN = new Set([
+  'Blocked',
+  'Out of service',
+  'On vacation',
+  'No updates',
+]);
+
 const defaultFilters = (): DriversFiltersState => ({
   address: '',
   locationFilter: 'USA',
@@ -127,6 +134,15 @@ export default function DriversScreen() {
       router.replace('/work');
     }
   }, [authState.isAuthenticated, canAccessWork, canSeeDrivers, router]);
+
+  useEffect(() => {
+    if (isAdmin) return;
+    setAppliedFilters((f) =>
+      f.statusFilter && DISALLOWED_DRIVER_STATUS_FILTER_FOR_NON_ADMIN.has(f.statusFilter)
+        ? { ...f, statusFilter: '' }
+        : f
+    );
+  }, [isAdmin]);
 
   const canSelect = addressTrimmed.length > 0;
 
@@ -344,6 +360,7 @@ export default function DriversScreen() {
         onClose={() => setFiltersOpen(false)}
         initial={appliedFilters}
         onApply={applyFilters}
+        isAdministrator={isAdmin}
       />
 
       <CreateOfferSheet

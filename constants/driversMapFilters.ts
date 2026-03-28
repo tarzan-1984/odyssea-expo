@@ -2,17 +2,23 @@
  * Filter options for drivers map - same as Next.js drivers-map
  */
 
-export const DRIVER_STATUS_FILTER_OPTIONS = [
-  'All statuses',
+/** Labels for map status picker (no "All statuses" — empty string means all). */
+const DRIVER_MAP_STATUS_LABELS_BASE = [
   'Available',
   'Available on',
   'Not available',
   'Loaded & Enroute',
-  'Out of service',
-  'On vacation',
-  'No updates',
-  'Blocked',
 ] as const;
+
+/**
+ * Map filters status dropdown: same rules as drivers list (no out-of-service /
+ * vacation / no-updates; Blocked only for administrators).
+ */
+export function getDriverMapStatusFilterLabels(isAdministrator: boolean): string[] {
+  const labels = [...DRIVER_MAP_STATUS_LABELS_BASE];
+  if (isAdministrator) labels.push('Blocked');
+  return labels;
+}
 
 export const CAPABILITIES_OPTIONS = [
   { value: 'cdl', label: 'CDL' },

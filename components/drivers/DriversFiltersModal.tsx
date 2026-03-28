@@ -17,7 +17,7 @@ import { colors, fonts, rem, fp } from '@/lib';
 import type { LocationCountryFilter } from '@/constants/driversListConstants';
 import {
   DRIVER_CAPABILITY_FILTER_OPTIONS,
-  DRIVER_STATUS_FILTER_OPTIONS,
+  getDriverStatusFilterModalOptions,
   RADIUS_MILES_OPTIONS,
 } from '@/constants/driversListConstants';
 
@@ -44,21 +44,42 @@ interface DriversFiltersModalProps {
   onClose: () => void;
   initial: DriversFiltersState;
   onApply: (next: DriversFiltersState) => void;
+  /** When false, "Blocked" and legacy removed statuses are not selectable; draft is sanitized if needed. */
+  isAdministrator?: boolean;
 }
+
+const DISALLOWED_STATUS_FILTER_FOR_NON_ADMIN = new Set([
+  'Blocked',
+  'Out of service',
+  'On vacation',
+  'No updates',
+]);
 
 export default function DriversFiltersModal({
   visible,
   onClose,
   initial,
   onApply,
+  isAdministrator = false,
 }: DriversFiltersModalProps) {
   const insets = useSafeAreaInsets();
   const [draft, setDraft] = useState<DriversFiltersState>(initial);
   const [statusPickerOpen, setStatusPickerOpen] = useState(false);
 
+  const statusOptions = getDriverStatusFilterModalOptions(isAdministrator);
+
   useEffect(() => {
-    if (visible) setDraft(initial);
-  }, [visible, initial]);
+    if (!visible) return;
+    let next = { ...initial };
+    if (
+      !isAdministrator &&
+      next.statusFilter &&
+      DISALLOWED_STATUS_FILTER_FOR_NON_ADMIN.has(next.statusFilter)
+    ) {
+      next = { ...next, statusFilter: '' };
+    }
+    setDraft(next);
+  }, [visible, initial, isAdministrator]);
 
   useEffect(() => {
     if (!visible) setStatusPickerOpen(false);
@@ -81,8 +102,7 @@ export default function DriversFiltersModal({
   }, [onApply, onClose]);
 
   const statusLabel =
-    DRIVER_STATUS_FILTER_OPTIONS.find((o) => o.value === draft.statusFilter)?.label ??
-    'All statuses';
+    statusOptions.find((o) => o.value === draft.statusFilter)?.label ?? 'All statuses';
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
@@ -206,7 +226,7 @@ export default function DriversFiltersModal({
               <View style={styles.statusModalSheet}>
                 <Text style={styles.statusModalTitle}>Status</Text>
                 <FlatList
-                  data={DRIVER_STATUS_FILTER_OPTIONS}
+                  data={statusOptions}
                   keyExtractor={(item) => item.value || 'all'}
                   keyboardShouldPersistTaps="handled"
                   renderItem={({ item }) => {

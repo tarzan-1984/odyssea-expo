@@ -1,4 +1,4 @@
-import React, { useRef, useMemo, useState, useCallback } from 'react';
+import React, { useRef, useMemo, useState, useCallback, useEffect } from 'react';
 import { View, StyleSheet, Alert } from 'react-native';
 import OSMMapView, { Region } from '@/components/maps/OSMMapView';
 import DriverInfoPopup from '@/components/maps/DriverInfoPopup';
@@ -36,6 +36,13 @@ const DEFAULT_FILTERS: DriversMapSearchFilters = {
   role: 'administrator',
 };
 
+const DISALLOWED_MAP_STATUS_FILTER_FOR_NON_ADMIN = new Set([
+  'Blocked',
+  'Out of service',
+  'On vacation',
+  'No updates',
+]);
+
 function driversToMarkers(drivers: { id: string; externalId: string | null; latitude: number; longitude: number; driverStatus: string | null; status?: string | null }[]) {
   return drivers.map((d) => ({
     coordinate: { latitude: d.latitude, longitude: d.longitude },
@@ -59,7 +66,18 @@ export default function NonDriverContent({ firstName }: NonDriverContentProps) {
   const [isLoadingDriverData, setIsLoadingDriverData] = useState(false);
   const [isChatActionLoading, setIsChatActionLoading] = useState(false);
   const { authState } = useAuth();
+  const role = authState.user?.role?.trim().toUpperCase() ?? '';
+  const isAdministrator = role === 'ADMINISTRATOR';
   const { chatRooms, isLoading: isLoadingChatRooms, loadChatRooms } = useChatRooms();
+
+  useEffect(() => {
+    if (isAdministrator) return;
+    setFilters((f) =>
+      f.statusFilter && DISALLOWED_MAP_STATUS_FILTER_FOR_NON_ADMIN.has(f.statusFilter)
+        ? { ...f, statusFilter: '' }
+        : f
+    );
+  }, [isAdministrator]);
   
   // Default region - St. Louis area with wider zoom
   const initialRegion: Region = {
@@ -202,7 +220,11 @@ export default function NonDriverContent({ firstName }: NonDriverContentProps) {
       </View>
 
       <View style={styles.filtersSection}>
-        <DriversMapFiltersCard filters={filters} onChange={setFilters} />
+        <DriversMapFiltersCard
+          filters={filters}
+          onChange={setFilters}
+          isAdministrator={isAdministrator}
+        />
       </View>
 
       <DriverInfoPopup
