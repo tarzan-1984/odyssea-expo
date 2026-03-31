@@ -2,6 +2,7 @@ import React from 'react';
 import { View, StyleSheet, Platform, ScrollView, Text, TouchableOpacity } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import * as Application from 'expo-application';
 import LogsSettings from '@/components/settings/LogsSettings';
 import NotificationToggleSettings from '@/components/settings/NotificationToggleSettings';
 import ChatCacheSettings from '@/components/settings/ChatCacheSettings';
@@ -13,6 +14,9 @@ import { fonts, fp, rem } from '@/lib';
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const appVersion = Application.nativeApplicationVersion ?? '—';
+  const buildNumber = Application.nativeBuildVersion ?? '—';
+
   return (
     <View style={[styles.screenWrap, Platform.OS === 'android' && { paddingBottom: insets.bottom }]}>
       <View style={styles.screenContent}>
@@ -23,9 +27,15 @@ export default function SettingsScreen() {
           <View style={styles.header}>
             <Text style={styles.title}>Settings</Text>
           </View>
-          
+
           <View style={styles.contentWrapper}>
             <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
+              <Text
+                style={styles.versionLine}
+                accessibilityLabel={`App version ${appVersion} build ${buildNumber}`}
+              >
+                Version {appVersion} ({buildNumber})
+              </Text>
               <NotificationToggleSettings />
               <View style={styles.sectionCard}>
                 <View style={styles.sectionHeaderRow}>
@@ -87,6 +97,15 @@ const styles = StyleSheet.create({
     lineHeight: fp(24),
     color: colors.neutral.white,
     flex: 1,
+  },
+  versionLine: {
+    paddingHorizontal: rem(16),
+    paddingTop: rem(12),
+    marginBottom: rem(4),
+    fontSize: fp(13),
+    fontFamily: fonts['500'],
+    lineHeight: fp(18),
+    color: colors.neutral.darkGrey,
   },
   contentWrapper: {
     backgroundColor: colors.neutral.white,
