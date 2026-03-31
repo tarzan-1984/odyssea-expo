@@ -26,6 +26,7 @@ import * as TaskManager from 'expo-task-manager';
 import '@/services/NotificationsService';
 import { PENDING_OFFERS_NAVIGATION_KEY } from '@/services/NotificationsService';
 import PushTokenRegistrar from '@/components/notifications/PushTokenRegistrar';
+import MandatoryIosUpdateGate from '@/components/common/MandatoryIosUpdateGate';
 
 // Prevent the splash screen from auto-hiding
 SplashScreen.preventAutoHideAsync();
@@ -474,36 +475,40 @@ function RootLayoutNav() {
   return (
     <>
       <StatusBar style="light" />
-      <Stack
-        screenOptions={{
-          headerShown: false,
-        }}
-      >
-        <Stack.Screen name="(auth)" />
-        <Stack.Screen name="(tabs)" />
-      </Stack>
-      
-      {/* Legacy location permission modal - shows if critical permissions missing */}
-      <LocationPermissionModal 
-        visible={ENABLE_PERMISSIONS_ONBOARDING && showPermissionModal && !showOnboarding} 
-        isLocationEnabled={isLocationEnabled}
-        onOpenAppSettings={openAppSettings}
-        onOpenLocationSettings={openLocationSettings}
-      />
-      
-      {/* Blocked account modal - shows if driver account is blocked */}
-      <BlockedAccountModal visible={isAccountBlocked} />
-      
-      {/**
-       * TEMP DISABLED FOR SIMULATOR
-       * UI blocking overlay is disabled to allow development without background permission.
-       * IMPORTANT: Re-enable this block before shipping or testing on real devices.
-       */}
-      {ENABLE_PERMISSIONS_ONBOARDING && (isLocationEnabled === false || !backgroundPermissionGranted) && !showOnboarding && (
-        <View style={styles.blockingOverlay} pointerEvents="auto">
-          <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
-        </View>
-      )}
+      <MandatoryIosUpdateGate>
+        <Stack
+          screenOptions={{
+            headerShown: false,
+          }}
+        >
+          <Stack.Screen name="(auth)" />
+          <Stack.Screen name="(tabs)" />
+        </Stack>
+
+        {/* Legacy location permission modal - shows if critical permissions missing */}
+        <LocationPermissionModal
+          visible={ENABLE_PERMISSIONS_ONBOARDING && showPermissionModal && !showOnboarding}
+          isLocationEnabled={isLocationEnabled}
+          onOpenAppSettings={openAppSettings}
+          onOpenLocationSettings={openLocationSettings}
+        />
+
+        {/* Blocked account modal - shows if driver account is blocked */}
+        <BlockedAccountModal visible={isAccountBlocked} />
+
+        {/**
+         * TEMP DISABLED FOR SIMULATOR
+         * UI blocking overlay is disabled to allow development without background permission.
+         * IMPORTANT: Re-enable this block before shipping or testing on real devices.
+         */}
+        {ENABLE_PERMISSIONS_ONBOARDING &&
+          (isLocationEnabled === false || !backgroundPermissionGranted) &&
+          !showOnboarding && (
+            <View style={styles.blockingOverlay} pointerEvents="auto">
+              <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
+            </View>
+          )}
+      </MandatoryIosUpdateGate>
     </>
   );
 }
