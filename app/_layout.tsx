@@ -20,7 +20,7 @@ import BlockedAccountModal from '@/components/common/BlockedAccountModal';
 // CRITICAL: This import must happen at the top level to ensure task registration
 // The task is registered when this module is imported
 import '@/tasks/locationTask';
-import { flushLocationQueue, LOCATION_TASK_NAME } from '@/tasks/locationTask';
+import { LOCATION_TASK_NAME } from '@/tasks/locationTask';
 import * as TaskManager from 'expo-task-manager';
 // Ensure notifications handler is always registered regardless of auth flow
 import '@/services/NotificationsService';
@@ -340,40 +340,6 @@ function RootLayoutNav() {
     
     initAuth();
   }, [loadStoredAuth, checkLocationEnabled, checkBackgroundPermission]);
-
-  // Flush location queue when app becomes ready and authenticated
-  useEffect(() => {
-    if (!isReady || !authState.isAuthenticated) return;
-    
-    // Delay flush to ensure app is fully initialized
-    const timer = setTimeout(() => {
-      flushLocationQueue().catch((error) => {
-        console.warn('[RootLayoutNav] Failed to flush location queue:', error);
-      });
-    }, 1000); // Wait 1 second after app is ready
-    
-    return () => clearTimeout(timer);
-  }, [isReady, authState.isAuthenticated]);
-
-  // Also flush queue when app becomes active (comes from background)
-  useEffect(() => {
-    if (!isReady || !authState.isAuthenticated) return;
-    
-    const { AppState } = require('react-native');
-    const subscription = AppState.addEventListener('change', (nextAppState) => {
-      if (nextAppState === 'active') {
-        // App became active - flush queue immediately
-        console.log('[RootLayoutNav] App became active, flushing location queue...');
-        flushLocationQueue().catch((error) => {
-          console.warn('[RootLayoutNav] Failed to flush location queue:', error);
-        });
-      }
-    });
-    
-    return () => {
-      subscription.remove();
-    };
-  }, [isReady, authState.isAuthenticated]);
 
   // Check permissions when navigating between screens (only when segment actually changes)
   useEffect(() => {

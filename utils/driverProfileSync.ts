@@ -11,6 +11,7 @@ export type DriverProfileSyncPayload = {
   state: string | null;
   location: string | null;
   statusDate: string | null;
+  isAutoupdate: boolean | null;
 };
 
 export const DRIVER_PROFILE_SYNC_LAST_FETCH_KEY = '@driver_profile_sync_last_unix';
@@ -39,6 +40,8 @@ export async function fetchDriverProfileFromBackend(
       state: body.state ?? null,
       location: body.location ?? null,
       statusDate: body.statusDate ?? null,
+      isAutoupdate:
+        typeof body.isAutoupdate === 'boolean' ? body.isAutoupdate : null,
     };
   } catch (e) {
     fileLogger.error('driverProfileSync', 'FETCH_FAILED', {
@@ -64,6 +67,23 @@ export async function persistDriverProfileLocally(
     }
     if (payload.statusDate !== null) {
       await AsyncStorage.setItem('@user_date', payload.statusDate || '');
+    }
+
+    if (payload.isAutoupdate !== null) {
+      try {
+        const settingsStr = await AsyncStorage.getItem('@odyssea_app_settings');
+        const settings = settingsStr ? JSON.parse(settingsStr) : {};
+        const next = {
+          ...settings,
+          automaticLocationSharing: payload.isAutoupdate,
+        };
+        await AsyncStorage.setItem(
+          '@odyssea_app_settings',
+          JSON.stringify(next),
+        );
+      } catch {
+        // ignore
+      }
     }
 
     try {
@@ -92,6 +112,7 @@ export async function persistDriverProfileLocally(
           if (payload.state !== null) next.state = payload.state || '';
           if (payload.location !== null) next.location = payload.location || '';
           if (payload.statusDate !== null) next.statusDate = payload.statusDate || '';
+          if (payload.isAutoupdate !== null) next.isAutoupdate = payload.isAutoupdate;
           await secureStorage.setItemAsync('user', JSON.stringify(next));
         }
       } catch {

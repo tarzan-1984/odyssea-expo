@@ -10,7 +10,7 @@ import {
   reverseGeocodeWithDeviceFallback,
   GeocodedAddress,
   geocodeZipToAddress,
-  geocodeAsync,
+  geocodeWithPostalAsync,
 } from '@/utils/geocoding';
 import { colors } from '@/lib/colors';
 import { fonts, fp, rem, typography } from "@/lib";
@@ -21,14 +21,19 @@ import CustomSwitch from '@/components/common/CustomSwitch';
 import PinMapIcon from '@/icons/PinMapIcon';
 import { useAuth } from '@/context/AuthContext';
 import { useAppSettings } from '@/hooks/useAppSettings';
-import { LOCATION_TASK_NAME, LOCATION_UPDATE_INTERVAL } from '@/tasks/locationTask';
+import { LOCATION_TASK_NAME } from '@/tasks/locationTask';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { sendLocationUpdateToTMS, sendLocationUpdateToBackendUser, getLocalIsoString } from '@/utils/locationApi';
+import {
+  sendLocationUpdateToBackendUser,
+  getLocalIsoString,
+  formatStatusDate,
+} from '@/utils/locationApi';
 import { fileLogger } from '@/utils/fileLogger';
 import { eventBus } from '@/services/EventBus';
 import type { DriverProfileSyncPayload } from '@/utils/driverProfileSync';
-import { updateUser } from '@/app-api/users';
 import { saveLastSuccessfulReverseGeocodeTimestamp } from '@/constants/reverseGeocodeThrottle';
+import { recordSuccessfulLocationApiSend } from '@/constants/locationSendThrottle';
+import { getResolvedAppLocationSettings } from '@/utils/appLocationSettings';
 
 /**
  * DriverContent - Location tracking component for DRIVER role users
@@ -166,34 +171,6 @@ export default function DriverContent() {
     }
   }, []);
 
-  // Wrapper function to send location update using helper
-  const sendLocationUpdate = useCallback(async (
-    latitude: number,
-    longitude: number,
-    zipCode: string,
-    statusValue: StatusValue,
-    statusDate: string
-  ): Promise<boolean> => {
-    const externalId = user?.externalId;
-    if (!externalId) {
-      console.error('[FinalVerify] No externalId found for user');
-      fileLogger.error('FinalVerify', 'NO_EXTERNAL_ID_FOUND', {
-        userId: user?.id,
-        userEmail: user?.email,
-      });
-      return false;
-    }
-    
-    return await sendLocationUpdateToTMS(
-      externalId,
-      latitude,
-      longitude,
-      zipCode,
-      statusValue,
-      statusDate
-    );
-  }, [user?.externalId]);
-
   // Start background location tracking
   const startBackgroundLocationTracking = useCallback(async () => {
     try {
@@ -229,6 +206,9 @@ export default function DriverContent() {
       }
       
       console.log('📍 [BackgroundTracking] ========== STARTING BACKGROUND TRACKING ==========');
+
+      const { locationMinIntervalMs, locationMinDistanceM } =
+        await getResolvedAppLocationSettings();
       
       // IMPORTANT: On Android 12+, we need notification permission for foreground service
       if (Platform.OS === 'android') {
@@ -305,27 +285,27 @@ export default function DriverContent() {
         }
       }
       
-      // Start location updates with current interval setting
-      const intervalInMinutes = LOCATION_UPDATE_INTERVAL / (60 * 1000);
+      // Start location updates with server/cached thresholds (AsyncStorage, synced from GET /v1/app-settings)
+      const intervalInMinutes = locationMinIntervalMs / (60 * 1000);
+      const osTimeIntervalMs =
+        locationMinIntervalMs <= 0 ? 0 : locationMinIntervalMs;
       
       console.log('📍 [BackgroundTracking] Starting location updates with interval:', intervalInMinutes, 'minutes');
       console.log('📍 [BackgroundTracking] Platform:', Platform.OS);
       console.log('📍 [BackgroundTracking] App state:', AppState.currentState);
       
-      // CRITICAL FOR iOS BACKGROUND UPDATES:
-      // iOS requires distanceInterval to be set (not 0) for background location updates
-      // iOS will NOT call the task in background if distanceInterval is 0
-      // Also, iOS may ignore timeInterval in background, so we rely on distanceInterval
+      // iOS requires distanceInterval > 0. If admin sets 0 (no distance gate for API throttle), use 1 m for OS callbacks.
+      const nativeDistanceIntervalM = Math.max(1, locationMinDistanceM);
       const locationOptions: Location.LocationTaskOptions = {
         accuracy: Platform.OS === 'ios' ? Location.Accuracy.Highest : Location.Accuracy.Balanced, // Higher accuracy for iOS to ensure updates
-        timeInterval: LOCATION_UPDATE_INTERVAL, // Request updates every 1 minute
-        // CRITICAL: iOS requires distanceInterval > 0 for background updates
-        // Use 10 meters for iOS - smaller values may cause iOS to pause updates if device is stationary
-        // Android can use 0 to accept all updates
-        distanceInterval: Platform.OS === 'ios' ? 10 : 0, // iOS needs distanceInterval > 0, use 10m for more reliable background updates
+        timeInterval: osTimeIntervalMs,
+        distanceInterval: nativeDistanceIntervalM,
         foregroundService: {
           notificationTitle: 'Location Tracking Active',
-          notificationBody: `Tracking your location every ${intervalInMinutes} minute${intervalInMinutes !== 1 ? 's' : ''}`,
+          notificationBody:
+            locationMinIntervalMs <= 0
+              ? 'Location tracking (min interval off — test mode)'
+              : `Tracking your location every ${intervalInMinutes} minute${intervalInMinutes !== 1 ? 's' : ''}`,
           notificationColor: '#292966', // App primary color
         },
         // iOS-specific settings to ensure background updates work
@@ -760,6 +740,26 @@ export default function DriverContent() {
     // If both statuses are in the same group (active->active or inactive->inactive), don't change the setting
   }, [setAutomaticLocationSharing, stopBackgroundLocationTracking, startBackgroundLocationTracking, userLocation, automaticLocationSharing]);
 
+  const computeNextAutoupdateForStatus = useCallback(
+    (driverStatus: StatusValue): boolean => {
+      const inactiveStatuses: StatusValue[] = [
+        'available_off',
+        'available_on',
+        'banned',
+        'blocked',
+        'on_vocation',
+        'expired_documents',
+      ];
+      if (inactiveStatuses.includes(driverStatus)) return false;
+      // Active group should auto-enable tracking by default
+      const activeStatuses: StatusValue[] = ['available', 'loaded_enroute'];
+      if (activeStatuses.includes(driverStatus)) return true;
+
+      return automaticLocationSharing;
+    },
+    [automaticLocationSharing],
+  );
+
   // Load saved status, zip, and date from AsyncStorage; use user (from login) as fallback when empty
   useEffect(() => {
     const loadSavedData = async () => {
@@ -921,11 +921,30 @@ export default function DriverContent() {
       if (p.statusDate !== null && p.statusDate !== '') {
         setDate(parseStatusDateForDisplay(p.statusDate));
       }
+
+      if (p.isAutoupdate !== null) {
+        // Prevent status-based automation from fighting server value during sync
+        isUpdatingLocationSharingRef.current = true;
+        try {
+          await setAutomaticLocationSharing(!!p.isAutoupdate);
+        } finally {
+          isUpdatingLocationSharingRef.current = false;
+        }
+      }
     };
 
     const unsubscribe = eventBus.on('DRIVER_PROFILE_SYNCED', applyProfile);
     return () => unsubscribe();
   }, [parseStatusDateForDisplay, updateLocationSharingBasedOnStatus]);
+
+  // Restart native background tracking when server app_settings change (same sync path as driver profile).
+  useEffect(() => {
+    const unsub = eventBus.on('APP_LOCATION_SETTINGS_SYNCED', () => {
+      if (!automaticLocationSharing) return;
+      void startBackgroundLocationTracking();
+    });
+    return () => unsub();
+  }, [automaticLocationSharing, startBackgroundLocationTracking]);
 
   // Animate message when updateSuccessMessage changes
   useEffect(() => {
@@ -1221,143 +1240,111 @@ export default function DriverContent() {
 
       // Check if we have location data
       let currentLocation = authState.userLocation || userLocation;
-      // For available_on: geocode ZIP to get coordinates (Share my location button is hidden). Only geocode if zip changed.
-      const zipChanged = (authState.userZipCode || '').trim() !== (zipToSend || '').trim();
-      if (status === 'available_on' && zipToSend?.trim() && (!currentLocation || zipChanged)) {
+      /** For API sync — for available_on filled from ZIP geocode + reverse, not device GPS/form leftovers */
+      let cityForApi = formCity || undefined;
+      let stateForApi = formState || undefined;
+      let locationLineForApi =
+        formLocation ||
+        (formCity && formState
+          ? `${formCity}, ${formState}${zipToSend ? ` ${zipToSend}` : ''}`.trim()
+          : undefined) ||
+        undefined;
+
+      // available_on: always use coordinates + address from the entered ZIP (Nominatim), not current GPS/cached city
+      if (status === 'available_on' && zipToSend?.trim()) {
         try {
-          const coords = await geocodeAsync(zipToSend.trim(), 'us');
-          if (coords) {
-            await updateUserLocation(coords.latitude, coords.longitude, zipToSend);
-            setUserLocation({ latitude: coords.latitude, longitude: coords.longitude });
-            currentLocation = coords;
+          const geoResult = await geocodeWithPostalAsync(zipToSend.trim(), 'us');
+          if (!geoResult) {
+            setUpdateSuccessMessage('Failed to determine location from ZIP code');
+            setTimeout(() => setUpdateSuccessMessage(null), 3000);
+            return;
           }
-        } catch (e) {
+          currentLocation = {
+            latitude: geoResult.latitude,
+            longitude: geoResult.longitude,
+          };
+          await updateUserLocation(geoResult.latitude, geoResult.longitude, zipToSend);
+          setUserLocation({ latitude: geoResult.latitude, longitude: geoResult.longitude });
+
+          const rev = await reverseGeocodeAsync({
+            latitude: geoResult.latitude,
+            longitude: geoResult.longitude,
+          });
+          const g = rev[0];
+          if (g) {
+            const c = g.city || g.subregion || g.district || '';
+            const st = g.region ? g.region.split(' ')[0] : '';
+            cityForApi = c.trim() || undefined;
+            stateForApi = st.trim() || undefined;
+            locationLineForApi =
+              c && st
+                ? `${c}, ${st}${zipToSend ? ` ${zipToSend}` : ''}`.trim()
+                : locationLineForApi;
+            setFormCity(c);
+            setFormState(st);
+            if (locationLineForApi) {
+              setFormLocation(locationLineForApi);
+            }
+          }
+        } catch {
           setUpdateSuccessMessage('Failed to determine location from ZIP code');
           setTimeout(() => setUpdateSuccessMessage(null), 3000);
+          return;
         }
       }
+
       if (!currentLocation) {
         setUpdateSuccessMessage('Location data is required. Please share your location first.');
         setTimeout(() => setUpdateSuccessMessage(null), 3000);
         return;
       }
 
-      // Use hidden form fields (filled by "Determine location" or ZIP popup)
-      const city = formCity || undefined;
-      const state = formState || undefined;
+      const previousStatus = previousStatusRef.current;
 
-      // Send location update to TMS API (status from useState will be sent)
-      let tmsSuccess = false;
-      try {
-        tmsSuccess = await sendLocationUpdate(
-          currentLocation.latitude,
-          currentLocation.longitude,
-          zipToSend,
-          status, // Use status from useState
-          dateToSend
-        );
-      } catch (tmsError) {
-        console.warn('[DriverContent] TMS API request failed:', tmsError);
-        tmsSuccess = false;
-      }
-
-      // After successful TMS update, update our backend database with status and location data
-      if (tmsSuccess) {
-        const previousStatus = previousStatusRef.current;
-        const sentStatus = status; // Store the status that was sent in the request
-        
-        // Update user in our backend database (status, zip, city, state)
-        // Note: latitude/longitude are updated separately via /location endpoint
-        try {
-          if (user?.id) {
-            await updateUser(user.id, {
-              driverStatus: sentStatus,
-              zip: zipToSend,
-              city: city,
-              state: state,
-              statusDate: dateToSend,
-            });
-            console.log('[DriverContent] ✅ Backend user updated successfully with status and location data');
-            
-            // After successful backend update, save status, zip, date to AsyncStorage and sync local state
-            await AsyncStorage.multiSet([
-              ['@user_status', sentStatus],
-              ['@user_zip', zipToSend],
-              ['@user_date', dateToSend],
-            ]);
-            setDriverStatusFromStorage(sentStatus); // Update marker status
-            previousStatusRef.current = sentStatus; // Update previous status ref
-
-            console.log('[DriverContent] ✅ Status, zip, date saved to AsyncStorage:', { status: sentStatus, zip: zipToSend, date: dateToSend });
-          }
-        } catch (updateError: any) {
-          // Extract error message properly
-          let errorMessage = 'Unknown error';
-          let errorStatus: number | undefined;
-          let errorDetails: any = null;
-          
-          if (updateError instanceof Error) {
-            errorMessage = updateError.message;
-            errorStatus = (updateError as any).status;
-            errorDetails = (updateError as any).details;
-          } else if (typeof updateError === 'string') {
-            errorMessage = updateError;
-          } else if (updateError && typeof updateError === 'object') {
-            // Try to extract message from error object
-            errorMessage = updateError.message || updateError.error || JSON.stringify(updateError);
-            errorStatus = updateError.status;
-            errorDetails = updateError;
-          }
-          
-          console.error('[DriverContent] Failed to update user in backend:', errorMessage);
-          if (errorDetails) {
-            console.error('[DriverContent] Error details:', JSON.stringify(errorDetails, null, 2));
-          }
-          
-          fileLogger.error('DriverContent', 'BACKEND_USER_UPDATE_FAILED', {
-            error: errorMessage,
-            statusCode: errorStatus,
-            errorDetails: errorDetails ? JSON.stringify(errorDetails) : undefined,
-            userId: user?.id,
-            status: sentStatus,
-            zip,
-            city,
-            state,
-          });
-        }
-        
-        // Auto-manage location sharing based on status transition
-        await updateLocationSharingBasedOnStatus(sentStatus, previousStatus);
-      }
-
-      const locationString = formLocation || (city && state ? `${city}, ${state}${zipToSend ? ` ${zipToSend}` : ''}`.trim() : undefined) || undefined;
-
-      // Send location update to our backend (independent of TMS API)
-      const backendSuccess = await sendLocationUpdateToBackendUser({
-        location: locationString,
-        city,
-        state,
+      // Single request: backend persists + TMS for drivers
+      const syncResult = await sendLocationUpdateToBackendUser({
+        location: locationLineForApi,
+        city: cityForApi,
+        state: stateForApi,
         zip: zipToSend,
         latitude: currentLocation.latitude,
         longitude: currentLocation.longitude,
         lastUpdateIso: getLocalIsoString(),
+        driverStatus: status,
+        statusDate: dateToSend,
+        isAutoupdate: computeNextAutoupdateForStatus(status),
+        isManualDriverLocationAction: true,
       });
 
-      if (backendSuccess) {
-        // Update lastLocationUpdate in AuthContext only after successful backend update
+      if (syncResult.ok) {
+        if (syncResult.tmsSyncFailed) {
+          console.warn('[DriverContent] Location/status saved; TMS sync failed:', syncResult.tmsError);
+          fileLogger.error('DriverContent', 'TMS_SYNC_FAILED_AFTER_SAVE', {
+            tmsError: syncResult.tmsError,
+          });
+        }
+        await recordSuccessfulLocationApiSend();
+        await AsyncStorage.multiSet([
+          ['@user_status', status],
+          ['@user_zip', zipToSend],
+          ['@user_date', dateToSend],
+        ]);
+        setDriverStatusFromStorage(status);
+        previousStatusRef.current = status;
+        await updateLocationSharingBasedOnStatus(status, previousStatus);
         await updateUserLocation(
           currentLocation.latitude,
           currentLocation.longitude,
           zipToSend
         );
-        
-        // Show success message
         setUpdateSuccessMessage('Successful status update');
         setTimeout(() => {
           setUpdateSuccessMessage(null);
         }, 3000);
       } else {
-        fileLogger.error('DriverContent', 'Backend update failed in handleUpdateStatus');
+        fileLogger.error('DriverContent', 'BACKEND_LOCATION_SYNC_FAILED', {
+          status: syncResult.status,
+        });
         setUpdateSuccessMessage('Something went wrong. Please try updating the status later.');
         setTimeout(() => {
           setUpdateSuccessMessage(null);
@@ -1511,44 +1498,38 @@ export default function DriverContent() {
       if (automaticLocationSharing) {
         const finalZipCode = postalCode || zip;
         
-        // Send location update to TMS API
-        let tmsSuccess = false;
-        if (finalZipCode) {
-          console.log(
-            `[DriverContent] Sending location update to TMS after Share my location (driver_status from AsyncStorage: "${storedStatusForTms || '(empty)'}")...`
-          );
-          tmsSuccess = await sendLocationUpdate(
-            latitude,
-            longitude,
-            finalZipCode,
-            storedStatusForTms as StatusValue,
-            '' // Empty string - function will use current date/time
-          );
-        }
-        
-        // Send location update to our backend (independent of TMS API)
-        if (status && finalZipCode) {
-          console.log('[DriverContent] Sending location update to backend after Share my location...');
-          
-          const backendSuccess = await sendLocationUpdateToBackendUser({
-            location: locationString,
-            city,
-            state,
-            zip: finalZipCode,
-            latitude,
-            longitude,
-            lastUpdateIso: getLocalIsoString(),
-          });
-          
-          if (backendSuccess) {
-            // Update coordinates and time only after successful backend update
-            await updateUserLocation(latitude, longitude, finalZipCode);
-          } else {
-            fileLogger.error('DriverContent', 'Backend update failed');
+        console.log(
+          `[DriverContent] Sync location to backend after Share (driver_status from storage: "${storedStatusForTms || '(empty)'}")...`
+        );
+        const shareSync = await sendLocationUpdateToBackendUser({
+          location: locationString,
+          city,
+          state,
+          zip: finalZipCode,
+          latitude,
+          longitude,
+          lastUpdateIso: getLocalIsoString(),
+          driverStatus: storedStatusForTms,
+          statusDate: formatStatusDate(''),
+          isAutoupdate: automaticLocationSharing,
+          isManualDriverLocationAction: true,
+        });
+
+        if (shareSync.ok) {
+          if (shareSync.tmsSyncFailed) {
+            console.warn('[DriverContent] Share: saved; TMS failed:', shareSync.tmsError);
+            fileLogger.error('DriverContent', 'TMS_SYNC_FAILED_AFTER_SHARE', {
+              tmsError: shareSync.tmsError,
+            });
           }
+          await recordSuccessfulLocationApiSend();
+          await updateUserLocation(latitude, longitude, finalZipCode);
+        } else {
+          fileLogger.error('DriverContent', 'BACKEND_SYNC_FAILED_AFTER_SHARE', {
+            status: shareSync.status,
+          });
         }
-        
-        // Start background location tracking
+
         await startBackgroundLocationTracking();
       } else {
         // Just update local state for map display, don't save to context
@@ -1654,6 +1635,31 @@ export default function DriverContent() {
       // Stop background tracking when automatic sharing is disabled
       await stopBackgroundLocationTracking();
       // Note: We keep coordinates and lastLocationUpdate in AsyncStorage to display on map
+
+      // Persist toggle state to backend (DB + server-side TMS sync if applicable)
+      try {
+        const loc = authState.userLocation || userLocation;
+        if (loc?.latitude && loc?.longitude && user?.driverStatus) {
+          const res = await sendLocationUpdateToBackendUser({
+            latitude: loc.latitude,
+            longitude: loc.longitude,
+            zip: authState.userZipCode || zip,
+            lastUpdateIso: getLocalIsoString(),
+            driverStatus: user.driverStatus,
+            statusDate: formatStatusDate(''),
+            isAutoupdate: false,
+          });
+          if (res.ok && res.tmsSyncFailed) {
+            fileLogger.error('DriverContent', 'TMS_SYNC_FAILED_DISABLE_AUTO', {
+              tmsError: res.tmsError,
+            });
+          }
+        }
+      } catch (e) {
+        fileLogger.error('DriverContent', 'BACKEND_SYNC_FAILED_DISABLE_AUTO', {
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
     } else {
       // When enabling automatic location sharing, start background tracking
       console.log('📍 [DriverContent] Automatic location sharing enabled, starting background tracking...');
@@ -1732,32 +1738,12 @@ export default function DriverContent() {
         currentLongitude = userLocation.longitude;
       }
       
-      // Send location update to TMS API
-      let tmsSuccess = false;
       if (status && currentZipCode) {
-        console.log('[DriverContent] Sending location update to TMS API after enabling auto-sharing...');
-        try {
-          tmsSuccess = await sendLocationUpdateToTMS(
-            user?.externalId || '',
-            currentLatitude,
-            currentLongitude,
-            currentZipCode,
-            status,
-            ''
-          );
-        } catch (tmsError) {
-          console.warn('[DriverContent] TMS API request failed:', tmsError);
-          tmsSuccess = false;
-        }
-      }
-
-      // Send location update to our backend (independent of TMS API)
-      if (status && currentZipCode) {
-        console.log('[DriverContent] Sending location update to backend after enabling auto-sharing...');
+        console.log('[DriverContent] Sync location to backend after enabling auto-sharing...');
         const cityToSend = geoCity ?? (formCity || undefined);
         const stateToSend = geoState ?? (formState || undefined);
         const locStr = cityToSend && stateToSend ? `${cityToSend}, ${stateToSend} ${currentZipCode}`.trim() : undefined;
-        const backendSuccess = await sendLocationUpdateToBackendUser({
+        const toggleSync = await sendLocationUpdateToBackendUser({
           location: locStr,
           city: cityToSend,
           state: stateToSend,
@@ -1765,15 +1751,27 @@ export default function DriverContent() {
           latitude: currentLatitude,
           longitude: currentLongitude,
           lastUpdateIso: getLocalIsoString(),
+          driverStatus: status,
+          statusDate: formatStatusDate(''),
+        isAutoupdate: value,
         });
-        
-        // Update coordinates and time only after successful backend update
-        if (backendSuccess) {
+
+        if (toggleSync.ok) {
+          if (toggleSync.tmsSyncFailed) {
+            console.warn('[DriverContent] Auto-sharing: saved; TMS failed:', toggleSync.tmsError);
+            fileLogger.error('DriverContent', 'TMS_SYNC_FAILED_AUTO_SHARING', {
+              tmsError: toggleSync.tmsError,
+            });
+          }
+          await recordSuccessfulLocationApiSend();
           await updateUserLocation(currentLatitude, currentLongitude, currentZipCode);
+        } else {
+          fileLogger.error('DriverContent', 'BACKEND_SYNC_FAILED_AUTO_SHARING', {
+            status: toggleSync.status,
+          });
         }
       }
-      
-      // Start background location tracking (only once, not twice)
+
       await startBackgroundLocationTracking();
     }
   };

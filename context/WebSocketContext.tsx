@@ -327,18 +327,6 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       console.log('✅ [WebSocket] Server confirmed connection', data);
     });
 
-    // DEV: Log every incoming event to verify names/payloads
-    if (__DEV__) {
-      newSocket.onAny((event: string, payload: any) => {
-        try {
-          const rid = payload?.chatRoomId || payload?.message?.chatRoomId || payload?.[0]?.chatRoomId;
-          console.log(`🛰️ [WebSocket] onAny '${event}'`, rid ? `room=${rid}` : '', !!payload ? '(payload received)' : '(no payload)');
-        } catch (e) {
-          console.warn('🛰️ [WebSocket] onAny log error:', e);
-        }
-      });
-    }
-
     // Handle new message from server
     newSocket.on('newMessage', async (data: any) => {
       // If the app is not active (background/inactive), do not touch store/cache.

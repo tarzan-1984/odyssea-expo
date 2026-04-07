@@ -2,7 +2,6 @@ import * as Location from 'expo-location';
 import { StatusValue } from '@/components/common/StatusSelect';
 import { API_BASE_URL } from '@/lib/config';
 import { secureStorage } from '@/utils/secureStorage';
-import { sendLocationUpdateNative } from '@/utils/nativeHttpClient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fileLogger } from '@/utils/fileLogger';
 
@@ -143,15 +142,32 @@ export async function sendLocationUpdateToTMS(
       return false;
     }
 
-    const url = `https://www.endurance-tms.com/wp-json/tms/v1/driver/location/update?driver_id=${externalId}&user_id=1`;
-    
-    console.log('[locationApi] Sending location update to TMS API...');
+    const trimmedId = externalId.trim();
+    if (!/^\d+$/.test(trimmedId)) {
+      console.error('[locationApi] TMS batch requires numeric driver externalId');
+      fileLogger.error('locationApi', 'TMS_BATCH_NON_NUMERIC_DRIVER_ID', { externalId });
+      return false;
+    }
+    const driverId = parseInt(trimmedId, 10);
+    const url =
+      'https://www.endurance-tms.com/wp-json/tms/v1/driver/location/update/batch?user_id=1';
+
+    const batchBody = {
+      items: [
+        {
+          driver_id: driverId,
+          ...requestData,
+        },
+      ],
+    };
+
+    console.log('[locationApi] Sending location batch update to TMS API...');
     const fetchStartTime = Date.now();
-    
+
     return new Promise<boolean>((resolve) => {
       const xhr = new XMLHttpRequest();
       const timeout = 30000; // 30 seconds (increased from 10s to handle slow TMS API responses)
-      
+
       xhr.timeout = timeout;
       xhr.open('POST', url, true);
       xhr.setRequestHeader('X-API-Key', apiKey);
@@ -225,7 +241,7 @@ export async function sendLocationUpdateToTMS(
       };
       
       try {
-        xhr.send(JSON.stringify(requestData));
+        xhr.send(JSON.stringify(batchBody));
       } catch (sendError) {
         if (resolved) return;
         resolved = true;
@@ -252,23 +268,41 @@ export async function sendLocationUpdateToTMS(
   }
 }
 
+/** Result of PUT /users/:id/location (DB save + server-side TMS for drivers). */
+export type SendLocationToBackendResult = {
+  ok: boolean;
+  status: number;
+  /** True when DB saved but TMS failed (HTTP 503). */
+  tmsSyncFailed: boolean;
+  tmsError?: string;
+};
+
 /**
- * Send location update to our own backend (users table)
- * Returns true if successful, false otherwise.
+ * Send location update to our own backend (DB + TMS sync on server for drivers).
+ * `ok` is true for 200 and 503 (databaseUpdated); false for other errors.
  */
 export async function sendLocationUpdateToBackendUser(params: {
   location?: string;
   city?: string;
   state?: string;
   zip?: string;
+  country?: string;
   latitude: number;
   longitude: number;
   lastUpdateIso?: string;
-}): Promise<boolean> {
+  /** Omit on background-only pings to avoid overwriting driver status in DB. */
+  driverStatus?: string;
+  statusDate?: string;
+  isAutoupdate?: boolean;
+  /** True only from background location task — server skips TMS for this request. */
+  isBackgroundTaskLocationUpdate?: boolean;
+  /** True only for status form submit or Share location — server logs as manual. */
+  isManualDriverLocationAction?: boolean;
+}): Promise<SendLocationToBackendResult> {
   try {
     if (!API_BASE_URL) {
       console.warn('[locationApi] API_BASE_URL is not configured, skipping backend location update');
-      return false;
+      return { ok: false, status: 0, tmsSyncFailed: false };
     }
 
     // IMPORTANT: In background/headless JS, secureStorage may not work (requires user interaction on iOS)
@@ -310,21 +344,30 @@ export async function sendLocationUpdateToBackendUser(params: {
     }
 
     if (!accessToken || !userId) {
-      return false;
+      return { ok: false, status: 401, tmsSyncFailed: false };
     }
 
     const url = `${API_BASE_URL}/v1/users/${userId}/location`;
 
-    const body = {
+    const body: Record<string, unknown> = {
       location: params.location,
       city: params.city,
       state: params.state,
       zip: params.zip,
       latitude: params.latitude,
       longitude: params.longitude,
-      // Use either explicitly provided client timestamp or device local time string
       lastLocationUpdateAt: params.lastUpdateIso ?? getLocalIsoString(),
     };
+    if (params.country !== undefined) body.country = params.country;
+    if (params.driverStatus !== undefined) body.driverStatus = params.driverStatus;
+    if (params.statusDate !== undefined) body.statusDate = params.statusDate;
+    if (params.isAutoupdate !== undefined) body.isAutoupdate = params.isAutoupdate;
+    if (params.isBackgroundTaskLocationUpdate === true) {
+      body.isBackgroundTaskLocationUpdate = true;
+    }
+    if (params.isManualDriverLocationAction === true) {
+      body.isManualDriverLocationAction = true;
+    }
 
     try {
       console.log('[locationApi] Sending location update to backend...');
@@ -345,26 +388,51 @@ export async function sendLocationUpdateToBackendUser(params: {
         // ignore JSON parse errors, maybe empty body
       }
 
+      const wrappedOk = responseData?.data ?? responseData;
+
+      if (response.status === 503) {
+        const errBody = responseData as { tmsError?: string; message?: string; databaseUpdated?: boolean };
+        const tmsError =
+          errBody?.tmsError ||
+          (typeof errBody?.message === 'string' ? errBody.message : undefined) ||
+          'TMS sync failed after database update';
+        console.warn('[locationApi] ⚠️ Backend saved location but TMS sync failed:', tmsError);
+        fileLogger.error('locationApi', 'BACKEND_OK_TMS_FAILED', {
+          status: response.status,
+          tmsError,
+          databaseUpdated: errBody?.databaseUpdated === true,
+        });
+        return { ok: true, status: 503, tmsSyncFailed: true, tmsError: String(tmsError) };
+      }
+
       if (response.ok) {
         console.log('[locationApi] ✅ Backend: Location update sent successfully');
-        return true;
-      } else {
-        fileLogger.error('locationApi', 'Backend location update returned non-2xx status', {
-          status: response.status,
-          data: responseData,
-        });
-        console.error('[locationApi] ❌ Backend: Failed to send location update');
-        return false;
+        return { ok: true, status: response.status, tmsSyncFailed: false };
       }
+
+      fileLogger.error('locationApi', 'Backend location update returned non-2xx status', {
+        status: response.status,
+        data: responseData,
+      });
+      console.error('[locationApi] ❌ Backend: Failed to send location update');
+      return {
+        ok: false,
+        status: response.status,
+        tmsSyncFailed: false,
+        tmsError:
+          typeof wrappedOk === 'object' && wrappedOk && 'message' in wrappedOk
+            ? String((wrappedOk as { message?: string }).message)
+            : undefined,
+      };
     } catch (error) {
       fileLogger.error('locationApi', 'Backend location update request failed', {
         error: error instanceof Error ? error.message : String(error),
       });
       console.error('[locationApi] ❌ Backend: Error sending location update');
-      return false;
+      return { ok: false, status: 0, tmsSyncFailed: false };
     }
   } catch (error) {
-    return false;
+    return { ok: false, status: 0, tmsSyncFailed: false };
   }
 }
 
