@@ -1,7 +1,7 @@
 /**
  * Application configuration
  * Handles environment variables for Expo
- * 
+ *
  * In Expo, environment variables must be prefixed with EXPO_PUBLIC_
  * to be accessible in the app
  */
@@ -10,6 +10,9 @@
 const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
 const WS_URL = process.env.EXPO_PUBLIC_WS_URL;
 const COMPANY = process.env.EXPO_PUBLIC_COMPANY;
+
+// Optional: MapTiler Cloud key for detailed map tiles (see utils/mapTileLayer.ts)
+const MAPTILER_API_KEY = process.env.EXPO_PUBLIC_MAPTILER_API_KEY;
 
 // Validation
 if (!API_BASE_URL) {
@@ -26,12 +29,15 @@ if (!WS_URL) {
   console.log('✅ WebSocket configured:', WS_URL);
 }
 
-export { API_BASE_URL, WS_URL };
+if (MAPTILER_API_KEY) {
+  console.log('✅ MapTiler tiles: key configured');
+}
+
+export { API_BASE_URL, WS_URL, MAPTILER_API_KEY };
 export { COMPANY };
 
 export const config = {
   API_BASE_URL,
   WS_URL,
   COMPANY,
-  // Add other config values here as needed
 } as const;

@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
 import { View, StyleSheet, StyleProp, ViewStyle, Linking } from 'react-native';
 import { WebView } from 'react-native-webview';
+import { getLeafletRasterTileConfig } from '@/utils/mapTileLayer';
 
 export interface Region {
   latitude: number;
@@ -191,6 +192,11 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
       }
     }, [markers]);
 
+    const rasterTile = getLeafletRasterTileConfig();
+    const tileLayerSubdomainsJs = rasterTile.subdomains
+      ? `subdomains: '${rasterTile.subdomains}',`
+      : '';
+
     useImperativeHandle(ref, () => ({
       animateToRegion: (region: Region, duration: number = 1000) => {
         webViewRef.current?.injectJavaScript(`
@@ -262,10 +268,11 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
       markerZoomAnimation: true
     });
 
-    // Add OpenStreetMap tile layer
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors',
-      maxZoom: 19,
+    // MapTiler streets-v4 if EXPO_PUBLIC_MAPTILER_API_KEY is set, else CARTO Voyager (no key)
+    L.tileLayer(${JSON.stringify(rasterTile.url)}, {
+      attribution: ${JSON.stringify(rasterTile.attribution)},
+      ${tileLayerSubdomainsJs}
+      maxZoom: ${rasterTile.maxZoom},
       tileSize: 256,
       zoomOffset: 0
     }).addTo(map);

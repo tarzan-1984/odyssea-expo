@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'expo-router';
-import { View, Text, TouchableOpacity, StyleSheet, Image, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, Image, Platform, Animated } from 'react-native';
 import { colors } from '@/lib/colors';
 import { borderRadius, fonts, fp, rem } from "@/lib";
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -32,8 +32,25 @@ export default function FinalVerifyScreen() {
   const initials = `${firstName[0]}${lastName ? lastName[0] : firstName[0]}`.toUpperCase();
   const profilePhoto = user?.profilePhoto || user?.avatar || null;
   const [showPermissionsAssistant, setShowPermissionsAssistant] = useState(false);
-  
-  // Load permissions assistant state on mount
+  const [driverBanner, setDriverBanner] = useState<string | null>(null);
+  const driverBannerAnim = useRef(new Animated.Value(-100)).current;
+
+  useEffect(() => {
+    if (!driverBanner) {
+      Animated.timing(driverBannerAnim, {
+        toValue: -100,
+        duration: 280,
+        useNativeDriver: true,
+      }).start();
+    } else {
+      Animated.spring(driverBannerAnim, {
+        toValue: 0,
+        useNativeDriver: true,
+        tension: 50,
+        friction: 8,
+      }).start();
+    }
+  }, [driverBanner, driverBannerAnim]);
   useEffect(() => {
     const loadPermissionsState = async () => {
       try {
@@ -150,11 +167,37 @@ export default function FinalVerifyScreen() {
           
           <View style={styles.contentWrapper}>
             {isDriver ? (
-              <DriverContent />
+              <DriverContent onDriverBanner={setDriverBanner} />
             ) : (
               <NonDriverContent firstName={firstName} />
             )}
           </View>
+
+          {isDriver && driverBanner ? (
+            <Animated.View
+              style={[
+                styles.driverBannerWrap,
+                (driverBanner === 'Successful status update' ||
+                  driverBanner.includes('successfully'))
+                  ? styles.driverBannerSuccess
+                  : styles.driverBannerError,
+                { transform: [{ translateY: driverBannerAnim }] },
+              ]}
+              pointerEvents="none"
+            >
+              <Text
+                style={[
+                  styles.driverBannerText,
+                  (driverBanner === 'Successful status update' ||
+                    driverBanner.includes('successfully'))
+                    ? styles.driverBannerTextSuccess
+                    : styles.driverBannerTextError,
+                ]}
+              >
+                {driverBanner}
+              </Text>
+            </Animated.View>
+          ) : null}
         </View>
         
         {/* Bottom Navigation */}
@@ -229,5 +272,40 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     flexWrap: 'wrap',
     marginRight: rem(12),
+  },
+  /** Sits just under the purple header; z-index above header so the peeking strip stays readable */
+  driverBannerWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: rem(58),
+    zIndex: 40,
+    paddingHorizontal: rem(20),
+    paddingTop: rem(18),
+    paddingBottom: rem(12),
+    backgroundColor: colors.neutral.white,
+    borderBottomWidth: 1,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 4,
+    elevation: 8,
+  },
+  driverBannerSuccess: {
+    borderBottomColor: '#34C759',
+  },
+  driverBannerError: {
+    borderBottomColor: '#FF3B30',
+  },
+  driverBannerText: {
+    fontSize: fp(14),
+    fontFamily: fonts["600"],
+    textAlign: 'center',
+  },
+  driverBannerTextSuccess: {
+    color: '#34C759',
+  },
+  driverBannerTextError: {
+    color: '#FF3B30',
   },
 });

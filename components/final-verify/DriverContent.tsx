@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, TextInput, Platform, AppState, ActivityIndicator, Linking, Animated } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, TextInput, Platform, AppState, ActivityIndicator, Linking, Animated, Modal } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import OSMMapView, { Region } from '@/components/maps/OSMMapView';
 import { BlurView } from 'expo-blur';
 import * as Location from 'expo-location';
@@ -39,7 +40,13 @@ import { getResolvedAppLocationSettings } from '@/utils/appLocationSettings';
  * DriverContent - Location tracking component for DRIVER role users
  * Contains all location-related functionality: map, status updates, location sharing
  */
-export default function DriverContent() {
+export type DriverContentProps = {
+  /** When set, status banner is rendered in the host (above header z-index) so text stays readable */
+  onDriverBanner?: (message: string | null) => void;
+};
+
+export default function DriverContent({ onDriverBanner }: DriverContentProps) {
+  const insets = useSafeAreaInsets();
   const { authState, updateUserLocation, clearUserLocation, syncLocationFromAsyncStorage } = useAuth();
   const { automaticLocationSharing, setAutomaticLocationSharing } = useAppSettings();
   const user = authState.user;
@@ -129,7 +136,7 @@ export default function DriverContent() {
     return `Last updated: ${month}/${day}/${year} ${hours}:${minutes}:${seconds}`;
   };
   const mapRef = useRef<{ animateToRegion: (region: Region, duration?: number) => void }>(null);
-  // OSMMapView uses OpenStreetMap which is completely free and doesn't require API keys
+  // OSMMapView: MapTiler streets-v4 if EXPO_PUBLIC_MAPTILER_API_KEY is set, else CARTO Voyager (no key)
   const initialRegion: Region = {
     latitude: 39.2904, // default Baltimore
     longitude: -76.6122,
@@ -139,9 +146,20 @@ export default function DriverContent() {
   const [hasLocationPermission, setHasLocationPermission] = useState<boolean | null>(null);
   const [isLocationReady, setIsLocationReady] = useState(false);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [updateSuccessMessage, setUpdateSuccessMessage] = useState<string | null>(null);
+  const [internalBanner, setInternalBanner] = useState<string | null>(null);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
   const messageAnimation = useRef(new Animated.Value(-100)).current; // Start above screen
+
+  const postDriverBanner = useCallback((message: string | null, autoClearMs?: number) => {
+    const apply = onDriverBanner ?? ((m: string | null) => setInternalBanner(m));
+    apply(message);
+    if (message != null && autoClearMs != null && autoClearMs > 0) {
+      setTimeout(() => {
+        apply(null);
+      }, autoClearMs);
+    }
+  }, [onDriverBanner]);
+
   const zipJustSetFromShareRef = useRef(false); // Prevent effects from overwriting ZIP right after Share
   const zipClearedByStatusSelectRef = useRef(false); // Prevent effects from restoring ZIP right after clearing on status select
 
@@ -946,10 +964,10 @@ export default function DriverContent() {
     return () => unsub();
   }, [automaticLocationSharing, startBackgroundLocationTracking]);
 
-  // Animate message when updateSuccessMessage changes
+  // Animate in-app banner only when host does not render it
   useEffect(() => {
-    if (updateSuccessMessage) {
-      // Slide down
+    if (onDriverBanner) return;
+    if (internalBanner) {
       Animated.spring(messageAnimation, {
         toValue: 0,
         useNativeDriver: true,
@@ -957,14 +975,13 @@ export default function DriverContent() {
         friction: 8,
       }).start();
     } else {
-      // Slide up
       Animated.timing(messageAnimation, {
         toValue: -100,
         duration: 300,
         useNativeDriver: true,
       }).start();
     }
-  }, [updateSuccessMessage, messageAnimation]);
+  }, [internalBanner, messageAnimation, onDriverBanner]);
 
   // Load saved location data on mount
   useEffect(() => {
@@ -1202,8 +1219,8 @@ export default function DriverContent() {
     try {
       // Validate that all fields are filled
       if (!status) {
-        setUpdateSuccessMessage('Status is required');
-        setTimeout(() => setUpdateSuccessMessage(null), 3000);
+        postDriverBanner('Status is required');
+        setTimeout(() => postDriverBanner(null), 3000);
         return;
       }
       const isNotAvailable = status === 'available_off';
@@ -1218,20 +1235,20 @@ export default function DriverContent() {
         // available, loaded_enroute - use current date/time (date field is hidden)
         dateToSend = formatDateWithTime(new Date());
         if (!zip || zip.trim() === '') {
-          setUpdateSuccessMessage('ZIP code is required');
-          setTimeout(() => setUpdateSuccessMessage(null), 3000);
+          postDriverBanner('ZIP code is required');
+          setTimeout(() => postDriverBanner(null), 3000);
           return;
         }
       } else {
         // available_on - use date from form (user can edit)
         if (!zip || zip.trim() === '') {
-          setUpdateSuccessMessage('ZIP code is required');
-          setTimeout(() => setUpdateSuccessMessage(null), 3000);
+          postDriverBanner('ZIP code is required');
+          setTimeout(() => postDriverBanner(null), 3000);
           return;
         }
         if (!date || date.trim() === '') {
-          setUpdateSuccessMessage('Date is required');
-          setTimeout(() => setUpdateSuccessMessage(null), 3000);
+          postDriverBanner('Date is required');
+          setTimeout(() => postDriverBanner(null), 3000);
           return;
         }
         // date already has time (MM/DD/YY h:mm AM/PM) or date only - formatStatusDate handles both
@@ -1255,8 +1272,8 @@ export default function DriverContent() {
         try {
           const geoResult = await geocodeWithPostalAsync(zipToSend.trim(), 'us');
           if (!geoResult) {
-            setUpdateSuccessMessage('Failed to determine location from ZIP code');
-            setTimeout(() => setUpdateSuccessMessage(null), 3000);
+            postDriverBanner('Failed to determine location from ZIP code');
+            setTimeout(() => postDriverBanner(null), 3000);
             return;
           }
           currentLocation = {
@@ -1287,15 +1304,15 @@ export default function DriverContent() {
             }
           }
         } catch {
-          setUpdateSuccessMessage('Failed to determine location from ZIP code');
-          setTimeout(() => setUpdateSuccessMessage(null), 3000);
+          postDriverBanner('Failed to determine location from ZIP code');
+          setTimeout(() => postDriverBanner(null), 3000);
           return;
         }
       }
 
       if (!currentLocation) {
-        setUpdateSuccessMessage('Location data is required. Please share your location first.');
-        setTimeout(() => setUpdateSuccessMessage(null), 3000);
+        postDriverBanner('Location data is required. Please share your location first.');
+        setTimeout(() => postDriverBanner(null), 3000);
         return;
       }
 
@@ -1337,24 +1354,24 @@ export default function DriverContent() {
           currentLocation.longitude,
           zipToSend
         );
-        setUpdateSuccessMessage('Successful status update');
+        postDriverBanner('Successful status update');
         setTimeout(() => {
-          setUpdateSuccessMessage(null);
+          postDriverBanner(null);
         }, 3000);
       } else {
         fileLogger.error('DriverContent', 'BACKEND_LOCATION_SYNC_FAILED', {
           status: syncResult.status,
         });
-        setUpdateSuccessMessage('Something went wrong. Please try updating the status later.');
+        postDriverBanner('Something went wrong. Please try updating the status later.');
         setTimeout(() => {
-          setUpdateSuccessMessage(null);
+          postDriverBanner(null);
         }, 3000);
       }
     } catch (error) {
       console.error('[DriverContent] Failed to save status update:', error);
-      setUpdateSuccessMessage('Something went wrong. Please try updating the status later.');
+      postDriverBanner('Something went wrong. Please try updating the status later.');
       setTimeout(() => {
-        setUpdateSuccessMessage(null);
+        postDriverBanner(null);
       }, 3000);
     } finally {
       setIsUpdatingStatus(false);
@@ -1378,9 +1395,9 @@ export default function DriverContent() {
         if (!granted) {
           fileLogger.error('DriverContent', 'Location permission not granted', { status });
           console.warn('[DriverContent] Location permission not granted:', status);
-          setUpdateSuccessMessage('Something went wrong. Please try updating the status later.');
+          postDriverBanner('Something went wrong. Please try updating the status later.');
           setTimeout(() => {
-            setUpdateSuccessMessage(null);
+            postDriverBanner(null);
           }, 3000);
           return;
         }
@@ -1392,9 +1409,9 @@ export default function DriverContent() {
       if (!isLocationEnabled) {
         fileLogger.error('DriverContent', 'Location services are disabled');
         console.warn('[DriverContent] Location services are disabled');
-        setUpdateSuccessMessage('Something went wrong. Please try updating the status later.');
+        postDriverBanner('Something went wrong. Please try updating the status later.');
         setTimeout(() => {
-          setUpdateSuccessMessage(null);
+          postDriverBanner(null);
         }, 3000);
         return;
       }
@@ -1433,9 +1450,9 @@ export default function DriverContent() {
           errorMessage += 'Please try again.';
         }
         
-        setUpdateSuccessMessage(errorMessage);
+        postDriverBanner(errorMessage);
         setTimeout(() => {
-          setUpdateSuccessMessage(null);
+          postDriverBanner(null);
         }, 5000);
         return;
       }
@@ -1443,9 +1460,9 @@ export default function DriverContent() {
       if (!pos || !pos.coords) {
         fileLogger.error('DriverContent', 'Invalid location data received');
         console.warn('[DriverContent] Invalid location data received');
-        setUpdateSuccessMessage('Something went wrong. Please try updating the status later.');
+        postDriverBanner('Something went wrong. Please try updating the status later.');
         setTimeout(() => {
-          setUpdateSuccessMessage(null);
+          postDriverBanner(null);
         }, 3000);
         return;
       }
@@ -1548,16 +1565,16 @@ export default function DriverContent() {
       setIsLocationReady(true);
       
       if (postalCode) {
-        setUpdateSuccessMessage('Location obtained successfully');
+        postDriverBanner('Location obtained successfully');
         setTimeout(() => {
-          setUpdateSuccessMessage(null);
+          postDriverBanner(null);
         }, 2000);
       } else {
-        setUpdateSuccessMessage(
+        postDriverBanner(
           'Location found, but postal code was not detected. Move outdoors for better GPS, try again, or choose “Available on” to enter ZIP manually.'
         );
         setTimeout(() => {
-          setUpdateSuccessMessage(null);
+          postDriverBanner(null);
         }, 6000);
       }
     } catch (e: any) {
@@ -1574,9 +1591,9 @@ export default function DriverContent() {
         errorMessage += 'Please try again.';
       }
       
-      setUpdateSuccessMessage(errorMessage);
+      postDriverBanner(errorMessage);
       setTimeout(() => {
-        setUpdateSuccessMessage(null);
+        postDriverBanner(null);
       }, 4000);
     } finally {
       setIsSharingLocation(false);
@@ -1779,11 +1796,11 @@ export default function DriverContent() {
   return (
     <View style={styles.contentWrapper}>
       {/* Animated success/error message from top */}
-      {updateSuccessMessage && (
+      {!onDriverBanner && internalBanner && (
         <Animated.View
           style={[
             styles.topMessageContainer,
-            (updateSuccessMessage === 'Successful status update' || updateSuccessMessage.includes('successfully'))
+            (internalBanner === 'Successful status update' || internalBanner.includes('successfully'))
               ? styles.topMessageContainerSuccess
               : styles.topMessageContainerError,
             {
@@ -1794,12 +1811,12 @@ export default function DriverContent() {
           <Text 
             style={[
               styles.topMessageText,
-              (updateSuccessMessage === 'Successful status update' || updateSuccessMessage.includes('successfully'))
+              (internalBanner === 'Successful status update' || internalBanner.includes('successfully'))
                 ? styles.topMessageTextSuccess
                 : styles.topMessageTextError,
             ]}
           >
-            {updateSuccessMessage}
+            {internalBanner}
           </Text>
         </Animated.View>
       )}
