@@ -170,6 +170,7 @@ export default function ZipEditPopup({ visible, initialValue, onClose, onSet }: 
               placeholder="Enter ZIP or address"
               placeholderTextColor={colors.primary.blue}
               autoFocus
+              {...(Platform.OS === 'android' ? { includeFontPadding: false } : {})}
             />
             {isGeocoding && (
               <ActivityIndicator size="small" color={colors.primary.blue} style={styles.loader} />
@@ -261,7 +262,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     paddingHorizontal: rem(16),
     height: rem(44),
-    fontSize: fp(16),
+    fontSize: fp(13),
     color: colors.primary.blue,
   },
   loader: {

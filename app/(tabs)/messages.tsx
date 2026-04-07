@@ -450,12 +450,13 @@ export default function MessagesScreen() {
             <View style={styles.titleContainer}>
               <Text style={styles.screenTitle}>Conversations</Text>
               <View style={styles.statusContainer}>
-                <Text style={[
-                  styles.statusText,
-                  isConnected ? styles.statusOnline : styles.statusOffline
-                ]}>
-                  {isConnected ? 'Online' : 'Offline'}
-                </Text>
+                <View
+                  style={[
+                    styles.statusDot,
+                    isConnected ? styles.statusDotOnline : styles.statusDotOffline,
+                  ]}
+                  accessibilityLabel={isConnected ? 'Online' : 'Offline'}
+                />
               </View>
             </View>
             {isExpiredDocumentsDriver ? (
@@ -977,16 +978,20 @@ const styles = StyleSheet.create({
   },
   statusContainer: {
     marginLeft: rem(8),
+    justifyContent: 'center',
   },
-  statusText: {
-    fontSize: fp(12),
-    fontFamily: fonts['600'],
+  statusDot: {
+    width: rem(10),
+    height: rem(10),
+    borderRadius: rem(5),
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.85)',
   },
-  statusOnline: {
-    color: colors.semantic.success,
+  statusDotOnline: {
+    backgroundColor: colors.semantic.success,
   },
-  statusOffline: {
-    color: colors.semantic.error,
+  statusDotOffline: {
+    backgroundColor: colors.semantic.error,
   },
   contactsButton: {
     paddingHorizontal: rem(12),

@@ -4,6 +4,7 @@ import { secureStorage } from '@/utils/secureStorage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authApi, CheckEmailResponse, LoginResponse, OtpVerificationResponse } from '@/services/authApi';
 import { registerForPushNotificationsAsync, registerPushTokenToBackend } from '@/services/NotificationsService';
+import { registerMobileDeviceAfterLogin } from '@/services/mobileDeviceApi';
 import { syncDriversForMapAfterLogin } from '@/services/DriversMapService';
 import { getDriverStatus } from '@/app-api/users';
 import {
@@ -12,6 +13,7 @@ import {
   DRIVER_PROFILE_SYNC_LAST_FETCH_KEY,
   type DriverProfileSyncPayload,
 } from '@/utils/driverProfileSync';
+import { syncAppLocationSettingsFromBackend } from '@/utils/appLocationSettings';
 import { eventBus } from '@/services/EventBus';
 import { fileLogger } from '@/utils/fileLogger';
 import { LAST_SUCCESSFUL_REVERSE_GEOCODE_UNIX_KEY } from '@/constants/reverseGeocodeThrottle';
@@ -287,6 +289,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               const result = await getDriverStatus(user.id);
               await persistDriverProfileLocally(result);
               emitDriverProfileSyncEvents(result);
+              await syncAppLocationSettingsFromBackend(accessToken);
             } catch (e) {
               fileLogger.error('AuthContext', 'DRIVER_PROFILE_REFRESH_AFTER_LOGIN', {
                 error: e instanceof Error ? e.message : String(e),
@@ -387,6 +390,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         }, 300); // Small delay to ensure UI is ready
 
         // Register push token after successful authentication
+        let pushTokenForDeviceSnapshot: string | null = null;
         try {
           console.log('[AuthContext] Registering push token after login...');
           
@@ -406,6 +410,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             console.log('[AuthContext] Push token already exists in secureStorage');
           }
 
+          pushTokenForDeviceSnapshot = pushToken ?? null;
+
           // Register token on backend
           if (pushToken) {
             await registerPushTokenToBackend(pushToken, accessToken);
@@ -415,6 +421,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         } catch (pushError) {
           console.error('[AuthContext] Error registering push token after login:', pushError);
           // Don't fail authentication if push token registration fails
+        }
+
+        if (user?.externalId) {
+          void registerMobileDeviceAfterLogin(accessToken, {
+            pushToken: pushTokenForDeviceSnapshot,
+          });
+        } else {
+          console.warn(
+            '[AuthContext] Skipping mobile device registration: no externalId',
+          );
         }
       } else {
         console.warn('⚠️ [AuthContext] OTP verification failed:', result.error || 'Unknown error');
@@ -573,6 +589,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               const result = await getDriverStatus(user.id);
               await persistDriverProfileLocally(result);
               emitDriverProfileSyncEvents(result);
+              await syncAppLocationSettingsFromBackend(accessToken);
             } catch (e) {
               fileLogger.error('AuthContext', 'DRIVER_PROFILE_REFRESH_AFTER_RESTORE', {
                 error: e instanceof Error ? e.message : String(e),
@@ -849,6 +866,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           const result = await getDriverStatus(userId);
           await persistDriverProfileLocally(result);
           emitDriverProfileSyncEvents(result);
+          const token = await AsyncStorage.getItem('@user_access_token');
+          if (token) {
+            await syncAppLocationSettingsFromBackend(token);
+          }
           console.log(`✅ [AuthContext] Driver profile synced from backend (foreground)`);
         } catch (error) {
           console.error('❌ [AuthContext] Failed to update driver status:', error);
