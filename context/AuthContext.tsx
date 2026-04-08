@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect } from 'react';
+import React, { createContext, useContext, useState, useCallback, ReactNode, useEffect, useLayoutEffect, useRef } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 import { secureStorage } from '@/utils/secureStorage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -19,6 +19,11 @@ import { fileLogger } from '@/utils/fileLogger';
 import { LAST_SUCCESSFUL_REVERSE_GEOCODE_UNIX_KEY } from '@/constants/reverseGeocodeThrottle';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
+import {
+  proactiveAccessTokenRefresh,
+  proactiveRefreshFromSecureStorage,
+  persistAccessTokenToAllStorages,
+} from '@/utils/accessTokenRefresh';
 
 // User interface
 export interface User {
@@ -113,6 +118,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     userZipCode: null,
     lastLocationUpdate: null,
   });
+
+  /** Lets loadStoredAuth call full logout before resetAuthState is defined in source order */
+  const resetAuthStateRef = useRef<(() => Promise<void>) | null>(null);
 
   const checkEmailAndGeneratePassword = useCallback(async (email: string): Promise<CheckEmailResponse> => {
     setAuthState(prev => ({
@@ -211,9 +219,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         
         // Save tokens to secure storage
         try {
-          await secureStorage.setItemAsync('accessToken', accessToken);
           await secureStorage.setItemAsync('refreshToken', refreshToken);
           await secureStorage.setItemAsync('user', JSON.stringify(user));
+          await persistAccessTokenToAllStorages(accessToken);
           // Cache externalId, accessToken, and userId in AsyncStorage for background tasks (secureStorage may not work in background on iOS)
           if (user?.externalId) {
             try {
@@ -221,14 +229,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               console.log('💾 [AuthContext] External ID cached in AsyncStorage for background tasks');
             } catch (cacheError) {
               console.warn('⚠️ [AuthContext] Failed to cache externalId:', cacheError);
-            }
-          }
-          if (accessToken) {
-            try {
-              await AsyncStorage.setItem('@user_access_token', accessToken);
-              console.log('💾 [AuthContext] Access token cached in AsyncStorage for background tasks');
-            } catch (cacheError) {
-              console.warn('⚠️ [AuthContext] Failed to cache accessToken:', cacheError);
             }
           }
           if (user?.id) {
@@ -517,6 +517,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       if (accessToken && refreshToken && userJson) {
         const user = JSON.parse(userJson);
+
+        const tokenMaint = await proactiveAccessTokenRefresh(accessToken, refreshToken);
+        if (tokenMaint.outcome === 'auth_lost') {
+          console.warn('⚠️ [AuthContext] Stored session invalid (refresh failed), clearing auth');
+          await resetAuthStateRef.current?.();
+          return;
+        }
+        const finalAccessToken = tokenMaint.accessToken;
         
         // Cache externalId, accessToken, and userId in AsyncStorage for background tasks (secureStorage may not work in background on iOS)
         if (user?.externalId) {
@@ -527,9 +535,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             console.warn('⚠️ [AuthContext] Failed to cache externalId:', cacheError);
           }
         }
-        if (accessToken) {
+        if (finalAccessToken) {
           try {
-            await AsyncStorage.setItem('@user_access_token', accessToken);
+            await AsyncStorage.setItem('@user_access_token', finalAccessToken);
             console.log('💾 [AuthContext] Access token cached in AsyncStorage for background tasks');
           } catch (cacheError) {
             console.warn('⚠️ [AuthContext] Failed to cache accessToken:', cacheError);
@@ -565,14 +573,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
         console.log('✅ [AuthContext] Found stored auth data');
         console.log('👤 [AuthContext] User:', user.email);
-        console.log('🔑 [AuthContext] Access token:', accessToken.substring(0, 20) + '...');
+        console.log('🔑 [AuthContext] Access token:', finalAccessToken.substring(0, 20) + '...');
         
         setAuthState({
           isLoading: false,
           error: null,
           userEmail: user.email,
           password: null,
-          accessToken,
+          accessToken: finalAccessToken,
           refreshToken,
           user,
           isAuthenticated: true,
@@ -589,7 +597,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               const result = await getDriverStatus(user.id);
               await persistDriverProfileLocally(result);
               emitDriverProfileSyncEvents(result);
-              await syncAppLocationSettingsFromBackend(accessToken);
+              await syncAppLocationSettingsFromBackend(finalAccessToken);
             } catch (e) {
               fileLogger.error('AuthContext', 'DRIVER_PROFILE_REFRESH_AFTER_RESTORE', {
                 error: e instanceof Error ? e.message : String(e),
@@ -803,6 +811,47 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       lastLocationUpdate: null,
     });
   }, []);
+
+  useLayoutEffect(() => {
+    resetAuthStateRef.current = resetAuthState;
+  }, [resetAuthState]);
+
+  // Proactive JWT refresh when app becomes active (all roles); uses storage to avoid stale closures.
+  useEffect(() => {
+    if (!authState.isAuthenticated) {
+      return;
+    }
+    let lastRunAt = 0;
+    const minIntervalMs = 1500;
+
+    const run = async () => {
+      const now = Date.now();
+      if (now - lastRunAt < minIntervalMs) return;
+      lastRunAt = now;
+      try {
+        const r = await proactiveRefreshFromSecureStorage();
+        if (r.outcome === 'auth_lost') {
+          await resetAuthStateRef.current?.();
+          return;
+        }
+        if (r.outcome === 'refreshed') {
+          setAuthState((prev) => ({ ...prev, accessToken: r.accessToken }));
+        }
+      } catch (e) {
+        console.warn('⚠️ [AuthContext] Foreground token maintenance failed:', e);
+      }
+    };
+
+    const subscription = AppState.addEventListener('change', (next) => {
+      if (next === 'active') {
+        void run();
+      }
+    });
+
+    void run();
+
+    return () => subscription.remove();
+  }, [authState.isAuthenticated]);
 
   // Merge server driver profile into auth user (WebSocket / refresh).
   useEffect(() => {
