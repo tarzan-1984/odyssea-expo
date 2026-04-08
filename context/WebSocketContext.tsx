@@ -9,6 +9,7 @@ import { chatApi } from '@/app-api/chatApi';
 import { ChatRoom } from '@/components/ChatListItem';
 import { messagesCacheService } from '@/services/MessagesCacheService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { syncAppLocationSettingsFromBackend } from '@/utils/appLocationSettings';
 
 // WebSocket context interface
 interface WebSocketContextType {
@@ -184,6 +185,18 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     newSocket.on('connected', (data: any) => {
       // Server automatically joins user to all their chat rooms
       // So we should receive userOnline events for other participants
+    });
+
+    // Global app_settings changed (mobile throttling + live/test mode). Re-fetch and apply locally.
+    newSocket.on('appLocationSettingsUpdated', async () => {
+      try {
+        const token = await AsyncStorage.getItem('@user_access_token');
+        if (token) {
+          await syncAppLocationSettingsFromBackend(token);
+        }
+      } catch (e) {
+        console.warn('[WebSocket] Failed to sync app location settings:', e);
+      }
     });
 
     newSocket.on('disconnect', (reason) => {

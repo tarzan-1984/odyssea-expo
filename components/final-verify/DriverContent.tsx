@@ -140,14 +140,18 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
   const initialRegion: Region = {
     latitude: 39.2904, // default Baltimore
     longitude: -76.6122,
-    latitudeDelta: 0.05,
-    longitudeDelta: 0.05,
+    // Start more zoomed in (MapTiler/CARTO styles look better with a closer default).
+    latitudeDelta: 0.006,
+    longitudeDelta: 0.006,
   };
   const [hasLocationPermission, setHasLocationPermission] = useState<boolean | null>(null);
   const [isLocationReady, setIsLocationReady] = useState(false);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [internalBanner, setInternalBanner] = useState<string | null>(null);
   const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [locationEnvMode, setLocationEnvMode] = useState<'live' | 'test'>('live');
+  const [locationTestDriverExternalId, setLocationTestDriverExternalId] =
+    useState<string>('3343');
   const messageAnimation = useRef(new Animated.Value(-100)).current; // Start above screen
 
   const postDriverBanner = useCallback((message: string | null, autoClearMs?: number) => {
@@ -225,8 +229,22 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       
       console.log('📍 [BackgroundTracking] ========== STARTING BACKGROUND TRACKING ==========');
 
-      const { locationMinIntervalMs, locationMinDistanceM } =
-        await getResolvedAppLocationSettings();
+      const appLoc = await getResolvedAppLocationSettings();
+      const { locationMinIntervalMs, locationMinDistanceM } = appLoc;
+
+      // Environment gate: in test mode, only the allowed externalId may run background auto-updates.
+      if (appLoc.locationEnvironmentMode === 'test') {
+        const allowed = (appLoc.locationTestDriverExternalId || '').trim();
+        const currentExternalId =
+          (await AsyncStorage.getItem('@user_external_id').catch(() => null))?.trim() || '';
+        if (!allowed || !currentExternalId || currentExternalId !== allowed) {
+          console.log(
+            `⏸️ [BackgroundTracking] Test mode gate: not starting background tracking (current externalId="${currentExternalId || '(missing)'}", allowed="${allowed || '(missing)'}")`,
+          );
+          await stopBackgroundLocationTracking();
+          return;
+        }
+      }
       
       // IMPORTANT: On Android 12+, we need notification permission for foreground service
       if (Platform.OS === 'android') {
@@ -963,6 +981,32 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
     });
     return () => unsub();
   }, [automaticLocationSharing, startBackgroundLocationTracking]);
+
+  // Show "test mode" hint under the auto-sharing toggle. Keep it in sync with backend app_settings.
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      const s = await getResolvedAppLocationSettings();
+      if (!mounted) return;
+      setLocationEnvMode(s.locationEnvironmentMode);
+      setLocationTestDriverExternalId(s.locationTestDriverExternalId);
+    };
+    void load();
+    const unsub = eventBus.on('APP_LOCATION_SETTINGS_SYNCED', (payload: any) => {
+      // payload shape matches AppLocationSettingsStored
+      if (!payload || typeof payload !== 'object') return;
+      const mode = payload.locationEnvironmentMode;
+      const extId = payload.locationTestDriverExternalId;
+      if (mode === 'live' || mode === 'test') setLocationEnvMode(mode);
+      if (typeof extId === 'string' && extId.trim() !== '') {
+        setLocationTestDriverExternalId(extId.trim());
+      }
+    });
+    return () => {
+      mounted = false;
+      unsub();
+    };
+  }, []);
 
   // Animate in-app banner only when host does not render it
   useEffect(() => {
@@ -1897,14 +1941,21 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           
           {/* Location toggle - only show for active status group */}
           {isLocationSharingAllowed && (
-            <View style={styles.switchContainer}>
-              <Text style={styles.switchLabel}>Turn on automatic location sharing</Text>
-              <View style={{ flexShrink: 0 }}>
-                <CustomSwitch
-                  value={automaticLocationSharing}
-                  onValueChange={handleLocationToggleChange}
-                />
+            <View style={styles.switchBlock}>
+              <View style={styles.switchContainer}>
+                <Text style={styles.switchLabel}>Turn on automatic location sharing</Text>
+                <View style={{ flexShrink: 0 }}>
+                  <CustomSwitch
+                    value={automaticLocationSharing}
+                    onValueChange={handleLocationToggleChange}
+                  />
+                </View>
               </View>
+              {locationEnvMode === 'test' ? (
+                <Text style={styles.testModeHint}>
+                  Test mode is enabled. Automatic background location updates are disabled.
+                </Text>
+              ) : null}
             </View>
           )}
               
@@ -2142,6 +2193,9 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     marginBottom: rem(24),
   },
+  switchBlock: {
+    marginBottom: rem(24),
+  },
   switchLabel: {
     fontSize: fp(14),
     color: colors.primary.blue,
@@ -2153,6 +2207,13 @@ const styles = StyleSheet.create({
     paddingRight: rem(12),
     // allow wrapping to next line if text doesn't fit
     flexWrap: 'wrap',
+  },
+  testModeHint: {
+    marginTop: rem(-18),
+    fontSize: fp(12),
+    lineHeight: fp(16),
+    color: '#8E8E93',
+    fontFamily: fonts["400"],
   },
   lastUpdateContainer: {
     marginTop: rem(-20),

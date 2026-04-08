@@ -7,6 +7,8 @@ import { eventBus } from '@/services/EventBus';
 const FALLBACK_INTERVAL_MS = 60 * 1000;
 const FALLBACK_DISTANCE_M = 3000;
 const FALLBACK_REVERSE_GEOCODE_DISTANCE_M = 5000;
+const FALLBACK_ENV_MODE: 'live' | 'test' = 'live';
+const FALLBACK_TEST_DRIVER_EXTERNAL_ID = '3343';
 
 export const APP_LOCATION_SETTINGS_KEY = '@app_location_settings_v1';
 
@@ -14,12 +16,16 @@ export type AppLocationSettingsStored = {
   locationMinIntervalMs: number;
   locationMinDistanceM: number;
   reverseGeocodeMinDistanceM: number;
+  locationEnvironmentMode: 'live' | 'test';
+  locationTestDriverExternalId: string;
 };
 
 export const DEFAULT_APP_LOCATION_SETTINGS: AppLocationSettingsStored = {
   locationMinIntervalMs: FALLBACK_INTERVAL_MS,
   locationMinDistanceM: FALLBACK_DISTANCE_M,
   reverseGeocodeMinDistanceM: FALLBACK_REVERSE_GEOCODE_DISTANCE_M,
+  locationEnvironmentMode: FALLBACK_ENV_MODE,
+  locationTestDriverExternalId: FALLBACK_TEST_DRIVER_EXTERNAL_ID,
 };
 
 export async function getResolvedAppLocationSettings(): Promise<AppLocationSettingsStored> {
@@ -42,10 +48,21 @@ export async function getResolvedAppLocationSettings(): Promise<AppLocationSetti
       p.reverseGeocodeMinDistanceM >= 100
         ? p.reverseGeocodeMinDistanceM
         : DEFAULT_APP_LOCATION_SETTINGS.reverseGeocodeMinDistanceM;
+    const envMode =
+      p.locationEnvironmentMode === 'test' || p.locationEnvironmentMode === 'live'
+        ? p.locationEnvironmentMode
+        : DEFAULT_APP_LOCATION_SETTINGS.locationEnvironmentMode;
+    const testExtId =
+      typeof p.locationTestDriverExternalId === 'string' &&
+      p.locationTestDriverExternalId.trim() !== ''
+        ? p.locationTestDriverExternalId.trim()
+        : DEFAULT_APP_LOCATION_SETTINGS.locationTestDriverExternalId;
     return {
       locationMinIntervalMs: interval,
       locationMinDistanceM: distance,
       reverseGeocodeMinDistanceM: revGeo,
+      locationEnvironmentMode: envMode,
+      locationTestDriverExternalId: testExtId,
     };
   } catch {
     return { ...DEFAULT_APP_LOCATION_SETTINGS };
@@ -77,16 +94,26 @@ export async function fetchAppLocationSettingsFromBackend(
     const interval = body.locationMinIntervalMs;
     const distance = body.locationMinDistanceM;
     const revGeoRaw = body.reverseGeocodeMinDistanceM;
+    const envModeRaw = body.locationEnvironmentMode;
+    const testExtIdRaw = body.locationTestDriverExternalId;
     const revGeo =
       typeof revGeoRaw === 'number' && revGeoRaw >= 100
         ? revGeoRaw
         : FALLBACK_REVERSE_GEOCODE_DISTANCE_M;
     if (typeof interval !== 'number' || typeof distance !== 'number') return null;
     if (interval < 0 || distance < 0) return null;
+    const envMode: 'live' | 'test' =
+      envModeRaw === 'test' || envModeRaw === 'live' ? envModeRaw : FALLBACK_ENV_MODE;
+    const testExtId =
+      typeof testExtIdRaw === 'string' && testExtIdRaw.trim() !== ''
+        ? testExtIdRaw.trim()
+        : FALLBACK_TEST_DRIVER_EXTERNAL_ID;
     return {
       locationMinIntervalMs: interval,
       locationMinDistanceM: distance,
       reverseGeocodeMinDistanceM: revGeo,
+      locationEnvironmentMode: envMode,
+      locationTestDriverExternalId: testExtId,
     };
   } catch (e) {
     fileLogger.error('appLocationSettings', 'FETCH_FAILED', {
@@ -110,7 +137,9 @@ export async function syncAppLocationSettingsFromBackend(
   const changed =
     prev.locationMinIntervalMs !== remote.locationMinIntervalMs ||
     prev.locationMinDistanceM !== remote.locationMinDistanceM ||
-    prev.reverseGeocodeMinDistanceM !== remote.reverseGeocodeMinDistanceM;
+    prev.reverseGeocodeMinDistanceM !== remote.reverseGeocodeMinDistanceM ||
+    prev.locationEnvironmentMode !== remote.locationEnvironmentMode ||
+    prev.locationTestDriverExternalId !== remote.locationTestDriverExternalId;
 
   await persistAppLocationSettingsLocally(remote);
   if (changed) {
