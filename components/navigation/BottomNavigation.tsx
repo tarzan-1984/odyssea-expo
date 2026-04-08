@@ -248,7 +248,7 @@ const styles = StyleSheet.create({
     lineHeight: 8,
     includeFontPadding: false,
     textAlignVertical: 'center',
-    color: ACTIVE_COLOR,
+    color: colors.primary.blue,
     padding: 0,
     fontFamily: fonts['700'],
   },
