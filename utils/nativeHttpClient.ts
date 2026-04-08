@@ -39,7 +39,7 @@ export async function sendLocationUpdateNative(
   console.log('[nativeHttpClient] Starting native HTTP request...');
   console.log('[nativeHttpClient] Platform:', Platform.OS);
   console.log('[nativeHttpClient] Module available:', !!LocationHttpModule);
-  
+  fileLogger.info('nativeHttpClient', 'REQUEST_START', {
     platform: Platform.OS,
     moduleAvailable: !!LocationHttpModule,
     url,
@@ -48,6 +48,7 @@ export async function sendLocationUpdateNative(
   
   if (Platform.OS !== 'android' || !LocationHttpModule) {
     console.warn('[nativeHttpClient] Native module not available, falling back to fetch');
+    fileLogger.info('nativeHttpClient', 'NATIVE_MODULE_NOT_AVAILABLE', {
       platform: Platform.OS,
       moduleAvailable: !!LocationHttpModule,
     });
@@ -65,9 +66,11 @@ export async function sendLocationUpdateNative(
       const duration = Date.now() - requestStartTime;
       const success = response.ok;
       console.log(`[nativeHttpClient] Fetch fallback ${success ? 'success' : 'failed'} (${duration}ms), status: ${response.status}`);
+      fileLogger.info('nativeHttpClient', 'FETCH_FALLBACK_RESULT', {
         duration,
         status: response.status,
         url,
+        success,
       });
       return success;
     } catch (error) {
@@ -84,6 +87,7 @@ export async function sendLocationUpdateNative(
 
   try {
     console.log('[nativeHttpClient] Calling native module sendLocationUpdate...');
+    fileLogger.info('nativeHttpClient', 'NATIVE_REQUEST_START', {
       url,
       dataSize: JSON.stringify(requestData).length,
     });
@@ -93,6 +97,7 @@ export async function sendLocationUpdateNative(
     const success = await LocationHttpModule.sendLocationUpdate(url, apiKey, requestData as any);
     const duration = Date.now() - requestStartTime;
     console.log(`[nativeHttpClient] Native request ${success ? 'successful' : 'failed'} (${duration}ms)`);
+    fileLogger.info('nativeHttpClient', 'NATIVE_REQUEST_RESULT', {
       duration,
       url,
       success,

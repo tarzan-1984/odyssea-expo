@@ -9,8 +9,7 @@ import { chatApi } from '@/app-api/chatApi';
 import { ChatRoom } from '@/components/ChatListItem';
 import { messagesCacheService } from '@/services/MessagesCacheService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useQueryClient } from '@tanstack/react-query';
-import { DRIVER_PARTICIPATION_COUNT_QUERY_KEY } from '@/hooks/useDriverParticipationCount';
+import { syncAppLocationSettingsFromBackend } from '@/utils/appLocationSettings';
 
 // WebSocket context interface
 interface WebSocketContextType {
@@ -28,12 +27,6 @@ interface WebSocketContextType {
   markMessageAsRead: (messageId: string, chatRoomId: string) => void;
   markChatRoomAsRead: (chatRoomId: string) => void;
   typingByRoom: Record<string, Record<string, { isTyping: boolean; firstName?: string }>>;
-}
-
-interface OfferUpdatedData {
-  offerId?: number;
-  reason?: string;
-  refreshedAt?: string;
 }
 
 // Message sending interface
@@ -70,7 +63,6 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   const currentUser = authState.user;
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
-  const queryClient = useQueryClient();
   const [typingByRoom, setTypingByRoom] = useState<Record<string, Record<string, { isTyping: boolean; firstName?: string }>>>({});
   const chatRoomsList = useChatStore((s) => s.chatRooms);
   const joinedRoomsRef = useRef<Set<string>>(new Set());
@@ -109,49 +101,38 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       return;
     }
 
+    if (socket || isConnectingRef.current) {
+      return;
+    }
+    isConnectingRef.current = true;
     // Only connect if we have a current user
     if (!currentUser) {
+      isConnectingRef.current = false;
       return;
     }
 
-    // If already connecting, skip
-    if (isConnectingRef.current) {
-      return;
-    }
-
-    // If we have a socket that's still connected, no need to reconnect
-    if (socket?.connected) {
-      return;
-    }
-
-    // If we have a disconnected socket, clean it up first (allows reconnect after network loss)
+    // Disconnect existing connection if any
     if (socket) {
-      console.log('🔌 [WebSocket] Cleaning up disconnected socket before reconnect');
-      socket.disconnect();
+      (socket as Socket).disconnect();
       setSocket(null);
     }
-
-    isConnectingRef.current = true;
 
     // Get token from secure storage
     const token = await getAuthToken();
 
     if (!token) {
       console.warn('⚠️ [WebSocket] No access token available');
-      isConnectingRef.current = false;
       return;
     }
 
     // Validate WebSocket URL
     if (!WS_URL) {
       console.error('❌ [WebSocket] WS_URL is not defined');
-      isConnectingRef.current = false;
       return;
     }
 
     if (WS_URL.includes('https/')) {
       console.error('❌ [WebSocket] Invalid WebSocket URL:', WS_URL);
-      isConnectingRef.current = false;
       return;
     }
 
@@ -206,24 +187,15 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       // So we should receive userOnline events for other participants
     });
 
-    newSocket.on('offerUpdated', (data: OfferUpdatedData) => {
-      // Invalidate and immediately refetch to update offer cards in real time
-      void queryClient.invalidateQueries({ queryKey: ['offers'] });
-      void queryClient.refetchQueries({ queryKey: ['offers'], type: 'active' });
-      // Invalidate driver participation count (used for limit overlay)
-      void queryClient.invalidateQueries({ queryKey: DRIVER_PARTICIPATION_COUNT_QUERY_KEY });
-      void queryClient.refetchQueries({
-        queryKey: DRIVER_PARTICIPATION_COUNT_QUERY_KEY,
-        type: 'active',
-      });
-      if (data?.offerId != null) {
-        void queryClient.invalidateQueries({
-          queryKey: ['offer-detail', data.offerId],
-        });
-        void queryClient.refetchQueries({
-          queryKey: ['offer-detail', data.offerId],
-          type: 'active',
-        });
+    // Global app_settings changed (mobile throttling + live/test mode). Re-fetch and apply locally.
+    newSocket.on('appLocationSettingsUpdated', async () => {
+      try {
+        const token = await AsyncStorage.getItem('@user_access_token');
+        if (token) {
+          await syncAppLocationSettingsFromBackend(token);
+        }
+      } catch (e) {
+        console.warn('[WebSocket] Failed to sync app location settings:', e);
       }
     });
 
@@ -1097,7 +1069,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   // Auto-connect when user is available
   useEffect(() => {
     if (currentUser) {
-      if (!isConnected && !isConnectingRef.current) {
+      if (!isConnected && !socket && !isConnectingRef.current) {
         connect();
       }
     } else {
@@ -1135,8 +1107,8 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           wasInBackgroundRef.current = false;
         }
 
-        // If we are disconnected, try to reconnect (socket may exist but be disconnected)
-        if (!isConnected && !isConnectingRef.current) {
+        // If we are truly disconnected, try to reconnect
+        if (!isConnected && !socket && !isConnectingRef.current) {
           console.log('📱 [WebSocket] App became active, resetting reconnection attempts and attempting to reconnect...');
           reconnectAttempts.current = 0;
           

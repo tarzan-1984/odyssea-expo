@@ -203,10 +203,16 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
           (function() {
             if (window.map) {
               var center = [${region.latitude}, ${region.longitude}];
-              var zoom = Math.min(
+              // Preserve user-selected zoom if available; otherwise derive from delta.
+              var derivedZoom = Math.min(
                 Math.log2(360 / ${region.longitudeDelta}),
                 18
               );
+              var currentZoom =
+                (typeof window.currentZoom === 'number' && !isNaN(window.currentZoom))
+                  ? window.currentZoom
+                  : (window.map && typeof window.map.getZoom === 'function' ? window.map.getZoom() : null);
+              var zoom = (typeof currentZoom === 'number' && !isNaN(currentZoom)) ? currentZoom : derivedZoom;
               window.map.setView(center, zoom, {
                 animate: true,
                 duration: ${duration / 1000}

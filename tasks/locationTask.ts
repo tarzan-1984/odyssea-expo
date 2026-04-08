@@ -155,6 +155,20 @@ try {
       console.log(`📍 [LocationTask] Processing location update...`);
       
       try {
+        // Test environment gate: when backend is in "test" mode, only one allowed driver (by externalId)
+        // may send automatic background updates to the API.
+        const appLocEnv = await getResolvedAppLocationSettings();
+        if (appLocEnv.locationEnvironmentMode === 'test') {
+          const allowed = (appLocEnv.locationTestDriverExternalId || '').trim();
+          const currentExternalId = (await AsyncStorage.getItem('@user_external_id').catch(() => null))?.trim() || '';
+          if (!allowed || !currentExternalId || currentExternalId !== allowed) {
+            console.log(
+              `⏸️ [LocationTask] Test mode gate: skipping auto-send (current externalId="${currentExternalId || '(missing)'}", allowed="${allowed || '(missing)'}")`
+            );
+            return;
+          }
+        }
+
         const sendGate = await shouldSendAutomaticLocationUpdate(latitude, longitude);
         if (!sendGate.ok) {
           console.log(`⏸️ [LocationTask] Skipping API send: ${sendGate.reason}`);
