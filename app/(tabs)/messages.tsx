@@ -203,12 +203,14 @@ export default function MessagesScreen() {
       const result = await chatApi.muteChatRooms(unmutedChatRoomIds, 'mute');
 
       // Update the store with the muted status for all affected chat rooms
-      result.chatRoomIds.forEach(chatRoomId => {
-        updateChatRoom(chatRoomId, { isMuted: true });
-      });
+      await Promise.all(
+        result.chatRoomIds.map((chatRoomId) =>
+          updateChatRoom(chatRoomId, { isMuted: true }),
+        ),
+      );
 
       // Refresh chat list to update UI
-      await loadChatRooms();
+      await loadChatRooms(true);
     } catch (error) {
       console.error('Failed to mute all chats:', error);
     }
@@ -231,12 +233,14 @@ export default function MessagesScreen() {
       const result = await chatApi.muteChatRooms(mutedChatRoomIds, 'unmute');
 
       // Update the store with the unmuted status for all affected chat rooms
-      result.chatRoomIds.forEach(chatRoomId => {
-        updateChatRoom(chatRoomId, { isMuted: false });
-      });
+      await Promise.all(
+        result.chatRoomIds.map((chatRoomId) =>
+          updateChatRoom(chatRoomId, { isMuted: false }),
+        ),
+      );
 
       // Refresh chat list to update UI
-      await loadChatRooms();
+      await loadChatRooms(true);
     } catch (error) {
       console.error('Failed to unmute all chats:', error);
     }
