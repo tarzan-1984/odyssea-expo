@@ -26,6 +26,8 @@ export interface OSMMapViewProps {
   initialRegion: Region;
   style?: StyleProp<ViewStyle>;
   markers?: MarkerData[];
+  /** Route line coordinates (offer route polyline) */
+  polylineCoordinates?: Array<{ latitude: number; longitude: number }>;
   showsUserLocation?: boolean;
   showsMyLocationButton?: boolean;
   scrollEnabled?: boolean;
@@ -49,7 +51,17 @@ export interface OSMMapViewRef {
 }
 
 const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
-  ({ initialRegion, style, markers = [], onMapPress, onMarkerPress }, ref) => {
+  (
+    {
+      initialRegion,
+      style,
+      markers = [],
+      polylineCoordinates = [],
+      onMapPress,
+      onMarkerPress,
+    },
+    ref,
+  ) => {
     const webViewRef = useRef<WebView>(null);
     const mapReadyRef = useRef(false);
     const currentZoomRef = useRef<number | null>(null);
@@ -184,6 +196,44 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
       webViewRef.current?.injectJavaScript(script);
     };
 
+    const updatePolyline = (
+      coords: Array<{ latitude: number; longitude: number }>,
+    ) => {
+      if (!mapReadyRef.current) return;
+
+      const points = (Array.isArray(coords) ? coords : [])
+        .filter(
+          (p) =>
+            p &&
+            typeof p.latitude === 'number' &&
+            typeof p.longitude === 'number' &&
+            Number.isFinite(p.latitude) &&
+            Number.isFinite(p.longitude),
+        )
+        .map((p) => [p.latitude, p.longitude]);
+
+      const script = `
+        (function() {
+          if (!window.map) return;
+          if (window.routePolyline) {
+            try { window.routePolyline.remove(); } catch (e) {}
+            window.routePolyline = null;
+          }
+          var pts = ${JSON.stringify(points)};
+          if (Array.isArray(pts) && pts.length >= 2) {
+            window.routePolyline = L.polyline(pts, {
+              color: '#1D4ED8',
+              weight: 4,
+              opacity: 0.85,
+            }).addTo(window.map);
+          }
+        })();
+        true;
+      `;
+
+      webViewRef.current?.injectJavaScript(script);
+    };
+
     // Update markers when markers prop changes
     useEffect(() => {
       if (mapReadyRef.current) {
@@ -191,6 +241,13 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
         updateMarkers(markers, currentZoomRef.current ?? undefined);
       }
     }, [markers]);
+
+    // Update route polyline when prop changes
+    useEffect(() => {
+      if (mapReadyRef.current) {
+        updatePolyline(polylineCoordinates);
+      }
+    }, [polylineCoordinates]);
 
     const rasterTile = getLeafletRasterTileConfig();
     const tileLayerSubdomainsJs = rasterTile.subdomains
@@ -286,6 +343,7 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
     // Store map and markers in window for access from React Native
     window.map = map;
     window.markers = [];
+    window.routePolyline = null;
 
     // Handle map ready
     map.whenReady(function() {
@@ -442,6 +500,9 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
                 mapReadyRef.current = true;
                 if (markers.length > 0) {
                   updateMarkers(markers);
+                }
+                if (polylineCoordinates.length > 0) {
+                  updatePolyline(polylineCoordinates);
                 }
               } else if (data.type === 'zoomChange') {
                 // Update zoom ref when zoom changes

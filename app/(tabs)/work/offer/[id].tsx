@@ -349,7 +349,12 @@ export default function OfferDetailScreen() {
   }, [routeData?.bounds]);
 
   return (
-    <View style={[styles.screenWrap, Platform.OS === 'android' && { paddingBottom: insets.bottom }]}>
+    <View
+      style={[
+        styles.screenWrap,
+        { paddingBottom: Platform.OS === 'android' ? insets.bottom : 0 },
+      ]}
+    >
       <View style={styles.screenContent}>
         <View style={{ height: insets.top, backgroundColor: colors.primary.violet }} />
         <View style={styles.container}>
