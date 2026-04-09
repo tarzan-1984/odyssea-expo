@@ -429,73 +429,76 @@ export const useChatRooms = (): UseChatRoomsReturn => {
   // Add a single chat room into state and cache (used by realtime and optimistic updates)
   const addChatRoom = useCallback(async (room: ChatRoom) => {
     mergeChatRooms([room]);
-    chatCacheService.saveChatRooms([...chatRooms]).catch(() => {});
-  }, [chatRooms, mergeChatRooms]);
+    // Important: read the latest rooms from the store (avoid stale closure).
+    const latestRooms = useChatStore.getState().chatRooms;
+    chatCacheService.saveChatRooms(latestRooms).catch(() => {});
+  }, [mergeChatRooms]);
 
   // Update a single chat room in state and cache
   const updateChatRoom = useCallback(async (chatRoomId: string, updates: any) => {
-    const prev = chatRooms;
-      // Check if we need to handle unreadCount increment or decrement
-      const hasUnreadIncrement = updates.unreadCountIncrement !== undefined;
-      const hasUnreadDecrement = updates.unreadCountDecrement !== undefined;
-      const unreadIncrement = updates.unreadCountIncrement || 0;
-      const unreadDecrement = updates.unreadCountDecrement || 0;
+    // Important: read the latest rooms from the store (avoid stale closure).
+    const prev = useChatStore.getState().chatRooms;
 
-      // Remove unreadCountIncrement and unreadCountDecrement from updates before applying
-      const { unreadCountIncrement: _, unreadCountDecrement: __, ...cleanUpdates } = updates;
+    // Check if we need to handle unreadCount increment or decrement
+    const hasUnreadIncrement = updates.unreadCountIncrement !== undefined;
+    const hasUnreadDecrement = updates.unreadCountDecrement !== undefined;
+    const unreadIncrement = updates.unreadCountIncrement || 0;
+    const unreadDecrement = updates.unreadCountDecrement || 0;
 
-      const updated = prev.map(room => {
-        if (room.id === chatRoomId) {
-          const currentUnreadCount = room.unreadCount || 0;
-          
-          // Apply updates
-          const updatedRoom = { ...room, ...cleanUpdates } as ChatRoom;
+    // Remove unreadCountIncrement and unreadCountDecrement from updates before applying
+    const { unreadCountIncrement: _, unreadCountDecrement: __, ...cleanUpdates } = updates;
 
-          // Handle unreadCount increment or decrement if needed
-          if (hasUnreadIncrement) {
-            updatedRoom.unreadCount = currentUnreadCount + unreadIncrement;
-          } else if (hasUnreadDecrement) {
-            // Decrement unreadCount, but don't go below 0
-            updatedRoom.unreadCount = Math.max(0, currentUnreadCount - unreadDecrement);
-          }
+    const updated = prev.map(room => {
+      if (room.id === chatRoomId) {
+        const currentUnreadCount = room.unreadCount || 0;
 
-          return updatedRoom;
+        // Apply updates
+        const updatedRoom = { ...room, ...cleanUpdates } as ChatRoom;
+
+        // Handle unreadCount increment or decrement if needed
+        if (hasUnreadIncrement) {
+          updatedRoom.unreadCount = currentUnreadCount + unreadIncrement;
+        } else if (hasUnreadDecrement) {
+          // Decrement unreadCount, but don't go below 0
+          updatedRoom.unreadCount = Math.max(0, currentUnreadCount - unreadDecrement);
         }
-        return room;
-      });
 
-      // Prepare cache updates
-      const cacheUpdates = { ...cleanUpdates };
-      
-      // Ensure unreadCount is always included in cache updates
-      if (hasUnreadIncrement || hasUnreadDecrement) {
-        // Find the updated room to get the new unreadCount
-        const updatedRoom = updated.find(room => room.id === chatRoomId);
-        if (updatedRoom && updatedRoom.unreadCount !== undefined) {
-          cacheUpdates.unreadCount = updatedRoom.unreadCount;
-        }
-      } else if (cleanUpdates.unreadCount !== undefined) {
-        // If unreadCount is explicitly provided in updates, use it
-        cacheUpdates.unreadCount = cleanUpdates.unreadCount;
-      } else {
-        // If no unreadCount in updates, preserve the current value
-        const updatedRoom = updated.find(room => room.id === chatRoomId);
-        if (updatedRoom && updatedRoom.unreadCount !== undefined) {
-          cacheUpdates.unreadCount = updatedRoom.unreadCount;
-        }
+        return updatedRoom;
       }
+      return room;
+    });
 
-      // Update cache asynchronously
-      chatCacheService.updateChatRoom(chatRoomId, cacheUpdates).catch(() => {});
-      
-      // Sort using the same logic as loadChatRooms (pinned top, normal by date, muted bottom)
-      const sorted = sortChatRoomsByLastMessage(updated);
+    // Prepare cache updates
+    const cacheUpdates = { ...cleanUpdates };
 
-      // Save all rooms to cache to ensure consistency
-      // This ensures unreadCount is always persisted
-      chatCacheService.saveChatRooms(sorted).catch(() => {});
-      storeSetChatRooms(sorted);
-  }, []);
+    // Ensure unreadCount is always included in cache updates
+    if (hasUnreadIncrement || hasUnreadDecrement) {
+      // Find the updated room to get the new unreadCount
+      const updatedRoom = updated.find(room => room.id === chatRoomId);
+      if (updatedRoom && updatedRoom.unreadCount !== undefined) {
+        cacheUpdates.unreadCount = updatedRoom.unreadCount;
+      }
+    } else if (cleanUpdates.unreadCount !== undefined) {
+      // If unreadCount is explicitly provided in updates, use it
+      cacheUpdates.unreadCount = cleanUpdates.unreadCount;
+    } else {
+      // If no unreadCount in updates, preserve the current value
+      const updatedRoom = updated.find(room => room.id === chatRoomId);
+      if (updatedRoom && updatedRoom.unreadCount !== undefined) {
+        cacheUpdates.unreadCount = updatedRoom.unreadCount;
+      }
+    }
+
+    // Update cache asynchronously
+    chatCacheService.updateChatRoom(chatRoomId, cacheUpdates).catch(() => {});
+
+    // Sort using the same logic as loadChatRooms (pinned top, normal by date, muted bottom)
+    const sorted = sortChatRoomsByLastMessage(updated);
+
+    // Save all rooms to cache to ensure consistency
+    chatCacheService.saveChatRooms(sorted).catch(() => {});
+    storeSetChatRooms(sorted);
+  }, [storeSetChatRooms]);
 
   // Realtime chat addition now comes from WebSocketContext directly to store
   useEffect(() => {}, [addChatRoom]);

@@ -1,6 +1,5 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Platform, Keyboard, AppState, AppStateStatus, Modal } from 'react-native';
-import { Image } from 'expo-image';
 import type { TextInput as RNTextInput } from 'react-native';
 import { colors, fonts, rem, fp, borderRadius } from '@/lib';
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -94,7 +93,7 @@ export default function MessagesScreen() {
   const isExpiredDocumentsDriver =
     authState.user?.role === 'DRIVER' && driverStatus === 'expired_documents';
 
-  // Force "Chats" tab for expired_documents drivers (shipments/offers/group chats are restricted).
+  // Force "Chats" tab for expired_documents drivers (shipments/group chats are restricted).
   React.useEffect(() => {
     if (!isExpiredDocumentsDriver) return;
     if (activeTab !== 'chats') {
@@ -170,12 +169,9 @@ export default function MessagesScreen() {
 
   // Determine if all chats are muted (mirrors Next.js logic)
   const allChatsMuted = useMemo(() => {
-    const tabScopedRooms = chatRooms.filter((room) => {
-      if (activeTab === 'chats') return room.type !== 'LOAD' && room.type !== 'OFFER';
-      if (activeTab === 'shipments') return room.type === 'LOAD';
-      if (activeTab === 'offers') return room.type === 'OFFER';
-      return false;
-    });
+    const tabScopedRooms = chatRooms.filter((room) =>
+      activeTab === 'chats' ? room.type !== 'LOAD' : room.type === 'LOAD'
+    );
     return tabScopedRooms.length > 0 && tabScopedRooms.every((room) => room.isMuted);
   }, [chatRooms, activeTab]);
 
@@ -195,12 +191,7 @@ export default function MessagesScreen() {
     try {
       // Get all unmuted chat room IDs
       const unmutedChatRoomIds = chatRooms
-        .filter((room) => {
-          if (activeTab === 'chats') return room.type !== 'LOAD' && room.type !== 'OFFER';
-          if (activeTab === 'shipments') return room.type === 'LOAD';
-          if (activeTab === 'offers') return room.type === 'OFFER';
-          return false;
-        })
+        .filter((room) => (activeTab === 'chats' ? room.type !== 'LOAD' : room.type === 'LOAD'))
         .filter(room => !room.isMuted)
         .map(room => room.id);
 
@@ -212,11 +203,13 @@ export default function MessagesScreen() {
       const result = await chatApi.muteChatRooms(unmutedChatRoomIds, 'mute');
 
       // Update the store with the muted status for all affected chat rooms
-      result.chatRoomIds.forEach(chatRoomId => {
-        updateChatRoom(chatRoomId, { isMuted: true });
-      });
+      await Promise.all(
+        result.chatRoomIds.map((chatRoomId) =>
+          updateChatRoom(chatRoomId, { isMuted: true }),
+        ),
+      );
 
-      // Force API refresh so mute state is not overwritten by stale cache merge (see useChatRooms)
+      // Refresh chat list to update UI
       await loadChatRooms(true);
     } catch (error) {
       console.error('Failed to mute all chats:', error);
@@ -228,12 +221,7 @@ export default function MessagesScreen() {
     try {
       // Get all muted chat room IDs
       const mutedChatRoomIds = chatRooms
-        .filter((room) => {
-          if (activeTab === 'chats') return room.type !== 'LOAD' && room.type !== 'OFFER';
-          if (activeTab === 'shipments') return room.type === 'LOAD';
-          if (activeTab === 'offers') return room.type === 'OFFER';
-          return false;
-        })
+        .filter((room) => (activeTab === 'chats' ? room.type !== 'LOAD' : room.type === 'LOAD'))
         .filter(room => room.isMuted)
         .map(room => room.id);
 
@@ -245,10 +233,13 @@ export default function MessagesScreen() {
       const result = await chatApi.muteChatRooms(mutedChatRoomIds, 'unmute');
 
       // Update the store with the unmuted status for all affected chat rooms
-      result.chatRoomIds.forEach(chatRoomId => {
-        updateChatRoom(chatRoomId, { isMuted: false });
-      });
+      await Promise.all(
+        result.chatRoomIds.map((chatRoomId) =>
+          updateChatRoom(chatRoomId, { isMuted: false }),
+        ),
+      );
 
+      // Refresh chat list to update UI
       await loadChatRooms(true);
     } catch (error) {
       console.error('Failed to unmute all chats:', error);
@@ -260,12 +251,7 @@ export default function MessagesScreen() {
     try {
       // Get all chat room IDs with unread messages
       const unreadChatRoomIds = chatRooms
-        .filter((room) => {
-          if (activeTab === 'chats') return room.type !== 'LOAD' && room.type !== 'OFFER';
-          if (activeTab === 'shipments') return room.type === 'LOAD';
-          if (activeTab === 'offers') return room.type === 'OFFER';
-          return false;
-        })
+        .filter((room) => (activeTab === 'chats' ? room.type !== 'LOAD' : room.type === 'LOAD'))
         .filter(room => (room.unreadCount || 0) > 0)
         .map(room => room.id);
 
@@ -319,13 +305,11 @@ export default function MessagesScreen() {
   const filteredChatRooms = useMemo(() => {
     return chatRooms.filter(chatRoom => {
       // Tab filtering:
-      // - Chats tab: show DIRECT and GROUP (exclude LOAD and OFFER)
+      // - Chats tab: show all chats except LOAD
       // - Shipments tab: show only LOAD chats
-      // - Offers tab: show only OFFER chats
-      let isAllowedByTab = false;
-      if (activeTab === 'chats') isAllowedByTab = chatRoom.type !== 'LOAD' && chatRoom.type !== 'OFFER';
-      else if (activeTab === 'shipments') isAllowedByTab = chatRoom.type === 'LOAD';
-      else if (activeTab === 'offers') isAllowedByTab = chatRoom.type === 'OFFER';
+      const isAllowedByTab = activeTab === 'chats'
+        ? chatRoom.type !== 'LOAD'
+        : chatRoom.type === 'LOAD';
       if (!isAllowedByTab) return false;
 
       // Filter out blocked chats for drivers with expired_documents status
@@ -392,45 +376,6 @@ export default function MessagesScreen() {
       return matchesSearch && matchesFilter;
     });
   }, [chatRooms, activeTab, debouncedSearchQuery, selectedFilter, authState.user?.id, authState.user?.role, driverStatus]);
-
-  // Extract offerId from OFFER chat (from room.offerId or parse from name)
-  const getOfferId = (chatRoom: ChatRoom): string | null => {
-    if (chatRoom.offerId != null) return String(chatRoom.offerId);
-    if (chatRoom.type !== 'OFFER' || !chatRoom.name) return null;
-    const match = chatRoom.name.match(/\(id:\s*([^)]+)\)/);
-    return match ? match[1].trim() : null;
-  };
-
-  // Get accordion header: route and id for offer group
-  const getOfferAccordionTitle = (chatRoom: ChatRoom): { route: string; id: string } => {
-    const offerId = getOfferId(chatRoom) ?? chatRoom.id;
-    if (!chatRoom.name) return { route: 'Unknown route', id: offerId };
-    const lines = chatRoom.name.split('\n');
-    const route = lines[1]?.trim() || lines[0]?.replace(/\(id:\s*[^)]+\)/, '').trim() || 'Unknown route';
-    return { route, id: offerId };
-  };
-
-  // Group offer chats by offerId (for Offers tab accordion)
-  const groupedOfferChats = useMemo(() => {
-    if (activeTab !== 'offers') return new Map<string, ChatRoom[]>();
-    const map = new Map<string, ChatRoom[]>();
-    const rooms = filteredChatRooms ?? [];
-    for (const room of rooms) {
-      const key = getOfferId(room) ?? room.id;
-      const list = map.get(key) ?? [];
-      list.push(room);
-      map.set(key, list);
-    }
-    return map;
-  }, [activeTab, filteredChatRooms]);
-
-  const [expandedOfferIds, setExpandedOfferIds] = useState<Set<string>>(new Set());
-  const toggleOfferAccordion = useCallback((offerId: string) => {
-    setExpandedOfferIds((prev) => {
-      if (prev.has(offerId)) return new Set();
-      return new Set([offerId]);
-    });
-  }, []);
 
   const handleChatPress = (chatRoom: ChatRoom) => {
     setSelectedChatId(chatRoom.id);
@@ -659,24 +604,6 @@ export default function MessagesScreen() {
                     Shipments
                   </Text>
                 </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.tabButton,
-                    activeTab === 'offers' && styles.tabButtonActive,
-                  ]}
-                  onPress={() => setActiveTab('offers')}
-                  activeOpacity={0.8}
-                >
-                  <Text
-                    style={[
-                      styles.tabButtonText,
-                      activeTab === 'offers' && styles.tabButtonTextActive,
-                    ]}
-                  >
-                    Offers
-                  </Text>
-                </TouchableOpacity>
               </View>
             )}
 
@@ -817,99 +744,20 @@ export default function MessagesScreen() {
                 </TouchableOpacity>
               </View>
             ) : filteredChatRooms.length === 0 ? (
-              activeTab === 'offers' ? (
-                <View style={styles.emptyOffersWrap}>
-                  <Image
-                    source={require('@/icons/no_offers_found.png')}
-                    style={styles.emptyOffersImage}
-                    contentFit="contain"
-                  />
-                  <Text style={styles.emptyOffersText}>No offers found</Text>
-                </View>
-              ) : (
-                <View style={styles.emptyContainer}>
-                  <Text style={styles.emptyText}>
-                    {debouncedSearchQuery.trim() ? 'No chats found' : 'No chats yet'}
-                  </Text>
-                  {debouncedSearchQuery.trim() && (
-                    <Text style={styles.emptySubtext}>Try a different search term</Text>
-                  )}
-                </View>
-              )
-            ) : activeTab === 'offers' && groupedOfferChats.size > 0 ? (
-                  <View style={styles.offerAccordionList}>
-                    {Array.from(groupedOfferChats.entries()).map(([offerId, rooms]) => {
-                      const firstRoom = rooms[0];
-                      const { route, id } = getOfferAccordionTitle(firstRoom);
-                      const isExpanded = expandedOfferIds.has(offerId);
-                      const groupUnreadCount = rooms.reduce((sum, r) => sum + (r.unreadCount ?? 0), 0);
-                      return (
-                        <View key={offerId} style={styles.offerAccordionGroup}>
-                          <TouchableOpacity
-                            style={styles.offerAccordionHeader}
-                            onPress={() => toggleOfferAccordion(offerId)}
-                            activeOpacity={0.7}
-                          >
-                            <View style={styles.offerAccordionHeaderContent}>
-                              <Text style={styles.offerAccordionRoute} numberOfLines={1}>
-                                {route}
-                              </Text>
-                              <Text style={styles.offerAccordionId}>(id: {id})</Text>
-                            </View>
-                            <View style={styles.offerAccordionHeaderRight}>
-                              {groupUnreadCount > 0 && (
-                                <View style={styles.offerAccordionUnreadBadge}>
-                                  <Text style={styles.offerAccordionUnreadText}>
-                                    {groupUnreadCount > 99 ? '99+' : groupUnreadCount}
-                                  </Text>
-                                </View>
-                              )}
-                              <View style={[styles.offerAccordionChevron, isExpanded && styles.offerAccordionChevronUp]}>
-                                <ArrowDownIcon width={16} height={16} color={colors.neutral.darkGrey} />
-                              </View>
-                            </View>
-                          </TouchableOpacity>
-                          {isExpanded && (
-                            <View style={styles.offerAccordionContent}>
-                              {rooms.map((chatRoom) => {
-                                let userStatus: 'online' | 'offline' = 'offline';
-                                if ((chatRoom.type === 'DIRECT' || chatRoom.type === 'OFFER') && chatRoom.participants.length === 2) {
-                                  const otherParticipant = chatRoom.participants.find(
-                                    p => p.user.id !== authState.user?.id
-                                  );
-                                  if (otherParticipant && isUserOnline(otherParticipant.user.id)) {
-                                    userStatus = 'online';
-                                  }
-                                }
-                                return (
-                                  <ChatListItem
-                                    key={chatRoom.id}
-                                    chatRoom={chatRoom}
-                                    isSelected={selectedChatId === chatRoom.id}
-                                    status={userStatus}
-                                    onPress={handleChatPress}
-                                    currentUserId={authState.user?.id}
-                                    onChatRoomUpdate={updateChatRoom}
-                                    isDropdownOpen={openDropdownId === chatRoom.id}
-                                    onDropdownToggle={(isOpen, chatId) => {
-                                      if (isOpen) setOpenDropdownId(chatId);
-                                      else setOpenDropdownId(null);
-                                    }}
-                                    onCloseAllDropdowns={closeAllDropdowns}
-                                  />
-                                );
-                              })}
-                            </View>
-                          )}
-                        </View>
-                      );
-                    })}
-                  </View>
-                ) : (
+              <View style={styles.emptyContainer}>
+                <Text style={styles.emptyText}>
+                  {debouncedSearchQuery.trim() ? 'No chats found' : 'No chats yet'}
+                </Text>
+                {debouncedSearchQuery.trim() && (
+                  <Text style={styles.emptySubtext}>Try a different search term</Text>
+                )}
+              </View>
+            ) : (
                   <View style={styles.chatList}>
                     {filteredChatRooms.map((chatRoom) => {
+                      // Determine online status for DIRECT chats
                       let userStatus: 'online' | 'offline' = 'offline';
-                      if ((chatRoom.type === 'DIRECT' || chatRoom.type === 'OFFER') && chatRoom.participants.length === 2) {
+                      if (chatRoom.type === 'DIRECT' && chatRoom.participants.length === 2) {
                         const otherParticipant = chatRoom.participants.find(
                           p => p.user.id !== authState.user?.id
                         );
@@ -917,6 +765,7 @@ export default function MessagesScreen() {
                           userStatus = 'online';
                         }
                       }
+                      
                       return (
                         <ChatListItem
                           key={chatRoom.id}
@@ -928,8 +777,12 @@ export default function MessagesScreen() {
                           onChatRoomUpdate={updateChatRoom}
                           isDropdownOpen={openDropdownId === chatRoom.id}
                           onDropdownToggle={(isOpen, chatId) => {
-                            if (isOpen) setOpenDropdownId(chatId);
-                            else setOpenDropdownId(null);
+                            if (isOpen) {
+                              // Simply set the new dropdown ID - React will close the old Modal automatically
+                              setOpenDropdownId(chatId);
+                            } else {
+                              setOpenDropdownId(null);
+                            }
                           }}
                           onCloseAllDropdowns={closeAllDropdowns}
                         />
@@ -1008,67 +861,6 @@ const styles = StyleSheet.create({
   },
   chatList: {
     flex: 1,
-  },
-  offerAccordionList: {
-    flex: 1,
-    paddingBottom: rem(8),
-  },
-  offerAccordionGroup: {
-    marginBottom: rem(8),
-    borderRadius: rem(12),
-    borderWidth: 1,
-    borderColor: colors.neutral.lightGrey,
-    backgroundColor: 'rgba(247, 248, 255, 0.5)',
-    overflow: 'hidden',
-  },
-  offerAccordionHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: rem(12),
-    paddingVertical: rem(10),
-  },
-  offerAccordionHeaderContent: {
-    flex: 1,
-    minWidth: 0,
-  },
-  offerAccordionRoute: {
-    fontSize: fp(14),
-    fontFamily: fonts['600'],
-    color: colors.neutral.black,
-  },
-  offerAccordionId: {
-    fontSize: fp(11),
-    fontFamily: fonts['400'],
-    color: colors.neutral.darkGrey,
-    marginTop: rem(2),
-  },
-  offerAccordionHeaderRight: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: rem(8),
-  },
-  offerAccordionUnreadBadge: {
-    minWidth: rem(20),
-    height: rem(20),
-    borderRadius: rem(10),
-    backgroundColor: colors.primary.blue,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: rem(6),
-  },
-  offerAccordionUnreadText: {
-    fontSize: fp(11),
-    fontFamily: fonts['600'],
-    color: colors.neutral.white,
-  },
-  offerAccordionChevron: {},
-  offerAccordionChevronUp: {
-    transform: [{ rotate: '180deg' }],
-  },
-  offerAccordionContent: {
-    borderTopWidth: 1,
-    borderTopColor: colors.neutral.lightGrey,
   },
   content: {
     flex: 1,
@@ -1150,23 +942,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: rem(100),
     paddingHorizontal: rem(20),
-  },
-  emptyOffersWrap: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: rem(40),
-    paddingTop: rem(100),
-    gap: rem(16),
-  },
-  emptyOffersImage: {
-    width: rem(200),
-    height: rem(200),
-  },
-  emptyOffersText: {
-    fontSize: fp(14),
-    fontFamily: fonts['500'],
-    color: colors.neutral.darkGrey,
   },
   emptyText: {
     fontSize: fp(16),
@@ -1252,7 +1027,7 @@ const styles = StyleSheet.create({
   },
   tabsRow: {
     flexDirection: 'row',
-    gap: rem(6),
+    gap: rem(15),
     marginBottom: rem(8),
   },
   tabButton: {
