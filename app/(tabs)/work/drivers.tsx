@@ -353,6 +353,7 @@ export default function DriversScreen() {
             />
           )}
         </View>
+      <BottomNavigation currentRoute="/work/drivers" />
       </View>
 
       <DriversFiltersModal
@@ -379,8 +380,6 @@ export default function DriversScreen() {
           queryClient.invalidateQueries({ queryKey: ['drivers-list'] });
         }}
       />
-
-      <BottomNavigation currentRoute="/work/drivers" />
     </View>
   );
 }
@@ -392,6 +391,7 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     flex: 1,
+    position: 'relative',
   },
   container: {
     flex: 1,

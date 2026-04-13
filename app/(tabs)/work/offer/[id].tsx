@@ -7,8 +7,8 @@ import {
   Platform,
   ActivityIndicator,
   Dimensions,
-  ScrollView,
   Alert,
+  ScrollView,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -378,8 +378,9 @@ export default function OfferDetailScreen() {
               style={styles.mainScroll}
               contentContainerStyle={styles.mainScrollContent}
               showsVerticalScrollIndicator={false}
+              nestedScrollEnabled={Platform.OS === 'android'}
             >
-              <View style={styles.mapWrap}>
+              <View style={styles.mapWrap} collapsable={false}>
                 {routeLoading ? (
                   <View style={styles.loadingWrap}>
                     <ActivityIndicator size="large" color={colors.primary.blue} />
@@ -762,39 +763,40 @@ export default function OfferDetailScreen() {
               )}
 
               {offer.route && offer.route.length > 0 && (
-                <View style={styles.routeTable}>
-                  <Text style={styles.routeTableTitle}>Route</Text>
-                  <View style={styles.routeTableHeaderRow}>
-                    <Text style={[styles.routeTableHeader, styles.routeTableHeaderAction]}>Action</Text>
-                    <Text style={[styles.routeTableHeader, styles.routeTableHeaderAddress]}>Address</Text>
-                    <Text style={[styles.routeTableHeader, styles.routeTableHeaderTime]}>Time</Text>
-                  </View>
+                <View style={styles.routeSection}>
+                  <Text style={styles.routeSectionTitle}>Route</Text>
                   {offer.route.map((point, idx) => (
-                    <View key={idx} style={styles.routeTableDataRow}>
-                      <View style={styles.routeTableActionWrap}>
+                    <View
+                      key={idx}
+                      style={[
+                        styles.routeStopCard,
+                        idx < offer.route!.length - 1 && styles.routeStopDivider,
+                      ]}
+                    >
+                      <View style={styles.routeStopHeader}>
                         <View
                           style={[
                             styles.routePointDot,
                             { backgroundColor: getRoutePointColor(offer.route, idx) },
                           ]}
                         />
-                        <Text style={styles.routeTableAction}>
+                        <Text style={styles.routeStopTitle}>
                           {point.type === 'pick_up_location' ? 'Pick up' : 'Delivery'}
                         </Text>
                       </View>
-                      <TouchableOpacity
-                        style={styles.routeTableAddressButton}
-                        activeOpacity={routeData?.markers?.[idx] ? 0.7 : 1}
-                        disabled={!routeData?.markers?.[idx]}
-                        onPress={() => focusRoutePointOnMap(idx)}
-                      >
-                        <Text style={styles.routeTableAddress} numberOfLines={2}>
-                          {point.location || '—'}
-                        </Text>
-                      </TouchableOpacity>
-                      <Text style={styles.routeTableTime}>
-                        {point.time || '—'}
-                      </Text>
+                      <View style={styles.routeStopRow}>
+                        <TouchableOpacity
+                          style={styles.routeStopAddressWrap}
+                          activeOpacity={routeData?.markers?.[idx] ? 0.7 : 1}
+                          disabled={!routeData?.markers?.[idx]}
+                          onPress={() => focusRoutePointOnMap(idx)}
+                        >
+                          <Text style={styles.routeStopAddress}>
+                            {point.location || '—'}
+                          </Text>
+                        </TouchableOpacity>
+                        <Text style={styles.routeStopTime}>{point.time || '—'}</Text>
+                      </View>
                     </View>
                   ))}
                 </View>
@@ -863,6 +865,7 @@ export default function OfferDetailScreen() {
             </ScrollView>
           )}
         </View>
+      <BottomNavigation currentRoute="/work" />
       </View>
       <CreateRateModal
         visible={createRateModalVisible && !isSelectedOfferDriver}
@@ -938,7 +941,6 @@ export default function OfferDetailScreen() {
           }
         }}
       />
-      <BottomNavigation currentRoute="/work" />
     </View>
   );
 }
@@ -950,6 +952,7 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     flex: 1,
+    position: 'relative',
   },
   container: {
     flex: 1,
@@ -988,6 +991,7 @@ const styles = StyleSheet.create({
   },
   mainScroll: {
     flex: 1,
+    minHeight: 0,
   },
   mainScrollContent: {
     paddingBottom: rem(24),
@@ -1130,7 +1134,7 @@ const styles = StyleSheet.create({
     fontFamily: fonts['600'],
     color: colors.neutral.white,
   },
-  routeTable: {
+  routeSection: {
     marginTop: rem(16),
     marginHorizontal: rem(20),
     backgroundColor: colors.neutral.white,
@@ -1139,43 +1143,25 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.neutral.lightGrey,
   },
-  routeTableTitle: {
+  routeSectionTitle: {
     fontSize: fp(16),
     fontFamily: fonts['700'],
     color: colors.neutral.black,
     marginBottom: rem(12),
   },
-  routeTableHeaderRow: {
-    flexDirection: 'row',
-    borderBottomWidth: 1,
-    borderBottomColor: colors.neutral.lightGrey,
-    paddingBottom: rem(8),
+  routeStopCard: {
+    paddingVertical: rem(4),
   },
-  routeTableHeader: {
-    fontSize: fp(13),
-    fontFamily: fonts['600'],
-    color: colors.neutral.darkGrey,
-  },
-  routeTableHeaderAction: {
-    width: '22%',
-  },
-  routeTableHeaderAddress: {
-    flex: 1,
-    paddingHorizontal: rem(8),
-  },
-  routeTableHeaderTime: {
-    width: '22%',
-  },
-  routeTableDataRow: {
-    flexDirection: 'row',
-    paddingVertical: rem(8),
+  routeStopDivider: {
+    paddingBottom: rem(12),
+    marginBottom: rem(4),
     borderBottomWidth: 1,
     borderBottomColor: colors.neutral.lightGrey,
   },
-  routeTableActionWrap: {
-    width: '22%',
+  routeStopHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginBottom: rem(8),
   },
   routePointDot: {
     width: rem(8),
@@ -1184,26 +1170,35 @@ const styles = StyleSheet.create({
     marginRight: rem(6),
     flexShrink: 0,
   },
-  routeTableAction: {
-    fontSize: fp(13),
-    fontFamily: fonts['600'],
-    color: colors.primary.blue,
+  routeStopTitle: {
+    fontSize: fp(14),
+    fontFamily: fonts['700'],
+    color: colors.neutral.black,
+    flexShrink: 1,
   },
-  routeTableAddress: {
+  routeStopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: rem(12),
+  },
+  routeStopAddressWrap: {
+    flex: 1,
+    minWidth: 0,
+    paddingRight: rem(4),
+  },
+  routeStopAddress: {
     fontSize: fp(13),
     fontFamily: fonts['500'],
     color: colors.primary.blue,
     textDecorationLine: 'underline',
   },
-  routeTableAddressButton: {
-    flex: 1,
-    paddingHorizontal: rem(8),
-  },
-  routeTableTime: {
-    width: '22%',
+  routeStopTime: {
+    flexShrink: 0,
+    maxWidth: '42%',
     fontSize: fp(13),
     fontFamily: fonts['500'],
     color: colors.neutral.darkGrey,
+    textAlign: 'right',
   },
   driversTable: {
     marginTop: rem(16),
@@ -1450,4 +1445,5 @@ const styles = StyleSheet.create({
     fontFamily: fonts['500'],
     color: colors.semantic.error,
   },
-});
+  // Mixed view + text keys widen to ViewStyle|TextStyle|ImageStyle and break <View style={...}> on strict RN types.
+} as any);

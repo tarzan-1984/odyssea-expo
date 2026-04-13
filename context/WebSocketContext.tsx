@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { io, Socket } from 'socket.io-client';
 import { useAuth } from './AuthContext';
 import { secureStorage } from '@/utils/secureStorage';
@@ -60,6 +61,7 @@ interface WebSocketProviderProps {
 
 export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }) => {
   const { authState } = useAuth();
+  const queryClient = useQueryClient();
   const currentUser = authState.user;
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
@@ -1065,6 +1067,23 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       socket.emit('markChatRoomAsRead', { chatRoomId });
     }
   }, [socket, isConnected]);
+
+  // Offer lists / detail — same server event as Next.js (OffersRealtimeService.emitOfferUpdated)
+  useEffect(() => {
+    if (!socket || !isConnected) {
+      return undefined;
+    }
+
+    const onOfferUpdated = (_payload: { offerId?: number; reason?: string }) => {
+      queryClient.invalidateQueries({ queryKey: ['offers'] });
+      queryClient.invalidateQueries({ queryKey: ['offer-detail'] });
+    };
+
+    socket.on('offerUpdated', onOfferUpdated);
+    return () => {
+      socket.off('offerUpdated', onOfferUpdated);
+    };
+  }, [socket, isConnected, queryClient]);
 
   // Auto-connect when user is available
   useEffect(() => {

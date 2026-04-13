@@ -4,7 +4,7 @@
  */
 
 import { colors } from './colors';
-import { fp, rem } from "@/lib/responsive";
+import { fp, rem } from './responsive';
 
 // Define borderRadius first
 const borderRadiusVar = {
@@ -17,7 +17,6 @@ const borderRadiusVar = {
   full: 9999,
 };
 
-
 const fontsVar = {
   '700': 'Mulish-Bold',
   '400': 'Mulish-Regular',
@@ -26,14 +25,8 @@ const fontsVar = {
   '300': 'Mulish-Light',
 };
 
-export const theme = {
-  colors,
-  
-  fonts : fontsVar,
-  
-  // Typography
-  typography: {
-    // Headers
+function buildTypography() {
+  return {
     h1: {
       fontSize: fp(36),
       fontWeight: 'bold' as const,
@@ -54,8 +47,6 @@ export const theme = {
       fontFamily: 'Mulish-Bold',
       color: colors.neutral.black,
     },
-    
-    // Body text
     body: {
       fontSize: fp(16),
       fontWeight: '500' as const,
@@ -63,27 +54,24 @@ export const theme = {
       color: colors.neutral.black,
     },
     bodySecondary: {
-      fontSize: 16,
+      fontSize: fp(16),
       fontWeight: '500' as const,
       fontFamily: 'Mulish-Medium',
       color: colors.neutral.darkGrey,
     },
-    
     buttonGreen: {
       backgroundColor: colors.primary.green,
       borderRadius: borderRadiusVar.sm10,
       width: '100%',
       height: rem(54),
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
       gap: rem(20),
     },
-    
-    // Buttons
     button: {
       fontSize: fp(16),
-      fontFamily: fontsVar["500"],
+      fontFamily: fontsVar['500'],
       color: colors.primary.blue,
     },
     buttonSecondary: {
@@ -92,8 +80,6 @@ export const theme = {
       fontFamily: 'Mulish-Medium',
       color: colors.primary.blue,
     },
-    
-    // Inputs
     input: {
       fontSize: fp(16),
       fontWeight: '500' as const,
@@ -106,9 +92,18 @@ export const theme = {
       fontFamily: 'Mulish-Medium',
       color: colors.neutral.darkGrey,
     },
+  };
+}
+
+export const theme = {
+  colors,
+
+  fonts: fontsVar,
+
+  get typography() {
+    return buildTypography();
   },
-  
-  // Spacing
+
   spacing: {
     xs: 4,
     sm: 8,
@@ -118,8 +113,7 @@ export const theme = {
     xxl: 24,
     xxxl: 32,
   },
-  
-  // Shadows
+
   shadows: {
     sm: {
       boxShadow: '0px 2px 4px rgba(0, 0, 0, 0.1)',
@@ -134,12 +128,10 @@ export const theme = {
       elevation: 8,
     },
   },
-  
-  // Border radius
+
   borderRadius: borderRadiusVar,
-} as const;
+};
 
+export const { spacing, borderRadius, shadows, fonts } = theme;
 
-
-// Export individual parts for convenience
-export const { typography, spacing, borderRadius, shadows, fonts } = theme;
+export type Typography = ReturnType<typeof buildTypography>;

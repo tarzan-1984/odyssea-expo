@@ -38,6 +38,14 @@ const filterOptions: FilterOption[] = [
   { value: 'favorite', label: 'Pinned' },
 ];
 
+type MessagesTab = 'chats' | 'shipments' | 'offers';
+
+function isRoomInMessagesTab(room: ChatRoom, tab: MessagesTab): boolean {
+  if (tab === 'chats') return room.type !== 'LOAD' && room.type !== 'OFFER';
+  if (tab === 'shipments') return room.type === 'LOAD';
+  return room.type === 'OFFER';
+}
+
 /**
  * MessagesScreen - Messages screen of the application
  * Displays list of chat rooms with search and filter functionality
@@ -158,8 +166,22 @@ export default function MessagesScreen() {
     return () => clearTimeout(timer);
   }, [searchQuery]);
 
+  const visibleFilterOptions = useMemo(
+    () =>
+      activeTab === 'offers'
+        ? filterOptions.filter((o) => o.value !== 'favorite')
+        : filterOptions,
+    [activeTab],
+  );
+
+  React.useEffect(() => {
+    if (activeTab === 'offers' && selectedFilter === 'favorite') {
+      setSelectedFilter('all');
+    }
+  }, [activeTab, selectedFilter]);
+
   const getCurrentFilterLabel = () => {
-    return filterOptions.find(option => option.value === selectedFilter)?.label || 'All';
+    return visibleFilterOptions.find((option) => option.value === selectedFilter)?.label || 'All';
   };
 
   const handleFilterSelect = (filter: FilterType) => {
@@ -169,9 +191,7 @@ export default function MessagesScreen() {
 
   // Determine if all chats are muted (mirrors Next.js logic)
   const allChatsMuted = useMemo(() => {
-    const tabScopedRooms = chatRooms.filter((room) =>
-      activeTab === 'chats' ? room.type !== 'LOAD' : room.type === 'LOAD'
-    );
+    const tabScopedRooms = chatRooms.filter((room) => isRoomInMessagesTab(room, activeTab));
     return tabScopedRooms.length > 0 && tabScopedRooms.every((room) => room.isMuted);
   }, [chatRooms, activeTab]);
 
@@ -191,7 +211,7 @@ export default function MessagesScreen() {
     try {
       // Get all unmuted chat room IDs
       const unmutedChatRoomIds = chatRooms
-        .filter((room) => (activeTab === 'chats' ? room.type !== 'LOAD' : room.type === 'LOAD'))
+        .filter((room) => isRoomInMessagesTab(room, activeTab))
         .filter(room => !room.isMuted)
         .map(room => room.id);
 
@@ -221,7 +241,7 @@ export default function MessagesScreen() {
     try {
       // Get all muted chat room IDs
       const mutedChatRoomIds = chatRooms
-        .filter((room) => (activeTab === 'chats' ? room.type !== 'LOAD' : room.type === 'LOAD'))
+        .filter((room) => isRoomInMessagesTab(room, activeTab))
         .filter(room => room.isMuted)
         .map(room => room.id);
 
@@ -251,7 +271,7 @@ export default function MessagesScreen() {
     try {
       // Get all chat room IDs with unread messages
       const unreadChatRoomIds = chatRooms
-        .filter((room) => (activeTab === 'chats' ? room.type !== 'LOAD' : room.type === 'LOAD'))
+        .filter((room) => isRoomInMessagesTab(room, activeTab))
         .filter(room => (room.unreadCount || 0) > 0)
         .map(room => room.id);
 
@@ -304,13 +324,9 @@ export default function MessagesScreen() {
   // Mirrors Next.js ChatList.filteredChatRooms logic
   const filteredChatRooms = useMemo(() => {
     return chatRooms.filter(chatRoom => {
-      // Tab filtering:
-      // - Chats tab: show all chats except LOAD
-      // - Shipments tab: show only LOAD chats
-      const isAllowedByTab = activeTab === 'chats'
-        ? chatRoom.type !== 'LOAD'
-        : chatRoom.type === 'LOAD';
-      if (!isAllowedByTab) return false;
+      // Tab filtering (same as Next.js ChatList):
+      // Chats: not LOAD, not OFFER | Shipments: LOAD | Offers: OFFER
+      if (!isRoomInMessagesTab(chatRoom, activeTab)) return false;
 
       // Filter out blocked chats for drivers with expired_documents status
       const userRole = authState.user?.role;
@@ -566,7 +582,7 @@ export default function MessagesScreen() {
               </View>
             </View>
 
-            {/* Second Row: Tabs (Chats / Shipments) */}
+            {/* Second Row: Tabs (Chats / Shipments / Offers) */}
             {!isExpiredDocumentsDriver && (
               <View style={styles.tabsRow}>
                 <TouchableOpacity
@@ -602,6 +618,24 @@ export default function MessagesScreen() {
                     ]}
                   >
                     Shipments
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.tabButton,
+                    activeTab === 'offers' && styles.tabButtonActive,
+                  ]}
+                  onPress={() => setActiveTab('offers')}
+                  activeOpacity={0.8}
+                >
+                  <Text
+                    style={[
+                      styles.tabButtonText,
+                      activeTab === 'offers' && styles.tabButtonTextActive,
+                    ]}
+                  >
+                    Offers
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -671,13 +705,13 @@ export default function MessagesScreen() {
             {/* Dropdown Menu */}
             {isFilterDropdownOpen && (
               <View style={styles.dropdownMenu}>
-                {filterOptions.map((option, index) => (
+                {visibleFilterOptions.map((option, index) => (
                   <TouchableOpacity
                     key={option.value}
                     style={[
                       styles.dropdownItem,
                       selectedFilter === option.value && styles.dropdownItemSelected,
-                      index === filterOptions.length - 1 && styles.dropdownItemLast,
+                      index === visibleFilterOptions.length - 1 && styles.dropdownItemLast,
                     ]}
                     onPress={() => handleFilterSelect(option.value)}
                     activeOpacity={0.7}
@@ -1027,14 +1061,14 @@ const styles = StyleSheet.create({
   },
   tabsRow: {
     flexDirection: 'row',
-    gap: rem(15),
+    gap: rem(8),
     marginBottom: rem(8),
   },
   tabButton: {
     flex: 1,
     borderRadius: rem(100),
     height: rem(35),
-    paddingHorizontal: rem(12),
+    paddingHorizontal: rem(8),
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: 'rgba(96, 102, 197, 0.1)',

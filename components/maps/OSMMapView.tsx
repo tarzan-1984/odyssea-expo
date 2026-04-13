@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
-import { View, StyleSheet, StyleProp, ViewStyle, Linking } from 'react-native';
+import { View, StyleSheet, StyleProp, ViewStyle, Linking, Platform } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { getLeafletRasterTileConfig } from '@/utils/mapTileLayer';
 
@@ -320,6 +320,8 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
         18
       ),
       zoomControl: true,
+      // Hide corner attribution UI; keep provider credits elsewhere if required by ToS/license.
+      attributionControl: false,
       scrollWheelZoom: true,
       doubleClickZoom: true,
       boxZoom: true,
@@ -333,7 +335,7 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
 
     // MapTiler streets-v4 if EXPO_PUBLIC_MAPTILER_API_KEY is set, else CARTO Voyager (no key)
     L.tileLayer(${JSON.stringify(rasterTile.url)}, {
-      attribution: ${JSON.stringify(rasterTile.attribution)},
+      attribution: '',
       ${tileLayerSubdomainsJs}
       maxZoom: ${rasterTile.maxZoom},
       tileSize: 256,
@@ -477,7 +479,18 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
           javaScriptEnabled={true}
           domStorageEnabled={true}
           startInLoadingState={true}
-          scalesPageToFit={true}
+          // Let Leaflet handle pan/zoom; WebView page zoom/scroll fights touch gestures (esp. map inside ScrollView).
+          scalesPageToFit={false}
+          scrollEnabled={false}
+          bounces={false}
+          nestedScrollEnabled
+          {...(Platform.OS === 'android'
+            ? {
+                overScrollMode: 'never' as const,
+                setBuiltInZoomControls: false,
+                setDisplayZoomControls: false,
+              }
+            : {})}
           // Prevent navigation to external sites (Leaflet / OpenStreetMap links)
           // so that the map is not replaced by a web page or open a browser
           // when tapping on attribution or logos inside the map.

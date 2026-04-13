@@ -8,8 +8,8 @@ export const DRIVER_PARTICIPATION_COUNT_QUERY_KEY = [
 ] as const;
 
 /**
- * Fetches the count of offers where the driver has placed a bid but is not yet selected.
- * Used for participation limit (max 2) in mobile app.
+ * Fetches the count of open bids for the driver (assigned offers excluded on backend).
+ * Used for participation limit (see app_settings.max_driver_open_offer_participations) in mobile app.
  * Cached with staleTime; invalidate on offerUpdated via WebSocket.
  */
 export function useDriverParticipationCount() {

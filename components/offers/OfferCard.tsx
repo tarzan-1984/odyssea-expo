@@ -29,7 +29,7 @@ interface OfferCardProps {
   isDeclining?: boolean;
   onDeactivate?: () => void;
   isDeactivating?: boolean;
-  /** Show overlay when driver has reached participation limit (2 offers with bid, not selected) */
+  /** Show overlay when driver has reached configured max open bids (unassigned offers with a rate, not selected) */
   showParticipationLimitOverlay?: boolean;
 }
 

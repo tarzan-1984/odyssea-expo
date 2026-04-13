@@ -30,6 +30,8 @@ import {
   canAccessWorkTab,
   canAccessDriversAndOffers,
 } from '@/constants/roleAccess';
+import { getResolvedAppLocationSettings } from '@/utils/appLocationSettings';
+import { eventBus } from '@/services/EventBus';
 
 export default function OffersScreen() {
   useWebSocketConnectionCheck();
@@ -96,6 +98,24 @@ export default function OffersScreen() {
 
   const { data: participationData } = useDriverParticipationCount();
   const participatingCount = participationData?.count ?? 0;
+
+  const [maxOpenOfferParticipations, setMaxOpenOfferParticipations] = useState(2);
+
+  useEffect(() => {
+    let cancelled = false;
+    getResolvedAppLocationSettings().then((s) => {
+      if (!cancelled) setMaxOpenOfferParticipations(s.maxDriverOpenOfferParticipations);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    return eventBus.on('APP_LOCATION_SETTINGS_SYNCED', (s) => {
+      setMaxOpenOfferParticipations(s.maxDriverOpenOfferParticipations);
+    });
+  }, []);
 
   const handleOfferPress = (offer: OfferRow) => {
     router.push({
@@ -262,9 +282,11 @@ export default function OffersScreen() {
                   const showLimitOverlay =
                     isDriver &&
                     item.active === true &&
+                    !item.is_driver_selected &&
                     driverInOffer &&
                     !hasSubmittedRateForThisOffer &&
-                    participatingCount >= 2;
+                    driverEntry?.is_selected !== true &&
+                    participatingCount >= maxOpenOfferParticipations;
                   return (
                     <OfferCard
                       offer={item}
@@ -299,10 +321,9 @@ export default function OffersScreen() {
             )}
           </View>
         </View>
-      </View>
-
       <BottomNavigation currentRoute="/work" />
     </View>
+  </View>
   );
 }
 
@@ -313,6 +334,7 @@ const styles = StyleSheet.create({
   },
   screenContent: {
     flex: 1,
+    position: 'relative',
   },
   container: {
     flex: 1,

@@ -163,6 +163,79 @@ export async function getDriverParticipationCount(): Promise<DriverParticipation
   return { count: payload.count ?? 0 };
 }
 
+export interface DriverDraftLoadItem {
+  tms_draft_id: number;
+  date_created: string;
+  date_updated: string;
+  pick_up_date: string;
+  delivery_date: string;
+  offer_id: string;
+  offer_numeric_id: number | null;
+  offer_name: string;
+  driver_rate: number | null;
+  loaded_miles: number | null;
+}
+
+export interface DriverDraftLoadsResponse {
+  items: DriverDraftLoadItem[];
+  tms: {
+    total: number;
+    page: number;
+    per_page: number;
+    total_pages: number;
+    driver_id: number | string;
+    project: string;
+  };
+}
+
+/** TMS draft loads for the current driver, enriched with local offer data (auth: DRIVER only). */
+export async function getDriverDraftLoads(): Promise<DriverDraftLoadsResponse> {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is not configured');
+  }
+
+  const accessToken = await secureStorage.getItemAsync('accessToken');
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
+
+  const url = `${API_BASE_URL}/v1/offers/driver/draft-loads`;
+  const response = await fetch(url, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const msg =
+      typeof errorData.message === 'string'
+        ? errorData.message
+        : Array.isArray(errorData.message)
+          ? errorData.message.join(', ')
+          : `Failed to load draft loads. Status: ${response.status}`;
+    throw new Error(msg);
+  }
+
+  const data = await response.json();
+  const payload = data.data ?? data;
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const tms = payload.tms && typeof payload.tms === 'object' ? payload.tms : {};
+  return {
+    items: items as DriverDraftLoadItem[],
+    tms: {
+      total: typeof tms.total === 'number' ? tms.total : items.length,
+      page: typeof tms.page === 'number' ? tms.page : 1,
+      per_page: typeof tms.per_page === 'number' ? tms.per_page : 50,
+      total_pages: typeof tms.total_pages === 'number' ? tms.total_pages : 1,
+      driver_id: tms.driver_id ?? '',
+      project: typeof tms.project === 'string' ? tms.project : '',
+    },
+  };
+}
+
 export async function getOffers(
   params: GetOffersParams
 ): Promise<GetOffersResponse> {

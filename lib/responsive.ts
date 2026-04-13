@@ -54,7 +54,8 @@ export const fp = (size: number): number => {
   // Weight width more than height: line length and perceived type scale follow width first
   // (tall phones no longer get an oversized fp from height alone).
   // Slightly more weight on width so tall phones do not inflate type
-  let scale = widthScale * 0.7 + heightScale * 0.3;
+  const layoutScale = widthScale * 0.7 + heightScale * 0.3;
+  let scale = layoutScale;
 
   if (scale < 1.0) {
     scale = scale * 0.6 + 0.4;
@@ -75,9 +76,22 @@ export const fp = (size: number): number => {
   // At same logical dp, Android often renders body text a bit larger than iOS
   const platformMod = Platform.OS === 'android' ? 0.93 : 1;
 
-  const newSize = size * scale * aspectMod * platformMod;
-  const rounded = PixelRatio.roundToNearestPixel(newSize);
-  return Math.min(rounded, size);
+  // One rounding pass at the end so small multipliers (e.g. 0.96) are not erased by round(min(round(...))).
+  let out = size * scale * aspectMod * platformMod;
+  out = Math.min(out, size);
+
+  // Logical size above iPhone 14 baseline: shrink vs design cap (after cap so it always applies).
+  if (layoutScale > 1.002) {
+    const excess = Math.min(layoutScale - 1, 0.24);
+    const mod = 1 - excess * 0.62;
+    out *= mod;
+  } else if (Platform.OS === 'android' && aspectVsBase > 1.003) {
+    // Tall narrow Android (e.g. Redmi ~360×800): multiplier must cross pixel steps after roundToNearestPixel.
+    out *= 0.86;
+  }
+
+  const rounded = PixelRatio.roundToNearestPixel(out);
+  return Math.max(1, rounded);
 };
 
 /**
