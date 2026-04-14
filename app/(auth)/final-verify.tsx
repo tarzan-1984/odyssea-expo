@@ -52,6 +52,10 @@ export default function FinalVerifyScreen() {
     }
   }, [driverBanner, driverBannerAnim]);
   useEffect(() => {
+    if (!authState.isAuthenticated || !user) {
+      return;
+    }
+
     const loadPermissionsState = async () => {
       try {
         // Check if this is the first launch of the app
@@ -96,9 +100,9 @@ export default function FinalVerifyScreen() {
         console.error('[FinalVerify] Failed to load permissions state:', error);
       }
     };
-    
-    loadPermissionsState();
-  }, []);
+
+    void loadPermissionsState();
+  }, [authState.isAuthenticated, user?.id]);
 
   // Stop background tracking if user is not DRIVER
   useEffect(() => {
