@@ -95,6 +95,9 @@ function mergeDriverProfileIntoUser(
   if (p.statusDate !== null) {
     next.statusDate = p.statusDate ?? '';
   }
+  if (p.isAutoupdate !== null) {
+    next.isAutoupdate = p.isAutoupdate;
+  }
   return next;
 }
 

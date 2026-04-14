@@ -16,10 +16,8 @@ import BottomNavigation from '@/components/navigation/BottomNavigation';
 import WorkTopMenu from '@/components/work/WorkTopMenu';
 import { useAuth } from '@/context/AuthContext';
 import { canAccessWorkTab, canAccessDriversAndOffers } from '@/constants/roleAccess';
-import { getDriverDraftLoads } from '@/app-api/offers';
+import { getDriverDraftLoads, getStaffDraftLoads } from '@/app-api/offers';
 import DraftLoadCard from '@/components/offers/DraftLoadCard';
-
-const DRAFT_LOADS_QUERY_KEY = ['driver-draft-loads'] as const;
 
 export default function LoadsScreen() {
   const insets = useSafeAreaInsets();
@@ -29,6 +27,7 @@ export default function LoadsScreen() {
   const canAccess = canAccessWorkTab(role);
   const showDriversTab = canAccessDriversAndOffers(role);
   const isDriver = role === 'DRIVER';
+  const draftLoadsQueryEnabled = authState.isAuthenticated && canAccess;
 
   const {
     data,
@@ -38,9 +37,9 @@ export default function LoadsScreen() {
     refetch,
     isRefetching,
   } = useQuery({
-    queryKey: DRAFT_LOADS_QUERY_KEY,
-    queryFn: getDriverDraftLoads,
-    enabled: authState.isAuthenticated && isDriver,
+    queryKey: isDriver ? ['driver-draft-loads'] : ['staff-draft-loads'],
+    queryFn: isDriver ? getDriverDraftLoads : getStaffDraftLoads,
+    enabled: draftLoadsQueryEnabled,
   });
 
   useEffect(() => {
@@ -59,12 +58,9 @@ export default function LoadsScreen() {
           <WorkTopMenu currentPage="loads" showDriversTab={showDriversTab} />
 
           <View style={styles.content}>
-            {!isDriver ? (
-              <View style={styles.placeholder}>
-                <Text style={styles.placeholderTitle}>Loads</Text>
-                <Text style={styles.placeholderSubtitle}>
-                  Draft loads in progress are shown to drivers only.
-                </Text>
+            {!draftLoadsQueryEnabled ? (
+              <View style={styles.centered}>
+                <ActivityIndicator size="large" color={colors.primary.blue} />
               </View>
             ) : isPending ? (
               <View style={styles.centered}>

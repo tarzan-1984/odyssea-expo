@@ -624,31 +624,46 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       }
     });
 
-    // Handle driver status update from server (legacy; full profile uses driverProfileSync)
-    newSocket.on('driverStatusUpdate', async (data: { driverStatus: string | null }) => {
-      console.log('[WebSocket] Driver status update received:', data);
-      
-      if (!currentUser || currentUser.role !== 'DRIVER') {
-        return;
-      }
+    // Driver status delta (includes isAutoupdate so UI matches DB without waiting for AppState active).
+    newSocket.on(
+      'driverStatusUpdate',
+      async (data: { driverStatus: string | null; isAutoupdate?: boolean }) => {
+        console.log('[WebSocket] Driver status update received:', data);
 
-      try {
-        const { persistDriverProfileLocally } = await import('@/utils/driverProfileSync');
-        const { eventBus } = await import('@/services/EventBus');
-        await persistDriverProfileLocally({
-          driverStatus: data.driverStatus ?? null,
-          zip: null,
-          city: null,
-          state: null,
-          location: null,
-          statusDate: null,
-        });
-        console.log(`✅ [WebSocket] Driver status persisted: ${data.driverStatus || 'null'}`);
-        eventBus.emit('DRIVER_STATUS_UPDATED', { driverStatus: data.driverStatus });
-      } catch (error) {
-        console.error('[WebSocket] Failed to update driver status:', error);
+        if (!currentUser || currentUser.role !== 'DRIVER') {
+          return;
+        }
+
+        try {
+          const {
+            persistDriverProfileLocally,
+            emitDriverProfileSyncEvents,
+            isAutoupdateForTmsDriverStatus,
+          } = await import('@/utils/driverProfileSync');
+          const driverStatus = data.driverStatus ?? null;
+          const isAutoupdate =
+            typeof data.isAutoupdate === 'boolean'
+              ? data.isAutoupdate
+              : isAutoupdateForTmsDriverStatus(driverStatus);
+          const payload = {
+            driverStatus,
+            zip: null,
+            city: null,
+            state: null,
+            location: null,
+            statusDate: null,
+            isAutoupdate,
+          };
+          await persistDriverProfileLocally(payload);
+          emitDriverProfileSyncEvents(payload);
+          console.log(
+            `✅ [WebSocket] Driver status + autoupdate persisted: ${driverStatus || 'null'} (${isAutoupdate})`
+          );
+        } catch (error) {
+          console.error('[WebSocket] Failed to update driver status:', error);
+        }
       }
-    });
+    );
 
     newSocket.on(
       'driverProfileSync',
@@ -659,6 +674,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         state: string | null;
         location: string | null;
         statusDate: string | null;
+        isAutoupdate?: boolean;
       }) => {
         console.log('[WebSocket] driverProfileSync received:', data);
         if (!currentUser || currentUser.role !== 'DRIVER') {
@@ -668,8 +684,18 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           const { persistDriverProfileLocally, emitDriverProfileSyncEvents } = await import(
             '@/utils/driverProfileSync'
           );
-          await persistDriverProfileLocally(data);
-          emitDriverProfileSyncEvents(data);
+          const payload = {
+            driverStatus: data.driverStatus ?? null,
+            zip: data.zip ?? null,
+            city: data.city ?? null,
+            state: data.state ?? null,
+            location: data.location ?? null,
+            statusDate: data.statusDate ?? null,
+            isAutoupdate:
+              typeof data.isAutoupdate === 'boolean' ? data.isAutoupdate : null,
+          };
+          await persistDriverProfileLocally(payload);
+          emitDriverProfileSyncEvents(payload);
         } catch (error) {
           console.error('[WebSocket] Failed to apply driverProfileSync:', error);
         }

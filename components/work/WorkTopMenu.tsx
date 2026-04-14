@@ -132,7 +132,7 @@ const styles = StyleSheet.create({
     width: '33.34%',
   },
   linkText: {
-    fontSize: fp(20),
+    fontSize: fp(16),
     fontFamily: fonts['500'],
     color: 'rgba(255, 255, 255, 0.7)',
   },

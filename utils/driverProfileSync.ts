@@ -14,6 +14,17 @@ export type DriverProfileSyncPayload = {
   isAutoupdate: boolean | null;
 };
 
+/** Same rule as TMS driver webhook on the backend — keep in sync. */
+export function isAutoupdateForTmsDriverStatus(
+  driverStatus: string | null | undefined,
+): boolean {
+  if (driverStatus == null || typeof driverStatus !== 'string') {
+    return false;
+  }
+  const n = driverStatus.trim().toLowerCase();
+  return n === 'loaded_enroute' || n === 'available';
+}
+
 export const DRIVER_PROFILE_SYNC_LAST_FETCH_KEY = '@driver_profile_sync_last_unix';
 
 export async function fetchDriverProfileFromBackend(
