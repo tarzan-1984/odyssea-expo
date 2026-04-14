@@ -219,6 +219,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         
         // Determine user role early for conditional logic
         const userRole = user?.role?.trim().toUpperCase();
+
+        // Mandatory system settings (PermissionsAssistant) must run after every OTP login —
+        // not only after explicit logout (reinstall / restored AsyncStorage can keep the old flag).
+        try {
+          await AsyncStorage.removeItem('@permissions_onboarding_completed');
+        } catch (permFlagError) {
+          console.warn(
+            '⚠️ [AuthContext] Failed to clear permissions onboarding flag before session start:',
+            permFlagError,
+          );
+        }
         
         // Save tokens to secure storage
         try {
