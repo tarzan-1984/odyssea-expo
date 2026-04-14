@@ -12,6 +12,7 @@ import {
   GeocodedAddress,
   geocodeZipToAddress,
   geocodeWithPostalAsync,
+  resolveCityForApi,
 } from '@/utils/geocoding';
 import { colors } from '@/lib/colors';
 import { fonts, fp, rem, typography } from "@/lib";
@@ -35,6 +36,49 @@ import type { DriverProfileSyncPayload } from '@/utils/driverProfileSync';
 import { saveLastSuccessfulReverseGeocodeTimestamp } from '@/constants/reverseGeocodeThrottle';
 import { recordSuccessfulLocationApiSend } from '@/constants/locationSendThrottle';
 import { getResolvedAppLocationSettings } from '@/utils/appLocationSettings';
+import { toTmsLocationCode } from '@/utils/tmsLocationCode';
+import { toBackendStateDisplayName } from '@/utils/stateDisplayName';
+
+/** Console: same field names as JSON body to PUT /v1/users/:id/location */
+function logLocationApiPayload(
+  scenario: string,
+  p: {
+    location?: string;
+    city?: string;
+    state?: string;
+    zip?: string;
+    latitude?: number;
+    longitude?: number;
+    lastUpdateIso?: string;
+    driverStatus?: string;
+    statusDate?: string;
+    isAutoupdate?: boolean;
+    isBackgroundTaskLocationUpdate?: boolean;
+    isManualDriverLocationAction?: boolean;
+  },
+) {
+  console.log(
+    `[DriverContent] ${scenario} → PUT /v1/users/:id/location\n` +
+      JSON.stringify(
+        {
+          location: p.location ?? '',
+          city: p.city ?? null,
+          state: p.state ?? null,
+          zip: p.zip ?? null,
+          latitude: p.latitude,
+          longitude: p.longitude,
+          lastLocationUpdateAt: p.lastUpdateIso ?? null,
+          driverStatus: p.driverStatus ?? null,
+          statusDate: p.statusDate ?? null,
+          isAutoupdate: p.isAutoupdate,
+          isBackgroundTaskLocationUpdate: p.isBackgroundTaskLocationUpdate ?? false,
+          isManualDriverLocationAction: p.isManualDriverLocationAction ?? false,
+        },
+        null,
+        2,
+      ),
+  );
+}
 
 /**
  * DriverContent - Location tracking component for DRIVER role users
@@ -168,11 +212,12 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
   const zipClearedByStatusSelectRef = useRef(false); // Prevent effects from restoring ZIP right after clearing on status select
 
   const formatAddressLabel = useCallback((info: Partial<GeocodedAddress>): string => {
-    const city = info.city || info.subregion || info.district || '';
-    const regionCode = (info.region || '').split(' ')[0];
+    const city = resolveCityForApi(info);
+    const regionLabel =
+      toBackendStateDisplayName(info.region, info.isoCountryCode) || '';
     const postalCode = info.postalCode || '';
     const country = info.country === 'United States' ? 'USA' : (info.country || info.isoCountryCode || '');
-    const parts = [city, regionCode, postalCode, country].filter(Boolean);
+    const parts = [city, regionLabel, postalCode, country].filter(Boolean);
     return parts.join(' ');
   }, []);
 
@@ -1071,8 +1116,9 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           const geo = reverseGeocode && reverseGeocode.length > 0 ? reverseGeocode[0] : null;
           if (geo) {
             setLocationLabel(formatAddressLabel(geo));
-            const c = geo.city || geo.subregion || geo.district || '';
-            const s = geo.region ? geo.region.split(' ')[0] : '';
+            const c = resolveCityForApi(geo);
+            const s =
+              toBackendStateDisplayName(geo.region, geo.isoCountryCode) || '';
             const zipVal = authState.userZipCode || zip;
             if (c) setFormCity(c);
             if (s) setFormState(s);
@@ -1122,8 +1168,9 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
             const geo = reverseGeocode && reverseGeocode.length > 0 ? reverseGeocode[0] : null;
             if (geo) {
               setLocationLabel(formatAddressLabel(geo));
-              const c = geo.city || geo.subregion || geo.district || '';
-              const s = geo.region ? geo.region.split(' ')[0] : '';
+              const c = resolveCityForApi(geo);
+              const s =
+                toBackendStateDisplayName(geo.region, geo.isoCountryCode) || '';
               if (c) setFormCity(c);
               if (s) setFormState(s);
               if (c && s && zipCode) setFormLocation(`${c}, ${s} ${zipCode}`.trim());
@@ -1333,16 +1380,19 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           });
           const g = rev[0];
           if (g) {
-            const c = g.city || g.subregion || g.district || '';
-            const st = g.region ? g.region.split(' ')[0] : '';
+            const c = resolveCityForApi(g);
+            const regionRaw = g.region ? String(g.region).trim() : '';
+            const displayState =
+              toBackendStateDisplayName(regionRaw, g.isoCountryCode) ||
+              undefined;
             cityForApi = c.trim() || undefined;
-            stateForApi = st.trim() || undefined;
+            stateForApi = displayState;
             locationLineForApi =
-              c && st
-                ? `${c}, ${st}${zipToSend ? ` ${zipToSend}` : ''}`.trim()
+              c && displayState
+                ? `${c}, ${displayState}${zipToSend ? ` ${zipToSend}` : ''}`.trim()
                 : locationLineForApi;
             setFormCity(c);
-            setFormState(st);
+            if (displayState) setFormState(displayState);
             if (locationLineForApi) {
               setFormLocation(locationLineForApi);
             }
@@ -1362,11 +1412,16 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
 
       const previousStatus = previousStatusRef.current;
 
-      // Single request: backend persists + TMS for drivers
-      const syncResult = await sendLocationUpdateToBackendUser({
-        location: locationLineForApi,
+      const locationForApi =
+        toTmsLocationCode(stateForApi, locationLineForApi) || undefined;
+
+      const stateForBackend =
+        toBackendStateDisplayName(stateForApi, undefined) || stateForApi;
+
+      const statusUpdatePayload = {
+        location: locationForApi,
         city: cityForApi,
-        state: stateForApi,
+        state: stateForBackend,
         zip: zipToSend,
         latitude: currentLocation.latitude,
         longitude: currentLocation.longitude,
@@ -1374,8 +1429,12 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         driverStatus: status,
         statusDate: dateToSend,
         isAutoupdate: computeNextAutoupdateForStatus(status),
-        isManualDriverLocationAction: true,
-      });
+        isManualDriverLocationAction: true as const,
+      };
+      logLocationApiPayload('Status update (save status)', statusUpdatePayload);
+
+      // Single request: backend persists + TMS for drivers
+      const syncResult = await sendLocationUpdateToBackendUser(statusUpdatePayload);
 
       if (syncResult.ok) {
         if (syncResult.tmsSyncFailed) {
@@ -1521,16 +1580,20 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       // Reverse geocode to get ZIP code and human-readable address
       let postalCode = '';
       let city: string | undefined;
-      let state: string | undefined;
       let locationString: string | undefined;
+      let stateDisplayForApi: string | undefined;
       try {
         const reverseGeocode = await reverseGeocodeWithDeviceFallback({ latitude, longitude });
         if (reverseGeocode && reverseGeocode.length > 0) {
           const geo = reverseGeocode[0];
           await saveLastSuccessfulReverseGeocodeTimestamp();
           postalCode = (geo.postalCode || '').trim();
-          city = geo.city || geo.subregion || geo.district || undefined;
-          state = geo.region ? geo.region.split(' ')[0] : undefined;
+          city = resolveCityForApi(geo) || undefined;
+          const regionRaw = geo.region ? String(geo.region).trim() : '';
+          stateDisplayForApi = toBackendStateDisplayName(
+            regionRaw,
+            geo.isoCountryCode
+          );
           if (postalCode) {
             zipJustSetFromShareRef.current = true;
             setZip(postalCode);
@@ -1539,13 +1602,14 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
             }, 6000);
           }
           if (city) setFormCity(city);
-          if (state) setFormState(state);
-          const locStr = city && state && postalCode
-            ? `${city}, ${state} ${postalCode}`.trim()
+          if (stateDisplayForApi) setFormState(stateDisplayForApi);
+          const locStr = city && stateDisplayForApi && postalCode
+            ? `${city}, ${stateDisplayForApi} ${postalCode}`.trim()
             : formatAddressLabel(geo);
           setFormLocation(locStr);
-          locationString = formatAddressLabel(geo);
-          setLocationLabel(locationString);
+          locationString =
+            toTmsLocationCode(regionRaw, locStr) || undefined;
+          setLocationLabel(formatAddressLabel(geo));
         }
       } catch (geoError) {
         fileLogger.error('DriverContent', 'Reverse geocoding failed', { error: geoError instanceof Error ? geoError.message : String(geoError) });
@@ -1562,10 +1626,10 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         console.log(
           `[DriverContent] Sync location to backend after Share (driver_status from storage: "${storedStatusForTms || '(empty)'}")...`
         );
-        const shareSync = await sendLocationUpdateToBackendUser({
+        const sharePayload = {
           location: locationString,
           city,
-          state,
+          state: stateDisplayForApi,
           zip: finalZipCode,
           latitude,
           longitude,
@@ -1573,8 +1637,10 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           driverStatus: storedStatusForTms,
           statusDate: formatStatusDate(''),
           isAutoupdate: automaticLocationSharing,
-          isManualDriverLocationAction: true,
-        });
+          isManualDriverLocationAction: true as const,
+        };
+        logLocationApiPayload('Manual share location', sharePayload);
+        const shareSync = await sendLocationUpdateToBackendUser(sharePayload);
 
         if (shareSync.ok) {
           if (shareSync.tmsSyncFailed) {
@@ -1701,7 +1767,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       try {
         const loc = authState.userLocation || userLocation;
         if (loc?.latitude && loc?.longitude && user?.driverStatus) {
-          const res = await sendLocationUpdateToBackendUser({
+          const disableAutoPayload = {
             latitude: loc.latitude,
             longitude: loc.longitude,
             zip: authState.userZipCode || zip,
@@ -1709,7 +1775,12 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
             driverStatus: user.driverStatus,
             statusDate: formatStatusDate(''),
             isAutoupdate: false,
-          });
+          };
+          logLocationApiPayload(
+            'Disable automatic location sharing',
+            disableAutoPayload,
+          );
+          const res = await sendLocationUpdateToBackendUser(disableAutoPayload);
           if (res.ok && res.tmsSyncFailed) {
             fileLogger.error('DriverContent', 'TMS_SYNC_FAILED_DISABLE_AUTO', {
               tmsError: res.tmsError,
@@ -1761,8 +1832,12 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
             if (reverseGeocode && reverseGeocode.length > 0) {
               const geo = reverseGeocode[0];
               const postalCode = geo.postalCode || '';
-              geoCity = geo.city || geo.subregion || geo.district || undefined;
-              geoState = geo.region ? geo.region.split(' ')[0] : undefined;
+              geoCity = resolveCityForApi(geo) || undefined;
+              const regionRaw = geo.region ? String(geo.region).trim() : '';
+              geoState = regionRaw
+                ? toBackendStateDisplayName(regionRaw, geo.isoCountryCode) ||
+                  undefined
+                : undefined;
               if (postalCode) {
                 currentZipCode = postalCode;
                 if (status !== 'available_on') {
@@ -1804,18 +1879,26 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         const cityToSend = geoCity ?? (formCity || undefined);
         const stateToSend = geoState ?? (formState || undefined);
         const locStr = cityToSend && stateToSend ? `${cityToSend}, ${stateToSend} ${currentZipCode}`.trim() : undefined;
-        const toggleSync = await sendLocationUpdateToBackendUser({
-          location: locStr,
+        const locationCode = toTmsLocationCode(stateToSend, locStr) || undefined;
+        const stateForBackend =
+          toBackendStateDisplayName(stateToSend) || stateToSend;
+        const togglePayload = {
+          location: locationCode,
           city: cityToSend,
-          state: stateToSend,
+          state: stateForBackend,
           zip: currentZipCode,
           latitude: currentLatitude,
           longitude: currentLongitude,
           lastUpdateIso: getLocalIsoString(),
           driverStatus: status,
           statusDate: formatStatusDate(''),
-        isAutoupdate: value,
-        });
+          isAutoupdate: value,
+        };
+        logLocationApiPayload(
+          'Enable automatic location sharing',
+          togglePayload,
+        );
+        const toggleSync = await sendLocationUpdateToBackendUser(togglePayload);
 
         if (toggleSync.ok) {
           if (toggleSync.tmsSyncFailed) {

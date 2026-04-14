@@ -4,6 +4,7 @@
  */
 
 import * as Location from 'expo-location';
+import { toBackendStateDisplayName } from '@/utils/stateDisplayName';
 
 export interface GeocodedAddress {
   city?: string;
@@ -14,6 +15,39 @@ export interface GeocodedAddress {
   subregion?: string;
   district?: string;
   isoCountryCode?: string;
+}
+
+/** OSM address keys in priority order for a human locality name (matches TMS `current_city` style). */
+function localityFromOsmAddress(addr: Record<string, string | undefined>): string {
+  const keys = [
+    'city',
+    'town',
+    'village',
+    'municipality',
+    'hamlet',
+    'suburb',
+    'neighbourhood',
+    'quarter',
+    'city_district',
+  ];
+  for (const k of keys) {
+    const v = addr[k];
+    if (v && String(v).trim()) return String(v).trim();
+  }
+  return '';
+}
+
+/**
+ * Locality for API `city` → DB → TMS `current_city` (e.g. "Hialeah Gardens", "West Bridgewater").
+ * Prefer `city`; then `district`; `subregion` last (often a county from Nominatim — avoid when city exists).
+ */
+export function resolveCityForApi(geo: Partial<GeocodedAddress>): string {
+  const pick = (s?: string) => (s && String(s).trim()) || '';
+  const c = pick(geo.city);
+  if (c) return c;
+  const d = pick(geo.district);
+  if (d) return d;
+  return pick(geo.subregion);
 }
 
 /**
@@ -65,15 +99,16 @@ export async function reverseGeocodeAsync(params: {
               addr['addr:postcode'] ||
               '';
 
+            const locality = localityFromOsmAddress(addr);
             // Map OpenStreetMap format to our format (similar to expo-location)
             const result: GeocodedAddress = {
-              city: address.city || address.town || address.village || address.municipality || '',
+              city: locality || addr.district || addr.neighbourhood || '',
               state: address.state || address.region || '',
               country: address.country || '',
               postalCode: postcode,
               region: address.state || address.region || '',
-              subregion: address.county || address.state_district || '',
-              district: address.district || address.neighbourhood || '',
+              subregion: addr.county || addr.state_district || '',
+              district: addr.district || addr.neighbourhood || addr.quarter || '',
               isoCountryCode: address.country_code?.toUpperCase() || '',
             };
 
@@ -156,7 +191,11 @@ export async function reverseGeocodeWithDeviceFallback(params: {
       }
       if (needCity) {
         merged.city =
-          n.city || n.district || n.subregion || base.city || '';
+          resolveCityForApi({
+            city: n.city || undefined,
+            district: n.district || undefined,
+            subregion: n.subregion || undefined,
+          }) || resolveCityForApi(base);
       }
       if ((!merged.region || !String(merged.region).trim()) && n.region) {
         merged.region = n.region;
@@ -277,8 +316,9 @@ export async function geocodeZipToAddress(
   });
   if (reversed.length === 0) return null;
   const g = reversed[0];
-  const city = g.city || g.subregion || g.district || '';
-  const state = g.region ? g.region.split(' ')[0] : '';
+  const city = resolveCityForApi(g);
+  const state =
+    toBackendStateDisplayName(g.region, g.isoCountryCode) || '';
   return { city, state };
 }
 

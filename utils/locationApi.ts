@@ -350,7 +350,8 @@ export async function sendLocationUpdateToBackendUser(params: {
     const url = `${API_BASE_URL}/v1/users/${userId}/location`;
 
     const body: Record<string, unknown> = {
-      location: params.location,
+      // Empty string when no TMS region code (e.g. Ukraine); backend skips DB update for location
+      location: params.location ?? '',
       city: params.city,
       state: params.state,
       zip: params.zip,
