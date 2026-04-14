@@ -16,6 +16,9 @@ import {
   recordSuccessfulLocationApiSend,
   haversineDistanceMeters,
 } from '@/constants/locationSendThrottle';
+import { toTmsLocationCode } from '@/utils/tmsLocationCode';
+import { resolveCityForApi } from '@/utils/geocoding';
+import { toBackendStateDisplayName } from '@/utils/stateDisplayName';
 
 const LOCATION_TASK_NAME = 'background-location-task';
 // Hint for OS location updates; aligns with LOCATION_API_MIN_INTERVAL_MS in locationSendThrottle.
@@ -250,10 +253,13 @@ try {
           subregion?: string;
           district?: string;
           region?: string;
+          isoCountryCode?: string;
         }) => {
           postalCode = geo.postalCode || '';
-          city = geo.city || geo.subregion || geo.district || '';
-          state = geo.region ? geo.region.split(' ')[0] : '';
+          city = resolveCityForApi(geo);
+          state =
+            toBackendStateDisplayName(geo.region, geo.isoCountryCode) ||
+            (geo.region ? String(geo.region).trim() : '');
         };
 
         if (!shouldRunReverseGeocode) {
@@ -284,14 +290,16 @@ try {
               const pc = (first?.postalCode || '').trim();
               if (first && pc) {
                 postalCode = pc;
-                city =
-                  first.city ||
-                  first.subregion ||
-                  first.district ||
-                  '';
-                state = first.region
-                  ? String(first.region).split(' ')[0]
-                  : '';
+                city = resolveCityForApi({
+                  city: first.city || undefined,
+                  district: first.district || undefined,
+                  subregion: first.subregion || undefined,
+                });
+                state =
+                  toBackendStateDisplayName(
+                    first.region ? String(first.region) : undefined,
+                    first.isoCountryCode
+                  ) || (first.region ? String(first.region).trim() : '');
                 resolved = true;
                 await saveGeocodeAnchor(latitude, longitude);
                 await saveLastSuccessfulReverseGeocodeTimestamp();
@@ -517,11 +525,14 @@ try {
                   let backendUpdateSuccess = false;
                   try {
                     if (sendLocationUpdateToBackendUser) {
-                      const locationStr = city && state ? `${city}, ${state}${finalPostalCode ? ` ${finalPostalCode}` : ''}`.trim() : undefined;
+                      const locationStr = state ? toTmsLocationCode(state) || undefined : undefined;
+                      const stateForBackend = state
+                        ? toBackendStateDisplayName(state) || state
+                        : undefined;
                       const locResult = await sendLocationUpdateToBackendUser({
                         location: locationStr,
                         city: city || undefined,
-                        state: state || undefined,
+                        state: stateForBackend,
                         zip: finalPostalCode,
                         latitude,
                         longitude,
