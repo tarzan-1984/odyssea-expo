@@ -202,7 +202,10 @@ export interface StaffDraftLoadsResponse {
 }
 
 /** TMS draft loads for the current driver, enriched with local offer data (auth: DRIVER only). */
-export async function getDriverDraftLoads(): Promise<DriverDraftLoadsResponse> {
+export async function getDriverDraftLoads(params?: {
+  page?: number;
+  per_page?: number;
+}): Promise<DriverDraftLoadsResponse> {
   if (!API_BASE_URL) {
     throw new Error('API_BASE_URL is not configured');
   }
@@ -212,7 +215,11 @@ export async function getDriverDraftLoads(): Promise<DriverDraftLoadsResponse> {
     throw new Error('No access token available');
   }
 
-  const url = `${API_BASE_URL}/v1/offers/driver/draft-loads`;
+  const searchParams = new URLSearchParams();
+  searchParams.set('project', 'odysseia');
+  if (params?.page != null) searchParams.set('page', String(params.page));
+  if (params?.per_page != null) searchParams.set('per_page', String(params.per_page));
+  const url = `${API_BASE_URL}/v1/offers/driver/draft-loads?${searchParams.toString()}`;
   const response = await fetch(url, {
     method: 'GET',
     headers: {
@@ -250,7 +257,11 @@ export async function getDriverDraftLoads(): Promise<DriverDraftLoadsResponse> {
 }
 
 /** TMS draft loads for non-driver roles (TMS `user_id` = server user externalId). */
-export async function getStaffDraftLoads(): Promise<StaffDraftLoadsResponse> {
+export async function getStaffDraftLoads(params?: {
+  is_flt?: 'true' | 'false';
+  page?: number;
+  per_page?: number;
+}): Promise<StaffDraftLoadsResponse> {
   if (!API_BASE_URL) {
     throw new Error('API_BASE_URL is not configured');
   }
@@ -260,7 +271,12 @@ export async function getStaffDraftLoads(): Promise<StaffDraftLoadsResponse> {
     throw new Error('No access token available');
   }
 
-  const url = `${API_BASE_URL}/v1/offers/draft-loads`;
+  const searchParams = new URLSearchParams();
+  searchParams.set('project', 'odysseia');
+  if (params?.is_flt != null) searchParams.set('is_flt', params.is_flt);
+  if (params?.page != null) searchParams.set('page', String(params.page));
+  if (params?.per_page != null) searchParams.set('per_page', String(params.per_page));
+  const url = `${API_BASE_URL}/v1/offers/draft-loads?${searchParams.toString()}`;
   const response = await fetch(url, {
     method: 'GET',
     headers: {
