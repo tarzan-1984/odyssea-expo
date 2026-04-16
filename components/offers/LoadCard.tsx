@@ -1,0 +1,129 @@
+import React from 'react';
+import { View, Text, StyleSheet } from 'react-native';
+import { colors, fonts, rem, fp } from '@/lib';
+import type { YourLoadItem } from '@/app-api/loads';
+import { labelForDriverLoadStatus } from '@/constants/driverLoadStatuses';
+
+function backgroundForStatus(status: string): string {
+  const s = status.trim().toLowerCase();
+  if (s === 'waiting-on-pu-date') return '#F3F4F6'; // neutral
+  if (s === 'at-pu') return '#E6F2FF'; // blue
+  if (s === 'loaded-enroute') return '#FFF4E5'; // amber
+  if (s === 'at-del') return '#F3E8FF'; // purple
+  if (s === 'delivered') return '#EAF7EF'; // green
+  if (s === 'waiting-on-rc') return '#FFF7D6'; // yellow
+  if (s === 'tonu') return '#FFE7D6'; // orange
+  if (s === 'cancelled') return '#FDECEC'; // red
+  return '#EEF4FB';
+}
+
+function badgeForStatus(status: string): { bg: string; fg: string } {
+  const s = status.trim().toLowerCase();
+  if (s === 'waiting-on-pu-date') return { bg: '#E5E7EB', fg: '#111827' };
+  if (s === 'at-pu') return { bg: '#CFE6FF', fg: '#0B3A75' };
+  if (s === 'loaded-enroute') return { bg: '#FFE2B8', fg: '#7A3E00' };
+  if (s === 'at-del') return { bg: '#E9D5FF', fg: '#4C1D95' };
+  if (s === 'delivered') return { bg: '#CFEFD8', fg: '#0F5132' };
+  if (s === 'waiting-on-rc') return { bg: '#FFE8A3', fg: '#5A4100' };
+  if (s === 'tonu') return { bg: '#FFD0B3', fg: '#7A2E00' };
+  if (s === 'cancelled') return { bg: '#F9C8C8', fg: '#7A0B0B' };
+  return { bg: '#D9E6F7', fg: colors.primary.blue };
+}
+
+export default function LoadCard({ item }: { item: YourLoadItem }) {
+  const title = [item.from_short_address, item.to_short_address].filter(Boolean).join(' -> ');
+  const statusLabel = item.load_status ? labelForDriverLoadStatus(item.load_status) : '';
+  const badge = badgeForStatus(item.load_status);
+  const loadedPart =
+    item.loaded_miles != null && Number.isFinite(item.loaded_miles)
+      ? `Loaded: ${item.loaded_miles} mi`
+      : '';
+  const ratePart =
+    item.driver_rate != null && Number.isFinite(item.driver_rate)
+      ? `Driver rate: $${item.driver_rate}`
+      : '';
+
+  return (
+    <View style={[styles.card, { backgroundColor: backgroundForStatus(item.load_status) }]}>
+      <View style={styles.titleRow}>
+        <Text style={styles.title} numberOfLines={2}>
+          {title || `Load #${item.tms_load_id}`}
+        </Text>
+        {statusLabel ? (
+          <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
+            <Text style={[styles.statusBadgeText, { color: badge.fg }]} numberOfLines={1}>
+              {statusLabel}
+            </Text>
+          </View>
+        ) : null}
+      </View>
+
+      {loadedPart || ratePart ? (
+        <View style={styles.loadedRow}>
+          {loadedPart ? (
+            <Text style={[styles.meta, styles.metaFlex]} numberOfLines={1}>
+              {loadedPart}
+            </Text>
+          ) : (
+            <View style={styles.metaFlex} />
+          )}
+          {ratePart ? (
+            <Text style={styles.meta} numberOfLines={1}>
+              {ratePart}
+            </Text>
+          ) : null}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  card: {
+    borderRadius: rem(12),
+    padding: rem(16),
+    marginBottom: rem(12),
+    borderWidth: 2,
+    borderColor: colors.neutral.lightGrey,
+  },
+  titleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: rem(8),
+    marginBottom: rem(6),
+  },
+  statusBadge: {
+    paddingHorizontal: rem(10),
+    paddingVertical: rem(4),
+    borderRadius: rem(999),
+    maxWidth: '45%',
+  },
+  statusBadgeText: {
+    fontSize: fp(12),
+    fontFamily: fonts['700'],
+  },
+  title: {
+    flex: 1,
+    fontSize: fp(15),
+    fontFamily: fonts['600'],
+    color: colors.primary.blue,
+  },
+  loadedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: rem(8),
+    marginTop: rem(4),
+  },
+  meta: {
+    fontSize: fp(13),
+    fontFamily: fonts['400'],
+    color: colors.neutral.darkGrey,
+  },
+  metaFlex: {
+    flex: 1,
+    minWidth: 0,
+  },
+});
+

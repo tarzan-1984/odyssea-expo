@@ -9,6 +9,7 @@ import {
   RefreshControl,
   TouchableOpacity,
 } from 'react-native';
+import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useInfiniteQuery } from '@tanstack/react-query';
@@ -18,7 +19,10 @@ import WorkTopMenu from '@/components/work/WorkTopMenu';
 import { useAuth } from '@/context/AuthContext';
 import { canAccessWorkTab, canAccessDriversAndOffers } from '@/constants/roleAccess';
 import { getDriverDraftLoads, getStaffDraftLoads } from '@/app-api/offers';
+import { getYourLoads } from '@/app-api/loads';
 import DraftLoadCard from '@/components/offers/DraftLoadCard';
+import LoadCard from '@/components/offers/LoadCard';
+import OffersAdminUserFilter from '@/components/offers/OffersAdminUserFilter';
 import YourLoadsStatusPicker from '@/components/work/YourLoadsStatusPicker';
 import {
   DEFAULT_DRIVER_LOAD_STATUS,
@@ -33,10 +37,22 @@ export default function LoadsScreen() {
   const canAccess = canAccessWorkTab(role);
   const showDriversTab = canAccessDriversAndOffers(role);
   const isDriver = role === 'DRIVER';
+  const isAdministrator = role === 'ADMINISTRATOR';
   const draftLoadsQueryEnabled = authState.isAuthenticated && canAccess;
   const [tab, setTab] = useState<'your' | 'drafts'>('your');
   const [yourLoadsStatus, setYourLoadsStatus] =
     useState<DriverLoadStatusValue>(DEFAULT_DRIVER_LOAD_STATUS);
+  /** ADMINISTRATOR only: optional TMS user_id filter (externalId), '' = all loads */
+  const [adminLoadsUserId, setAdminLoadsUserId] = useState('');
+  const externalId = authState.user?.externalId?.trim() ?? '';
+  const yourLoadsNeedExternalId = isDriver || !isAdministrator;
+  const yourLoadsQueryEnabled =
+    authState.isAuthenticated &&
+    canAccess &&
+    tab === 'your' &&
+    (!yourLoadsNeedExternalId || externalId.length > 0);
+  const yourLoadsStaleTimeMs = 10 * 60 * 1000;
+  const draftLoadsStaleTimeMs = 5 * 60 * 1000;
 
   const {
     isPending,
@@ -59,6 +75,7 @@ export default function LoadsScreen() {
     },
     enabled: draftLoadsQueryEnabled && tab === 'drafts',
     initialPageParam: 1,
+    staleTime: draftLoadsStaleTimeMs,
     getNextPageParam: (lastPage) => {
       const tms = lastPage?.tms;
       const page = typeof tms?.page === 'number' ? tms.page : 1;
@@ -74,6 +91,44 @@ export default function LoadsScreen() {
   }, [authState.isAuthenticated, canAccess, router]);
 
   const items = data?.pages?.flatMap((p) => p.items ?? []) ?? [];
+
+  const {
+    isPending: yourPending,
+    isError: yourIsError,
+    error: yourError,
+    isRefetching: yourIsRefetching,
+    fetchNextPage: fetchNextYour,
+    hasNextPage: yourHasNextPage,
+    isFetchingNextPage: yourIsFetchingNextPage,
+    refetch: refetchYour,
+    data: yourData,
+  } = useInfiniteQuery({
+    queryKey: ['your-loads', role, externalId, yourLoadsStatus, adminLoadsUserId],
+    queryFn: async ({ pageParam }) => {
+      const page = typeof pageParam === 'number' ? pageParam : 1;
+      const loadStatus =
+        yourLoadsStatus === 'all' ? undefined : String(yourLoadsStatus);
+      return getYourLoads({
+        role,
+        externalId,
+        adminUserTmsId: isAdministrator ? adminLoadsUserId : undefined,
+        load_status: loadStatus,
+        page,
+        per_page: 20,
+      });
+    },
+    enabled: yourLoadsQueryEnabled,
+    initialPageParam: 1,
+    staleTime: yourLoadsStaleTimeMs,
+    getNextPageParam: (lastPage) => {
+      const tms = lastPage?.tms;
+      const page = typeof tms?.page === 'number' ? tms.page : 1;
+      const totalPages = typeof tms?.total_pages === 'number' ? tms.total_pages : 1;
+      return page < totalPages ? page + 1 : undefined;
+    },
+  });
+
+  const yourItems = yourData?.pages?.flatMap((p) => p.items ?? []) ?? [];
 
   return (
     <View style={[styles.screenWrap, Platform.OS === 'android' && { paddingBottom: insets.bottom }]}>
@@ -108,13 +163,67 @@ export default function LoadsScreen() {
           <View style={styles.content}>
             {tab === 'your' ? (
               <View style={styles.yourLoadsWrap}>
+                {isAdministrator ? (
+                  <OffersAdminUserFilter value={adminLoadsUserId} onChange={setAdminLoadsUserId} />
+                ) : null}
                 <YourLoadsStatusPicker value={yourLoadsStatus} onChange={setYourLoadsStatus} />
-                <View style={styles.placeholder}>
-                  <Text style={styles.placeholderTitle}>Your loads</Text>
-                  <Text style={styles.placeholderSubtitle}>
-                    Loads assigned to you will appear here.
-                  </Text>
-                </View>
+                {!yourLoadsQueryEnabled ? (
+                  <View style={styles.placeholder}>
+                    <Text style={styles.placeholderTitle}>Your loads</Text>
+                    <Text style={styles.placeholderSubtitle}>
+                      {externalId || !yourLoadsNeedExternalId
+                        ? 'Loading...'
+                        : 'External ID is missing. Contact support to link your account.'}
+                    </Text>
+                  </View>
+                ) : yourPending ? (
+                  <View style={styles.centered}>
+                    <ActivityIndicator size="large" color={colors.primary.blue} />
+                  </View>
+                ) : yourIsError ? (
+                  <View style={styles.placeholder}>
+                    <Text style={styles.errorTitle}>Could not load your loads</Text>
+                    <Text style={styles.placeholderSubtitle}>
+                      {yourError instanceof Error ? yourError.message : 'Something went wrong.'}
+                    </Text>
+                  </View>
+                ) : yourItems.length === 0 ? (
+                  <View style={styles.emptyWrap}>
+                    <Image
+                      source={require('@/icons/no_offers_found.png')}
+                      style={styles.emptyImage}
+                      contentFit="contain"
+                    />
+                    <Text style={styles.emptyText}>No loads found</Text>
+                  </View>
+                ) : (
+                  <FlatList
+                    data={yourItems}
+                    keyExtractor={(row) => `load-${row.tms_load_id}`}
+                    renderItem={({ item }) => <LoadCard item={item} />}
+                    contentContainerStyle={styles.listContent}
+                    onEndReachedThreshold={0.6}
+                    onEndReached={() => {
+                      if (yourHasNextPage && !yourIsFetchingNextPage) {
+                        fetchNextYour();
+                      }
+                    }}
+                    ListFooterComponent={
+                      yourIsFetchingNextPage ? (
+                        <View style={styles.footerLoading}>
+                          <ActivityIndicator size="small" color={colors.primary.blue} />
+                        </View>
+                      ) : null
+                    }
+                    refreshControl={
+                      <RefreshControl
+                        refreshing={yourIsRefetching}
+                        onRefresh={() => refetchYour()}
+                        tintColor={colors.primary.blue}
+                      />
+                    }
+                  />
+                )}
               </View>
             ) : !draftLoadsQueryEnabled ? (
               <View style={styles.centered}>
@@ -132,11 +241,13 @@ export default function LoadsScreen() {
                 </Text>
               </View>
             ) : items.length === 0 ? (
-              <View style={styles.placeholder}>
-                <Text style={styles.placeholderTitle}>No drafts in progress</Text>
-                <Text style={styles.placeholderSubtitle}>
-                  Loads you start in TMS will appear here while they are still being completed.
-                </Text>
+              <View style={styles.emptyWrap}>
+                <Image
+                  source={require('@/icons/no_offers_found.png')}
+                  style={styles.emptyImage}
+                  contentFit="contain"
+                />
+                <Text style={styles.emptyText}>No draft loads found</Text>
               </View>
             ) : (
               <FlatList
@@ -245,6 +356,22 @@ const styles = StyleSheet.create({
   },
   yourLoadsWrap: {
     flex: 1,
+  },
+  emptyWrap: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: rem(40),
+    gap: rem(16),
+  },
+  emptyImage: {
+    width: rem(200),
+    height: rem(200),
+  },
+  emptyText: {
+    fontSize: fp(14),
+    fontFamily: fonts['500'],
+    color: colors.neutral.darkGrey,
   },
   listContent: {
     paddingHorizontal: rem(16),

@@ -20,7 +20,7 @@ export default function DraftLoadCard({ item }: { item: DriverDraftLoadItem }) {
       : '';
   const ratePart =
     item.driver_rate != null && Number.isFinite(item.driver_rate)
-      ? `Your rate: $${item.driver_rate}`
+      ? `Driver rate: $${item.driver_rate}`
       : '';
 
   return (
