@@ -17,6 +17,8 @@ import { syncAppLocationSettingsFromBackend } from '@/utils/appLocationSettings'
 import { eventBus } from '@/services/EventBus';
 import { fileLogger } from '@/utils/fileLogger';
 import { LAST_SUCCESSFUL_REVERSE_GEOCODE_UNIX_KEY } from '@/constants/reverseGeocodeThrottle';
+import { LOCATION_LAST_API_SEND_AT_KEY } from '@/constants/locationSendThrottle';
+import { APP_ACTIVITY_PING_LAST_HTTP_MS_KEY } from '@/utils/appActivityPing';
 import * as Location from 'expo-location';
 import * as Notifications from 'expo-notifications';
 import {
@@ -770,6 +772,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await AsyncStorage.removeItem('@location_last_update');
       await AsyncStorage.removeItem(LAST_SUCCESSFUL_REVERSE_GEOCODE_UNIX_KEY);
       await AsyncStorage.removeItem(DRIVER_PROFILE_SYNC_LAST_FETCH_KEY);
+      await AsyncStorage.removeItem(LOCATION_LAST_API_SEND_AT_KEY);
+      await AsyncStorage.removeItem(APP_ACTIVITY_PING_LAST_HTTP_MS_KEY);
       
       // Clear user profile data (status, zip, date)
       await AsyncStorage.removeItem('@user_status');
@@ -783,6 +787,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       console.log('💾 [AuthContext] Cleared all AsyncStorage data (settings, location, user profile, navigation)');
       
+      try {
+        const { unregisterAppActivityBackgroundFetch } = await import(
+          '@/tasks/appActivityPingTask'
+        );
+        await unregisterAppActivityBackgroundFetch();
+      } catch (pingUnregisterError) {
+        console.warn('⚠️ [AuthContext] Failed to unregister activity ping task:', pingUnregisterError);
+      }
+
       // Stop background location tracking
       try {
         const Location = await import('expo-location');

@@ -245,6 +245,10 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
       width: 100%;
       height: 100%;
     }
+    /* Attribution bar hidden per product UI; tile provider terms may require credit elsewhere. */
+    .leaflet-control-attribution {
+      display: none !important;
+    }
     .custom-marker {
       background: transparent !important;
       border: none !important;
@@ -262,6 +266,7 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
         Math.log2(360 / ${initialRegion.longitudeDelta}),
         18
       ),
+      attributionControl: false,
       zoomControl: true,
       scrollWheelZoom: true,
       doubleClickZoom: true,
@@ -276,7 +281,7 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
 
     // MapTiler streets-v4 if EXPO_PUBLIC_MAPTILER_API_KEY is set, else CARTO Voyager (no key)
     L.tileLayer(${JSON.stringify(rasterTile.url)}, {
-      attribution: ${JSON.stringify(rasterTile.attribution)},
+      attribution: '',
       ${tileLayerSubdomainsJs}
       maxZoom: ${rasterTile.maxZoom},
       tileSize: 256,

@@ -17,6 +17,7 @@ import BlockedAccountModal from '@/components/common/BlockedAccountModal';
 // CRITICAL: This import must happen at the top level to ensure task registration
 // The task is registered when this module is imported
 import '@/tasks/locationTask';
+import '@/tasks/appActivityPingTask';
 import { LOCATION_TASK_NAME } from '@/tasks/locationTask';
 import * as TaskManager from 'expo-task-manager';
 // Ensure notifications handler is always registered regardless of auth flow
@@ -235,6 +236,8 @@ function RootLayoutNav() {
             '@user_location',
             '@pending_location_update',
             '@location_last_update',
+            '@location_last_api_send_at_ms',
+            '@app_activity_ping_last_http_ms',
             '@location_update_queue',
             
             // App Settings

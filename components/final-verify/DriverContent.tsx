@@ -24,6 +24,10 @@ import PinMapIcon from '@/icons/PinMapIcon';
 import { useAuth } from '@/context/AuthContext';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { LOCATION_TASK_NAME } from '@/tasks/locationTask';
+import {
+  registerAppActivityBackgroundFetch,
+  unregisterAppActivityBackgroundFetch,
+} from '@/tasks/appActivityPingTask';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   sendLocationUpdateToBackendUser,
@@ -645,6 +649,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       if (verification) {
         console.log('📍 [BackgroundTracking] ✅✅✅ TASK STARTED SUCCESSFULLY! ✅✅✅');
         console.log('📍 [BackgroundTracking] Foreground service notification should appear in notification tray');
+        await registerAppActivityBackgroundFetch();
       } else {
         console.error('❌ [BackgroundTracking] ❌❌❌ TASK FAILED TO START ❌❌❌');
         console.error('❌ [BackgroundTracking] Verification returned false after 3 attempts');
@@ -731,6 +736,8 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         stack: error instanceof Error ? error.stack : undefined,
         platform: Platform.OS,
       });
+    } finally {
+      await unregisterAppActivityBackgroundFetch();
     }
   }, []);
 
@@ -1371,7 +1378,6 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
             latitude: geoResult.latitude,
             longitude: geoResult.longitude,
           };
-          await updateUserLocation(geoResult.latitude, geoResult.longitude, zipToSend);
           setUserLocation({ latitude: geoResult.latitude, longitude: geoResult.longitude });
 
           const rev = await reverseGeocodeAsync({

@@ -16,6 +16,7 @@ import {
   recordSuccessfulLocationApiSend,
   haversineDistanceMeters,
 } from '@/constants/locationSendThrottle';
+import { runAppActivityPingIfEligible } from '@/utils/appActivityPing';
 import { toTmsLocationCode } from '@/utils/tmsLocationCode';
 import { resolveCityForApi } from '@/utils/geocoding';
 import { toBackendStateDisplayName } from '@/utils/stateDisplayName';
@@ -175,6 +176,11 @@ try {
         const sendGate = await shouldSendAutomaticLocationUpdate(latitude, longitude);
         if (!sendGate.ok) {
           console.log(`⏸️ [LocationTask] Skipping API send: ${sendGate.reason}`);
+          try {
+            await runAppActivityPingIfEligible();
+          } catch {
+            // best-effort
+          }
           return;
         }
 
@@ -634,6 +640,11 @@ try {
               platform: Platform.OS,
             });
           }
+        }
+        try {
+          await runAppActivityPingIfEligible();
+        } catch {
+          // best-effort
         }
       } catch (err) {
         const totalDuration = Date.now() - taskStartTime;
