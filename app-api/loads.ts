@@ -2,7 +2,20 @@ import { API_BASE_URL } from '@/lib/config';
 import { secureStorage } from '@/utils/secureStorage';
 
 export type TmsLoadLocationPoint = {
-  short_address?: string;
+  address?: string | null;
+  short_address?: string | null;
+  date?: string | null;
+  time_start?: string | null;
+  time_end?: string | null;
+  strict_time?: string | null;
+  type?: string | null;
+};
+
+export type TmsLoadRawRow = {
+  id: string;
+  date_created?: string;
+  date_updated?: string;
+  meta_data: Record<string, unknown>;
 };
 
 export type YourLoadItem = {
@@ -12,6 +25,11 @@ export type YourLoadItem = {
   to_short_address: string;
   driver_rate: number | null;
   loaded_miles: number | null;
+  /** Raw stops from TMS meta_data (parsed from JSON strings). */
+  pick_up_location: TmsLoadLocationPoint[];
+  delivery_location: TmsLoadLocationPoint[];
+  /** Full raw row (id/date/meta_data) for detail screen. */
+  raw: TmsLoadRawRow;
 };
 
 export type YourLoadsResponse = {
@@ -80,6 +98,14 @@ function normalizeTmsLoadRow(raw: Record<string, unknown>): YourLoadItem {
     to_short_address,
     driver_rate: parseNumberOrNull(meta.driver_rate),
     loaded_miles: parseNumberOrNull(meta.all_miles),
+    pick_up_location: pu,
+    delivery_location: del,
+    raw: {
+      id: tms_load_id,
+      date_created: raw.date_created != null ? String(raw.date_created) : undefined,
+      date_updated: raw.date_updated != null ? String(raw.date_updated) : undefined,
+      meta_data: meta,
+    },
   };
 }
 

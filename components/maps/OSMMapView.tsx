@@ -16,6 +16,8 @@ export interface MarkerData {
     longitude: number;
   };
   anchor?: { x: number; y: number };
+  /** Optional explicit marker fill color (hex/rgb). When set, overrides status-based color. */
+  markerColor?: string;
   driverStatus?: string | null;
   driverId?: string;
   driverExternalId?: string | null;
@@ -123,7 +125,9 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
         lng: marker.coordinate.longitude,
         anchor: marker.anchor || { x: 0.5, y: 0.5 },
         status: marker.driverStatus || null,
-        statusColor: getStatusColor(marker.driverStatus),
+        statusColor:
+          (marker.markerColor && String(marker.markerColor).trim()) ||
+          getStatusColor(marker.driverStatus),
         driverId: marker.driverId,
         driverExternalId: marker.driverExternalId,
         userStatus: marker.status || null,

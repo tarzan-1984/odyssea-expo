@@ -32,9 +32,41 @@ function sleep(ms: number): Promise<void> {
 async function geocodeAddress(address: string): Promise<RoutePoint | null> {
   const trimmed = (address || '').trim();
   if (!trimmed) return null;
-  const query = trimmed.includes('USA') ? trimmed : `${trimmed}, USA`;
-  const result = await geocodeAsync(query, 'us');
-  return result ? { latitude: result.latitude, longitude: result.longitude } : null;
+  const candidates = buildGeocodeCandidates(trimmed);
+  for (const c of candidates) {
+    const query = c.includes('USA') ? c : `${c}, USA`;
+    const result = await geocodeAsync(query, 'us');
+    if (result) {
+      return { latitude: result.latitude, longitude: result.longitude };
+    }
+  }
+  return null;
+}
+
+function buildGeocodeCandidates(address: string): string[] {
+  const a = (address || '').trim();
+  if (!a) return [];
+  const out: string[] = [];
+  const push = (s: string) => {
+    const v = (s || '').trim().replace(/\s+/g, ' ');
+    if (v && !out.includes(v)) out.push(v);
+  };
+
+  // Full address first
+  push(a);
+
+  // Remove common "Doors X-Y" / suite-ish fragments that Nominatim sometimes rejects
+  push(a.replace(/\bDoors?\s+[0-9A-Za-z-]+\b,?/gi, '').replace(/\s+,/g, ','));
+
+  // City, ST ZIP fallback (very reliable)
+  const cityStateZip = a.match(/,\s*([^,]+,\s*[A-Z]{2}\s*\d{5}(?:-\d{4})?)\s*$/);
+  if (cityStateZip?.[1]) push(cityStateZip[1]);
+
+  // ZIP-only fallback
+  const zip = a.match(/\b(\d{5}(?:-\d{4})?)\b/);
+  if (zip?.[1]) push(zip[1]);
+
+  return out;
 }
 
 /**
@@ -110,13 +142,23 @@ export async function fetchOfferRoute(
   const markers: RoutePoint[] = [];
   for (let i = 0; i < unique.length; i++) {
     if (i > 0) await sleep(NOMINATIM_DELAY_MS);
-    const point = await geocodeAddress(unique[i]);
-    if (!point) return null;
+    const addr = unique[i];
+    const point = await geocodeAddress(addr);
+    if (!point) {
+      // Do not fail the whole route if one address can't be geocoded.
+      // We can still show the other markers (and polyline if >= 2 points).
+      console.warn('[offerRouteService] Failed to geocode address, skipping:', addr);
+      continue;
+    }
     markers.push(point);
   }
 
-  const polyline =
-    markers.length >= 2 ? await fetchOsrmRoute(markers) : [];
+  if (markers.length === 0) {
+    console.warn('[offerRouteService] No geocoded markers for locations:', unique);
+    return null;
+  }
+
+  const polyline = markers.length >= 2 ? await fetchOsrmRoute(markers) : [];
   const bounds = computeBounds(markers, polyline);
 
   return { markers, polyline, bounds };

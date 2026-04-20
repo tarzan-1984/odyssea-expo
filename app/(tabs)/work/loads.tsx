@@ -90,6 +90,13 @@ export default function LoadsScreen() {
     }
   }, [authState.isAuthenticated, canAccess, router]);
 
+  // ADMINISTRATOR: show only "Your loads" with filters (no Drafts tab).
+  useEffect(() => {
+    if (isAdministrator && tab !== 'your') {
+      setTab('your');
+    }
+  }, [isAdministrator, tab]);
+
   const items = data?.pages?.flatMap((p) => p.items ?? []) ?? [];
 
   const {
@@ -130,6 +137,18 @@ export default function LoadsScreen() {
 
   const yourItems = yourData?.pages?.flatMap((p) => p.items ?? []) ?? [];
 
+  const handleLoadPress = (load: YourLoadItem) => {
+    try {
+      console.log(
+        `[Loads] navigate to load detail\n${JSON.stringify(load?.raw ?? load, null, 2)}`,
+      );
+    } catch {}
+    router.push({
+      pathname: `/work/load/${String(load.tms_load_id)}`,
+      params: { loadJson: JSON.stringify(load) },
+    });
+  };
+
   return (
     <View style={[styles.screenWrap, Platform.OS === 'android' && { paddingBottom: insets.bottom }]}>
       <View style={styles.screenContent}>
@@ -141,24 +160,26 @@ export default function LoadsScreen() {
             showDriversTab={showDriversTab}
           />
 
-          <View style={styles.tabRow}>
-            <TouchableOpacity
-              style={[styles.tabButton, tab === 'your' && styles.tabButtonActive]}
-              onPress={() => setTab('your')}
-            >
-              <Text style={[styles.tabText, tab === 'your' && styles.tabTextActive]}>
-                YOUR LOADS
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.tabButton, tab === 'drafts' && styles.tabButtonActive]}
-              onPress={() => setTab('drafts')}
-            >
-              <Text style={[styles.tabText, tab === 'drafts' && styles.tabTextActive]}>
-                DRAFTS LOADS
-              </Text>
-            </TouchableOpacity>
-          </View>
+          {!isAdministrator ? (
+            <View style={styles.tabRow}>
+              <TouchableOpacity
+                style={[styles.tabButton, tab === 'your' && styles.tabButtonActive]}
+                onPress={() => setTab('your')}
+              >
+                <Text style={[styles.tabText, tab === 'your' && styles.tabTextActive]}>
+                  YOUR LOADS
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.tabButton, tab === 'drafts' && styles.tabButtonActive]}
+                onPress={() => setTab('drafts')}
+              >
+                <Text style={[styles.tabText, tab === 'drafts' && styles.tabTextActive]}>
+                  DRAFTS LOADS
+                </Text>
+              </TouchableOpacity>
+            </View>
+          ) : null}
 
           <View style={styles.content}>
             {tab === 'your' ? (
@@ -200,7 +221,7 @@ export default function LoadsScreen() {
                   <FlatList
                     data={yourItems}
                     keyExtractor={(row) => `load-${row.tms_load_id}`}
-                    renderItem={({ item }) => <LoadCard item={item} />}
+                    renderItem={({ item }) => <LoadCard item={item} onPress={handleLoadPress} />}
                     contentContainerStyle={styles.listContent}
                     onEndReachedThreshold={0.6}
                     onEndReached={() => {

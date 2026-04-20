@@ -286,6 +286,22 @@ export async function geocodeWithPostalAsync(query: string, countryCode: 'us' | 
       xhr.send();
     });
 
+    // Fallback: use native device geocoder (foreground only).
+    if (!result) {
+      try {
+        const device = await Location.geocodeAsync(trimmed);
+        const first = device?.[0];
+        if (first && Number.isFinite(first.latitude) && Number.isFinite(first.longitude)) {
+          return {
+            latitude: first.latitude,
+            longitude: first.longitude,
+          };
+        }
+      } catch {
+        // ignore device geocoder failures
+      }
+    }
+
     // If search didn't return postcode, reverse geocode to get it
     if (result && !result.postalCode) {
       const reversed = await reverseGeocodeAsync({ latitude: result.latitude, longitude: result.longitude });

@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { colors, fonts, rem, fp } from '@/lib';
 import type { YourLoadItem } from '@/app-api/loads';
 import { labelForDriverLoadStatus } from '@/constants/driverLoadStatuses';
@@ -30,7 +30,13 @@ function badgeForStatus(status: string): { bg: string; fg: string } {
   return { bg: '#D9E6F7', fg: colors.primary.blue };
 }
 
-export default function LoadCard({ item }: { item: YourLoadItem }) {
+export default function LoadCard({
+  item,
+  onPress,
+}: {
+  item: YourLoadItem;
+  onPress?: (row: YourLoadItem) => void;
+}) {
   const title = [item.from_short_address, item.to_short_address].filter(Boolean).join(' -> ');
   const statusLabel = item.load_status ? labelForDriverLoadStatus(item.load_status) : '';
   const badge = badgeForStatus(item.load_status);
@@ -43,8 +49,18 @@ export default function LoadCard({ item }: { item: YourLoadItem }) {
       ? `Driver rate: $${item.driver_rate}`
       : '';
 
+  const CardWrap = onPress ? TouchableOpacity : View;
+
   return (
-    <View style={[styles.card, { backgroundColor: backgroundForStatus(item.load_status) }]}>
+    <CardWrap
+      {...(onPress
+        ? {
+            onPress: () => onPress(item),
+            activeOpacity: 0.85,
+          }
+        : null)}
+      style={[styles.card, { backgroundColor: backgroundForStatus(item.load_status) }]}
+    >
       <View style={styles.titleRow}>
         <Text style={styles.title} numberOfLines={2}>
           {title || `Load #${item.tms_load_id}`}
@@ -57,6 +73,10 @@ export default function LoadCard({ item }: { item: YourLoadItem }) {
           </View>
         ) : null}
       </View>
+
+      <Text style={styles.loadId} numberOfLines={1}>
+        ID: {item.tms_load_id}
+      </Text>
 
       {loadedPart || ratePart ? (
         <View style={styles.loadedRow}>
@@ -74,7 +94,7 @@ export default function LoadCard({ item }: { item: YourLoadItem }) {
           ) : null}
         </View>
       ) : null}
-    </View>
+    </CardWrap>
   );
 }
 
@@ -108,6 +128,12 @@ const styles = StyleSheet.create({
     fontSize: fp(15),
     fontFamily: fonts['600'],
     color: colors.primary.blue,
+  },
+  loadId: {
+    marginTop: rem(2),
+    fontSize: fp(12),
+    fontFamily: fonts['600'],
+    color: colors.neutral.darkGrey,
   },
   loadedRow: {
     flexDirection: 'row',

@@ -1,34 +1,25 @@
 import { useQuery } from '@tanstack/react-query';
-import {
-  fetchOfferRoute,
-  OfferRouteResult,
-} from '@/services/offerRouteService';
+import { fetchOfferRoute, type OfferRouteResult } from '@/services/offerRouteService';
 
-const CACHE_STALE_MS = 2 * 60 * 60 * 1000; // 2 hours
+const STALE_MS = 2 * 60 * 60 * 1000; // 2 hours
 
-/**
- * Fetches and caches offer route: geocodes addresses and OSRM road geometry.
- * Cached for ~5 minutes.
- */
-export function useOfferRoute(locations: string[] | undefined): {
+export function useLoadRoute(locations: string[] | undefined): {
   data: OfferRouteResult | null | undefined;
   isLoading: boolean;
   error: Error | null;
   refetch: () => void;
 } {
-  const key = Array.isArray(locations)
-    ? locations.join('|')
-    : 'empty';
+  const key = Array.isArray(locations) ? locations.join('|') : 'empty';
   const enabled =
     Array.isArray(locations) &&
     locations.length > 0 &&
     locations.some((l) => (l || '').trim());
 
   const query = useQuery({
-    queryKey: ['offerRoute', key],
+    queryKey: ['loadRoute', key],
     queryFn: async () => fetchOfferRoute(locations ?? []),
-    staleTime: CACHE_STALE_MS,
-    gcTime: CACHE_STALE_MS * 2,
+    staleTime: STALE_MS,
+    gcTime: STALE_MS * 2,
     enabled,
   });
 
@@ -39,3 +30,4 @@ export function useOfferRoute(locations: string[] | undefined): {
     refetch: query.refetch,
   };
 }
+

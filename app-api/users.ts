@@ -41,6 +41,62 @@ export async function getUserById(userId: string): Promise<UserResponse> {
 /**
  * Get user from our backend database (for non-DRIVER roles)
  */
+/** User row from GET /v1/users/external/:externalId (DB lookup by TMS external id). */
+export type BackendUserByExternalId = {
+  id: string;
+  externalId?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  phone?: string | null;
+  email?: string | null;
+};
+
+/**
+ * Find app user in our DB by `externalId` (e.g. TMS user id from load meta `dispatcher_initials`).
+ */
+export async function getUserByExternalIdFromBackend(
+  externalId: string,
+): Promise<BackendUserByExternalId | null> {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is not configured');
+  }
+
+  const trimmed = String(externalId ?? '').trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const accessToken = await secureStorage.getItemAsync('accessToken');
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
+
+  const response = await fetch(
+    `${API_BASE_URL}/v1/users/external/${encodeURIComponent(trimmed)}`,
+    {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+  );
+
+  if (response.status === 404) {
+    return null;
+  }
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      errorData.message || `Failed to fetch user by external id. Status: ${response.status}`,
+    );
+  }
+
+  const data = await response.json();
+  return (data.data || data) as BackendUserByExternalId;
+}
+
 export async function getUserFromBackend(userId: string): Promise<any> {
   if (!API_BASE_URL) {
     throw new Error('API_BASE_URL is not configured');

@@ -1,6 +1,7 @@
 import React, { useMemo, useState, useEffect, useRef, useCallback } from 'react';
 import { View, TouchableOpacity, Text, StyleSheet, Dimensions, Platform } from 'react-native';
 import { useRouter, usePathname } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, fonts, fp, rem } from '@/lib';
 import Home from '@/icons/Home';
 import WorkIcon from '@/icons/WorkIcon';
@@ -57,9 +58,15 @@ const NavItem: React.FC<NavItemProps> = ({ icon, label, route, isActive = false,
 
 interface BottomNavigationProps {
   currentRoute?: string;
+  /** Android only: avoid overlap with system navigation bar on specific screens */
+  androidAvoidSystemNav?: boolean;
 }
 
-export default function BottomNavigation({ currentRoute: currentRouteProp }: BottomNavigationProps) {
+export default function BottomNavigation({
+  currentRoute: currentRouteProp,
+  androidAvoidSystemNav = false,
+}: BottomNavigationProps) {
+  const insets = useSafeAreaInsets();
   const pathname = usePathname();
   const currentRoute = currentRouteProp ?? pathname;
   const { chatRooms } = useChatRooms();
@@ -154,7 +161,12 @@ export default function BottomNavigation({ currentRoute: currentRouteProp }: Bot
   }, [chatRooms, authState.user?.role, authState.user?.id, driverStatus]);
 
   return (
-    <View style={styles.bottomNav}>
+    <View
+      style={[
+        styles.bottomNav,
+        Platform.OS === 'android' && androidAvoidSystemNav ? { bottom: insets.bottom } : null,
+      ]}
+    >
       <NavItem 
         icon={<Home width={22} height={22} color={currentRoute?.includes('final-verify') ? ACTIVE_COLOR : INACTIVE_COLOR} />}
         label=""
