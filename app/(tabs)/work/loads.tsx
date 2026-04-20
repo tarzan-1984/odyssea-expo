@@ -138,11 +138,6 @@ export default function LoadsScreen() {
   const yourItems = yourData?.pages?.flatMap((p) => p.items ?? []) ?? [];
 
   const handleLoadPress = (load: YourLoadItem) => {
-    try {
-      console.log(
-        `[Loads] navigate to load detail\n${JSON.stringify(load?.raw ?? load, null, 2)}`,
-      );
-    } catch {}
     router.push({
       pathname: `/work/load/${String(load.tms_load_id)}`,
       params: { loadJson: JSON.stringify(load) },

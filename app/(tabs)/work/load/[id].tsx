@@ -355,20 +355,7 @@ export default function LoadDetailScreen() {
     }
   }, [loadJson]);
 
-  useEffect(() => {
-    try {
-      console.log(
-        `[LoadDetail] loadJson received\n${JSON.stringify(
-          { id, hasJson: !!loadJson, jsonLength: loadJson ? String(loadJson).length : 0 },
-          null,
-          2,
-        )}`,
-      );
-      console.log(
-        `[LoadDetail] parsed load\n${JSON.stringify(load?.raw ?? load, null, 2)}`,
-      );
-    } catch {}
-  }, [id, loadJson, load]);
+  // Removed debug logging for load payload
 
   const title = load
     ? [load.from_short_address, load.to_short_address].filter(Boolean).join(' -> ')
@@ -403,27 +390,7 @@ export default function LoadDetailScreen() {
     locations.length > 0 ? locations : undefined
   );
 
-  useEffect(() => {
-    try {
-      console.log('[LoadDetail] route inputs', {
-        locationsCount: locations.length,
-        locations,
-        routePointsCount: routePoints.length,
-        routePoints,
-      });
-    } catch {}
-  }, [locations, routePoints]);
-
-  useEffect(() => {
-    try {
-      console.log('[LoadDetail] route result', {
-        hasRouteData: !!routeData,
-        markers: routeData?.markers?.length ?? 0,
-        polyline: routeData?.polyline?.length ?? 0,
-        bounds: routeData?.bounds ?? null,
-      });
-    } catch {}
-  }, [routeData]);
+  // Removed debug logging for route data
 
   const markers = (routeData?.markers ?? []).map((p, i) => ({
     coordinate: { latitude: p.latitude, longitude: p.longitude },
