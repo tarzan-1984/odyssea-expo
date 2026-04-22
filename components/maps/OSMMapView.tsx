@@ -49,7 +49,7 @@ export interface OSMMapViewRef {
 }
 
 const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
-  ({ initialRegion, style, markers = [], onMapPress, onMarkerPress }, ref) => {
+  ({ initialRegion, style, markers = [], onMapPress, onMarkerPress, scrollEnabled = true, zoomEnabled = true }, ref) => {
     const webViewRef = useRef<WebView>(null);
     const mapReadyRef = useRef(false);
     const currentZoomRef = useRef<number | null>(null);
@@ -196,6 +196,8 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
     const tileLayerSubdomainsJs = rasterTile.subdomains
       ? `subdomains: '${rasterTile.subdomains}',`
       : '';
+    const draggingJs = scrollEnabled ? 'true' : 'false';
+    const zoomJs = zoomEnabled ? 'true' : 'false';
 
     useImperativeHandle(ref, () => ({
       animateToRegion: (region: Region, duration: number = 1000) => {
@@ -267,13 +269,13 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
         18
       ),
       attributionControl: false,
-      zoomControl: true,
-      scrollWheelZoom: true,
-      doubleClickZoom: true,
-      boxZoom: true,
-      keyboard: true,
-      dragging: true,
-      touchZoom: true,
+      zoomControl: ${zoomJs},
+      scrollWheelZoom: ${zoomJs},
+      doubleClickZoom: ${zoomJs},
+      boxZoom: ${zoomJs},
+      keyboard: ${zoomJs},
+      dragging: ${draggingJs},
+      touchZoom: ${zoomJs},
       zoomAnimation: true,
       fadeAnimation: true,
       markerZoomAnimation: true
