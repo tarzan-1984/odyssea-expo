@@ -19,6 +19,7 @@ import {
 import { toTmsLocationCode } from '@/utils/tmsLocationCode';
 import { resolveCityForApi } from '@/utils/geocoding';
 import { toBackendStateDisplayName } from '@/utils/stateDisplayName';
+import { isAllowedNorthAmericaLatLng } from '@/utils/geoFence';
 
 const LOCATION_TASK_NAME = 'background-location-task';
 // Hint for OS location updates; aligns with LOCATION_API_MIN_INTERVAL_MS in locationSendThrottle.
@@ -161,12 +162,28 @@ try {
         // Test environment gate: when backend is in "test" mode, only one allowed driver (by externalId)
         // may send automatic background updates to the API.
         const appLocEnv = await getResolvedAppLocationSettings();
+        const currentExternalId =
+          (await AsyncStorage.getItem('@user_external_id').catch(() => null))?.trim() || '';
+        const isTestDriver =
+          !!currentExternalId &&
+          !!appLocEnv.locationTestDriverExternalId &&
+          currentExternalId === String(appLocEnv.locationTestDriverExternalId).trim();
         if (appLocEnv.locationEnvironmentMode === 'test') {
           const allowed = (appLocEnv.locationTestDriverExternalId || '').trim();
-          const currentExternalId = (await AsyncStorage.getItem('@user_external_id').catch(() => null))?.trim() || '';
           if (!allowed || !currentExternalId || currentExternalId !== allowed) {
             console.log(
               `⏸️ [LocationTask] Test mode gate: skipping auto-send (current externalId="${currentExternalId || '(missing)'}", allowed="${allowed || '(missing)'}")`
+            );
+            return;
+          }
+        }
+
+        // Geo-fence: prevent obviously wrong fixes for non-test drivers.
+        if (!isTestDriver) {
+          const ok = isAllowedNorthAmericaLatLng({ latitude, longitude });
+          if (!ok) {
+            console.warn(
+              `⛔️ [LocationTask] Geo-fence blocked location send (lat=${latitude}, lng=${longitude}, externalId="${currentExternalId || ''}")`
             );
             return;
           }

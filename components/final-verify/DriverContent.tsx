@@ -38,6 +38,7 @@ import { recordSuccessfulLocationApiSend } from '@/constants/locationSendThrottl
 import { getResolvedAppLocationSettings } from '@/utils/appLocationSettings';
 import { toTmsLocationCode } from '@/utils/tmsLocationCode';
 import { toBackendStateDisplayName } from '@/utils/stateDisplayName';
+import { isAllowedNorthAmericaLatLng } from '@/utils/geoFence';
 
 /** Console: same field names as JSON body to PUT /v1/users/:id/location */
 function logLocationApiPayload(
@@ -1650,6 +1651,26 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         return;
       }
       const { latitude, longitude } = pos.coords;
+      // Geo-fence: prevent obviously wrong fixes for non-test drivers.
+      try {
+        const appLocEnv = await getResolvedAppLocationSettings();
+        const currentExternalId =
+          (await AsyncStorage.getItem('@user_external_id').catch(() => null))?.trim() || '';
+        const isTestDriver =
+          !!currentExternalId &&
+          !!appLocEnv.locationTestDriverExternalId &&
+          currentExternalId === String(appLocEnv.locationTestDriverExternalId).trim();
+        if (!isTestDriver) {
+          const ok = isAllowedNorthAmericaLatLng({ latitude, longitude });
+          if (!ok) {
+            postDriverBanner('Location looks invalid. Please try again.');
+            setTimeout(() => postDriverBanner(null), 4000);
+            return;
+          }
+        }
+      } catch {
+        // If check fails, do not block manual send.
+      }
       const nextRegion: Region = {
         latitude,
         longitude,
