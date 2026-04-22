@@ -185,8 +185,8 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
     latitude: 39.2904, // default Baltimore
     longitude: -76.6122,
     // Start more zoomed in (MapTiler/CARTO styles look better with a closer default).
-    latitudeDelta: 0.006,
-    longitudeDelta: 0.006,
+    latitudeDelta: 0.004,
+    longitudeDelta: 0.004,
   };
   const [hasLocationPermission, setHasLocationPermission] = useState<boolean | null>(null);
   const [isLocationReady, setIsLocationReady] = useState(false);
@@ -196,6 +196,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
   const [locationEnvMode, setLocationEnvMode] = useState<'live' | 'test'>('live');
   const [locationTestDriverExternalId, setLocationTestDriverExternalId] =
     useState<string>('3343');
+  const lastMapCoordRef = useRef<{ lat: number; lng: number } | null>(null);
   const messageAnimation = useRef(new Animated.Value(-100)).current; // Start above screen
 
   const postDriverBanner = useCallback((message: string | null, autoClearMs?: number) => {
@@ -1143,7 +1144,15 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         
         // Update local state and map if coordinates exist
         if (latitude && longitude) {
-          setUserLocation({ latitude, longitude });
+          const nextLat = Number(latitude);
+          const nextLng = Number(longitude);
+          const prev = lastMapCoordRef.current;
+          const coordsChanged =
+            !prev || prev.lat !== nextLat || prev.lng !== nextLng;
+          if (coordsChanged) {
+            lastMapCoordRef.current = { lat: nextLat, lng: nextLng };
+          }
+          setUserLocation({ latitude: nextLat, longitude: nextLng });
           // Don't auto-fill ZIP only for available_on (user sets manually). For available/loaded_enroute: show last ZIP, allow auto-update
           const skipZipRestore = status === 'available_on';
           const skipDueToShare = zipJustSetFromShareRef.current;
@@ -1153,18 +1162,19 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           }
           
           // Update map
+          if (coordsChanged) {
           const updateRegion: Region = {
-            latitude,
-            longitude,
-            latitudeDelta: 0.008,
-            longitudeDelta: 0.008,
+            latitude: nextLat,
+            longitude: nextLng,
+            latitudeDelta: 0.005,
+            longitudeDelta: 0.005,
           };
-          
-          mapRef.current?.animateToRegion(updateRegion, 1000);
+            mapRef.current?.animateToRegion(updateRegion, 1000);
+          }
           
           // Update address label and form fields
           try {
-            const reverseGeocode = await reverseGeocodeAsync({ latitude, longitude });
+            const reverseGeocode = await reverseGeocodeAsync({ latitude: nextLat, longitude: nextLng });
             const geo = reverseGeocode && reverseGeocode.length > 0 ? reverseGeocode[0] : null;
             if (geo) {
               setLocationLabel(formatAddressLabel(geo));
@@ -1961,7 +1971,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
                 showsUserLocation={false}
                 showsMyLocationButton={false}
                 scrollEnabled
-                zoomEnabled
+                zoomEnabled={false}
                 rotateEnabled
                 pitchEnabled
                 showsCompass

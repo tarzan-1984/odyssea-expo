@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
-import { View, StyleSheet, StyleProp, ViewStyle, Linking, Platform } from 'react-native';
+import { View, StyleSheet, StyleProp, ViewStyle, Linking } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { getLeafletRasterTileConfig } from '@/utils/mapTileLayer';
 
@@ -16,8 +16,6 @@ export interface MarkerData {
     longitude: number;
   };
   anchor?: { x: number; y: number };
-  /** Optional explicit marker fill color (hex/rgb). When set, overrides status-based color. */
-  markerColor?: string;
   driverStatus?: string | null;
   driverId?: string;
   driverExternalId?: string | null;
@@ -28,8 +26,6 @@ export interface OSMMapViewProps {
   initialRegion: Region;
   style?: StyleProp<ViewStyle>;
   markers?: MarkerData[];
-  /** Route line coordinates (offer route polyline) */
-  polylineCoordinates?: Array<{ latitude: number; longitude: number }>;
   showsUserLocation?: boolean;
   showsMyLocationButton?: boolean;
   scrollEnabled?: boolean;
@@ -53,17 +49,7 @@ export interface OSMMapViewRef {
 }
 
 const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
-  (
-    {
-      initialRegion,
-      style,
-      markers = [],
-      polylineCoordinates = [],
-      onMapPress,
-      onMarkerPress,
-    },
-    ref,
-  ) => {
+  ({ initialRegion, style, markers = [], onMapPress, onMarkerPress, scrollEnabled = true, zoomEnabled = true }, ref) => {
     const webViewRef = useRef<WebView>(null);
     const mapReadyRef = useRef(false);
     const currentZoomRef = useRef<number | null>(null);
@@ -125,9 +111,7 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
         lng: marker.coordinate.longitude,
         anchor: marker.anchor || { x: 0.5, y: 0.5 },
         status: marker.driverStatus || null,
-        statusColor:
-          (marker.markerColor && String(marker.markerColor).trim()) ||
-          getStatusColor(marker.driverStatus),
+        statusColor: getStatusColor(marker.driverStatus),
         driverId: marker.driverId,
         driverExternalId: marker.driverExternalId,
         userStatus: marker.status || null,
@@ -200,44 +184,6 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
       webViewRef.current?.injectJavaScript(script);
     };
 
-    const updatePolyline = (
-      coords: Array<{ latitude: number; longitude: number }>,
-    ) => {
-      if (!mapReadyRef.current) return;
-
-      const points = (Array.isArray(coords) ? coords : [])
-        .filter(
-          (p) =>
-            p &&
-            typeof p.latitude === 'number' &&
-            typeof p.longitude === 'number' &&
-            Number.isFinite(p.latitude) &&
-            Number.isFinite(p.longitude),
-        )
-        .map((p) => [p.latitude, p.longitude]);
-
-      const script = `
-        (function() {
-          if (!window.map) return;
-          if (window.routePolyline) {
-            try { window.routePolyline.remove(); } catch (e) {}
-            window.routePolyline = null;
-          }
-          var pts = ${JSON.stringify(points)};
-          if (Array.isArray(pts) && pts.length >= 2) {
-            window.routePolyline = L.polyline(pts, {
-              color: '#1D4ED8',
-              weight: 4,
-              opacity: 0.85,
-            }).addTo(window.map);
-          }
-        })();
-        true;
-      `;
-
-      webViewRef.current?.injectJavaScript(script);
-    };
-
     // Update markers when markers prop changes
     useEffect(() => {
       if (mapReadyRef.current) {
@@ -246,17 +192,12 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
       }
     }, [markers]);
 
-    // Update route polyline when prop changes
-    useEffect(() => {
-      if (mapReadyRef.current) {
-        updatePolyline(polylineCoordinates);
-      }
-    }, [polylineCoordinates]);
-
     const rasterTile = getLeafletRasterTileConfig();
     const tileLayerSubdomainsJs = rasterTile.subdomains
       ? `subdomains: '${rasterTile.subdomains}',`
       : '';
+    const draggingJs = scrollEnabled ? 'true' : 'false';
+    const zoomJs = zoomEnabled ? 'true' : 'false';
 
     useImperativeHandle(ref, () => ({
       animateToRegion: (region: Region, duration: number = 1000) => {
@@ -306,6 +247,10 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
       width: 100%;
       height: 100%;
     }
+    /* Attribution bar hidden per product UI; tile provider terms may require credit elsewhere. */
+    .leaflet-control-attribution {
+      display: none !important;
+    }
     .custom-marker {
       background: transparent !important;
       border: none !important;
@@ -323,15 +268,14 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
         Math.log2(360 / ${initialRegion.longitudeDelta}),
         18
       ),
-      zoomControl: true,
-      // Hide corner attribution UI; keep provider credits elsewhere if required by ToS/license.
       attributionControl: false,
-      scrollWheelZoom: true,
-      doubleClickZoom: true,
-      boxZoom: true,
-      keyboard: true,
-      dragging: true,
-      touchZoom: true,
+      zoomControl: ${zoomJs},
+      scrollWheelZoom: ${zoomJs},
+      doubleClickZoom: ${zoomJs},
+      boxZoom: ${zoomJs},
+      keyboard: ${zoomJs},
+      dragging: ${draggingJs},
+      touchZoom: ${zoomJs},
       zoomAnimation: true,
       fadeAnimation: true,
       markerZoomAnimation: true
@@ -349,7 +293,6 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
     // Store map and markers in window for access from React Native
     window.map = map;
     window.markers = [];
-    window.routePolyline = null;
 
     // Handle map ready
     map.whenReady(function() {
@@ -483,18 +426,7 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
           javaScriptEnabled={true}
           domStorageEnabled={true}
           startInLoadingState={true}
-          // Let Leaflet handle pan/zoom; WebView page zoom/scroll fights touch gestures (esp. map inside ScrollView).
-          scalesPageToFit={false}
-          scrollEnabled={false}
-          bounces={false}
-          nestedScrollEnabled
-          {...(Platform.OS === 'android'
-            ? {
-                overScrollMode: 'never' as const,
-                setBuiltInZoomControls: false,
-                setDisplayZoomControls: false,
-              }
-            : {})}
+          scalesPageToFit={true}
           // Prevent navigation to external sites (Leaflet / OpenStreetMap links)
           // so that the map is not replaced by a web page or open a browser
           // when tapping on attribution or logos inside the map.
@@ -517,9 +449,6 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
                 mapReadyRef.current = true;
                 if (markers.length > 0) {
                   updateMarkers(markers);
-                }
-                if (polylineCoordinates.length > 0) {
-                  updatePolyline(polylineCoordinates);
                 }
               } else if (data.type === 'zoomChange') {
                 // Update zoom ref when zoom changes
