@@ -126,6 +126,9 @@ export async function persistDriverProfileLocally(
   }
 }
 
+/**
+ * Emits profile + status on the app event bus.
+ */
 export function emitDriverProfileSyncEvents(payload: DriverProfileSyncPayload): void {
   eventBus.emit('DRIVER_PROFILE_SYNCED', payload);
   eventBus.emit('DRIVER_STATUS_UPDATED', { driverStatus: payload.driverStatus });

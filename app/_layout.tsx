@@ -17,7 +17,6 @@ import BlockedAccountModal from '@/components/common/BlockedAccountModal';
 // CRITICAL: This import must happen at the top level to ensure task registration
 // The task is registered when this module is imported
 import '@/tasks/locationTask';
-import '@/tasks/appActivityPingTask';
 import { LOCATION_TASK_NAME } from '@/tasks/locationTask';
 import * as TaskManager from 'expo-task-manager';
 // Ensure notifications handler is always registered regardless of auth flow

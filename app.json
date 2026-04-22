@@ -29,7 +29,6 @@
         "NSPhotoLibraryAddUsageDescription": "This app may save selected or edited avatar to your library.",
         "UIBackgroundModes": [
           "location",
-          "fetch",
           "remote-notification"
         ],
         "ITSAppUsesNonExemptEncryption": false,
@@ -73,7 +72,6 @@
     },
     "plugins": [
       "expo-router",
-      "expo-background-fetch",
       [
         "expo-notifications",
         {

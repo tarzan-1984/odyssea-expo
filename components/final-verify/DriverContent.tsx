@@ -24,10 +24,6 @@ import PinMapIcon from '@/icons/PinMapIcon';
 import { useAuth } from '@/context/AuthContext';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { LOCATION_TASK_NAME } from '@/tasks/locationTask';
-import {
-  registerAppActivityBackgroundFetch,
-  unregisterAppActivityBackgroundFetch,
-} from '@/tasks/appActivityPingTask';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   sendLocationUpdateToBackendUser,
@@ -108,6 +104,12 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
   const previousStatusRef = useRef<StatusValue | null>(null); // Track previous status for transitions
   const [isLocationSharingAllowed, setIsLocationSharingAllowed] = useState(true); // Control visibility of toggle
   const isInitialLoadRef = useRef(true); // Track if this is the first load
+  /** Avoid re-applying status from AsyncStorage when only `user.zip` etc. changes (e.g. after Share location). */
+  const driverFormHydratedUserIdRef = useRef<string | undefined>(undefined);
+  /** User changed the status dropdown but has not saved — do not overwrite UI from stale server sync (e.g. after permission dialog / foreground). */
+  const statusSelectDirtyRef = useRef(false);
+  /** Latest select value for event handlers (avoids stale closures). */
+  const statusUiRef = useRef<StatusValue>(status);
   const isUpdatingLocationSharingRef = useRef(false); // Prevent infinite loops when updating location sharing
   const [zip, setZipState] = useState('');
   
@@ -126,6 +128,8 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
     }
   }, []);
   
+  statusUiRef.current = status;
+
   const formatDate = (d: Date) => {
     const m = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
@@ -385,14 +389,18 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         accuracy: Platform.OS === 'ios' ? Location.Accuracy.Highest : Location.Accuracy.Balanced, // Higher accuracy for iOS to ensure updates
         timeInterval: osTimeIntervalMs,
         distanceInterval: nativeDistanceIntervalM,
-        foregroundService: {
-          notificationTitle: 'Location Tracking Active',
-          notificationBody:
-            locationMinIntervalMs <= 0
-              ? 'Location tracking (min interval off — test mode)'
-              : `Tracking your location every ${intervalInMinutes} minute${intervalInMinutes !== 1 ? 's' : ''}`,
-          notificationColor: '#292966', // App primary color
-        },
+        ...(Platform.OS === 'android'
+          ? {
+              foregroundService: {
+                notificationTitle: 'Location Tracking Active',
+                notificationBody:
+                  locationMinIntervalMs <= 0
+                    ? 'Location tracking (min interval off — test mode)'
+                    : `Tracking your location every ${intervalInMinutes} minute${intervalInMinutes !== 1 ? 's' : ''}`,
+                notificationColor: '#292966', // App primary color
+              },
+            }
+          : {}),
         // iOS-specific settings to ensure background updates work
         ...(Platform.OS === 'ios' && {
           pausesUpdatesAutomatically: false, // Don't pause updates automatically
@@ -628,16 +636,22 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       
       // Verify the task started - try multiple times with delays
       let verification = false;
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        console.log(`📍 [BackgroundTracking] Verification attempt ${attempt}/3...`);
-        verification = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
-        if (verification) {
-          console.log(`📍 [BackgroundTracking] ✅ Verification successful on attempt ${attempt}`);
-          break;
-        }
-        if (attempt < 3) {
-          console.log(`📍 [BackgroundTracking] ⏳ Waiting 2 seconds before next attempt...`);
-          await new Promise(resolve => setTimeout(resolve, 2000));
+      if (Platform.OS === 'ios') {
+        // On iOS dev-client builds, hasStartedLocationUpdatesAsync may lag / return false even when the native service started.
+        // Treat successful startLocationUpdatesAsync as success to avoid false-negative spam.
+        verification = true;
+      } else {
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          console.log(`📍 [BackgroundTracking] Verification attempt ${attempt}/3...`);
+          verification = await Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME);
+          if (verification) {
+            console.log(`📍 [BackgroundTracking] ✅ Verification successful on attempt ${attempt}`);
+            break;
+          }
+          if (attempt < 3) {
+            console.log(`📍 [BackgroundTracking] ⏳ Waiting 2 seconds before next attempt...`);
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          }
         }
       }
       
@@ -649,7 +663,6 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       if (verification) {
         console.log('📍 [BackgroundTracking] ✅✅✅ TASK STARTED SUCCESSFULLY! ✅✅✅');
         console.log('📍 [BackgroundTracking] Foreground service notification should appear in notification tray');
-        await registerAppActivityBackgroundFetch();
       } else {
         console.error('❌ [BackgroundTracking] ❌❌❌ TASK FAILED TO START ❌❌❌');
         console.error('❌ [BackgroundTracking] Verification returned false after 3 attempts');
@@ -736,8 +749,6 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         stack: error instanceof Error ? error.stack : undefined,
         platform: Platform.OS,
       });
-    } finally {
-      await unregisterAppActivityBackgroundFetch();
     }
   }, []);
 
@@ -852,71 +863,94 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
   useEffect(() => {
     const loadSavedData = async () => {
       try {
-        // Load status
-        const savedStatus = await AsyncStorage.getItem('@user_status');
-        if (savedStatus) {
-          const parsedStatus = savedStatus as StatusValue;
-          
-          // Check if status is a basic (selectable) status
-          const basicStatuses: StatusValue[] = ['available', 'available_on', 'available_off', 'loaded_enroute'];
-          const isBasic = basicStatuses.includes(parsedStatus);
-          
-          setStatus(parsedStatus);
-          setDriverStatusFromStorage(parsedStatus); // Set status from AsyncStorage for marker
-          setIsStatusDisabled(!isBasic);
-          
-          // Set previous status ref to null for initial load
-          previousStatusRef.current = null;
-          
-          // Update visibility and setting based on status group (initial load)
-          const inactiveStatuses: StatusValue[] = ['available_off', 'available_on', 'banned', 'blocked', 'on_vocation', 'expired_documents'];
-          const activeStatuses: StatusValue[] = ['available', 'loaded_enroute'];
-          
-          const isInactiveStatus = inactiveStatuses.includes(parsedStatus);
-          const isActiveStatus = activeStatuses.includes(parsedStatus);
-          
-          setIsLocationSharingAllowed(isActiveStatus);
-          
-          // On initial load only, set correct state based on status group
-          if (isInitialLoadRef.current) {
-            if (isInactiveStatus) {
-              // Only update if setting is currently enabled to avoid unnecessary updates
-              const currentSettings = await AsyncStorage.getItem('@odyssea_app_settings');
-              if (currentSettings) {
-                const parsedSettings = JSON.parse(currentSettings);
-                if (parsedSettings.automaticLocationSharing) {
+        const uid = user?.id;
+        if (!uid) {
+          driverFormHydratedUserIdRef.current = undefined;
+          statusSelectDirtyRef.current = false;
+          return;
+        }
+
+        const shouldHydrateStatusFromStorage =
+          driverFormHydratedUserIdRef.current !== uid;
+        if (shouldHydrateStatusFromStorage) {
+          driverFormHydratedUserIdRef.current = uid;
+        }
+
+        if (shouldHydrateStatusFromStorage) {
+          // Load status (only on first paint for this user or after account switch — not when user.zip changes)
+          const savedStatus = await AsyncStorage.getItem('@user_status');
+          if (savedStatus) {
+            const parsedStatus = savedStatus as StatusValue;
+
+            const basicStatuses: StatusValue[] = [
+              'available',
+              'available_on',
+              'available_off',
+              'loaded_enroute',
+            ];
+            const isBasic = basicStatuses.includes(parsedStatus);
+
+            setStatus(parsedStatus);
+            setDriverStatusFromStorage(parsedStatus);
+            setIsStatusDisabled(!isBasic);
+            statusSelectDirtyRef.current = false;
+
+            previousStatusRef.current = null;
+
+            const inactiveStatuses: StatusValue[] = [
+              'available_off',
+              'available_on',
+              'banned',
+              'blocked',
+              'on_vocation',
+              'expired_documents',
+            ];
+            const activeStatuses: StatusValue[] = ['available', 'loaded_enroute'];
+
+            const isInactiveStatus = inactiveStatuses.includes(parsedStatus);
+            const isActiveStatus = activeStatuses.includes(parsedStatus);
+
+            setIsLocationSharingAllowed(isActiveStatus);
+
+            if (isInitialLoadRef.current) {
+              if (isInactiveStatus) {
+                const currentSettings = await AsyncStorage.getItem('@odyssea_app_settings');
+                if (currentSettings) {
+                  const parsedSettings = JSON.parse(currentSettings);
+                  if (parsedSettings.automaticLocationSharing) {
+                    await setAutomaticLocationSharing(false);
+                    await stopBackgroundLocationTracking();
+                  }
+                } else {
                   await setAutomaticLocationSharing(false);
                   await stopBackgroundLocationTracking();
                 }
-              } else {
-                // Settings don't exist, set to false
-                await setAutomaticLocationSharing(false);
-                await stopBackgroundLocationTracking();
               }
+              isInitialLoadRef.current = false;
             }
-            // If active status - just show toggle, don't force enable
-            isInitialLoadRef.current = false; // Mark as loaded
+
+            previousStatusRef.current = parsedStatus;
+
+            console.log(
+              `[DriverContent] Loaded status from AsyncStorage: ${parsedStatus}, disabled: ${!isBasic}`,
+            );
+          } else {
+            console.log(
+              '[DriverContent] No saved status found in AsyncStorage, using default: available',
+            );
+            setStatus('available');
+            setDriverStatusFromStorage('available');
+            setIsStatusDisabled(false);
+            statusSelectDirtyRef.current = false;
+            previousStatusRef.current = null;
+            setIsLocationSharingAllowed(true);
+            if (isInitialLoadRef.current) {
+              isInitialLoadRef.current = false;
+            }
+            previousStatusRef.current = 'available';
           }
-          
-          // Now set previous status for future transitions
-          previousStatusRef.current = parsedStatus;
-          
-          console.log(`[DriverContent] Loaded status from AsyncStorage: ${parsedStatus}, disabled: ${!isBasic}`);
-        } else {
-          console.log('[DriverContent] No saved status found in AsyncStorage, using default: available');
-          setStatus('available');
-          setDriverStatusFromStorage('available'); // Set default status for marker
-          setIsStatusDisabled(false);
-          previousStatusRef.current = null;
-          setIsLocationSharingAllowed(true);
-          // Default status is active, so toggle will be shown
-          // Don't force enable on initial load
-          if (isInitialLoadRef.current) {
-            isInitialLoadRef.current = false; // Mark as loaded
-          }
-          previousStatusRef.current = 'available';
         }
-        
+
         // Load zip: from AsyncStorage first; if empty (first login), use user from authState and persist
         const savedZip = await AsyncStorage.getItem('@user_zip');
         if (savedZip) {
@@ -952,7 +986,15 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
     };
     
     loadSavedData();
-  }, [user?.zip, user?.statusDate, setZip, setAutomaticLocationSharing, stopBackgroundLocationTracking, parseStatusDateForDisplay]);
+  }, [
+    user?.id,
+    user?.zip,
+    user?.statusDate,
+    setZip,
+    setAutomaticLocationSharing,
+    stopBackgroundLocationTracking,
+    parseStatusDateForDisplay,
+  ]);
 
   // Listen for driver status updates from AuthContext / WebSocket
   useEffect(() => {
@@ -963,7 +1005,17 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
 
       const newStatus = data.driverStatus as StatusValue;
       const previousStatus = previousStatusRef.current;
-      
+      const uiStatus = statusUiRef.current;
+      const skipDueToUnsavedSelect =
+        statusSelectDirtyRef.current && newStatus !== uiStatus;
+
+      if (skipDueToUnsavedSelect) {
+        return;
+      }
+      if (statusSelectDirtyRef.current && newStatus === uiStatus) {
+        statusSelectDirtyRef.current = false;
+      }
+
       // Check if status is a basic (selectable) status
       const basicStatuses: StatusValue[] = ['available', 'available_on', 'available_off', 'loaded_enroute'];
       const isBasic = basicStatuses.includes(newStatus);
@@ -972,7 +1024,9 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       setDriverStatusFromStorage(newStatus); // Update status from AsyncStorage for marker
       setIsStatusDisabled(!isBasic);
       
-      console.log(`[DriverContent] Driver status updated from backend: ${newStatus}, disabled: ${!isBasic}`);
+      console.log(
+        `[DriverContent] Driver status updated from backend: ${newStatus}, disabled: ${!isBasic}`,
+      );
 
       // Auto-manage location sharing based on status transition
       await updateLocationSharingBasedOnStatus(newStatus, previousStatus);
@@ -991,16 +1045,25 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
   // Full profile from backend (webhook / GET driver-status) — zip, date, status
   useEffect(() => {
     const applyProfile = async (p: DriverProfileSyncPayload) => {
+      let skippedConflictingStatus = false;
       if (p.driverStatus !== undefined && p.driverStatus !== null) {
         const newStatus = p.driverStatus as StatusValue;
         const previousStatus = previousStatusRef.current;
         const basicStatuses: StatusValue[] = ['available', 'available_on', 'available_off', 'loaded_enroute'];
         const isBasic = basicStatuses.includes(newStatus);
-        setStatus(newStatus);
-        setDriverStatusFromStorage(newStatus);
-        setIsStatusDisabled(!isBasic);
-        await updateLocationSharingBasedOnStatus(newStatus, previousStatus);
-        previousStatusRef.current = newStatus;
+        const uiStatus = statusUiRef.current;
+        skippedConflictingStatus =
+          statusSelectDirtyRef.current && newStatus !== uiStatus;
+        if (!skippedConflictingStatus) {
+          if (statusSelectDirtyRef.current && newStatus === uiStatus) {
+            statusSelectDirtyRef.current = false;
+          }
+          setStatus(newStatus);
+          setDriverStatusFromStorage(newStatus);
+          setIsStatusDisabled(!isBasic);
+          await updateLocationSharingBasedOnStatus(newStatus, previousStatus);
+          previousStatusRef.current = newStatus;
+        }
       }
       if (p.zip !== null) {
         const z = (p.zip || '').trim();
@@ -1010,7 +1073,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         setDate(parseStatusDateForDisplay(p.statusDate));
       }
 
-      if (p.isAutoupdate !== null) {
+      if (p.isAutoupdate !== null && !skippedConflictingStatus) {
         // Prevent status-based automation from fighting server value during sync
         isUpdatingLocationSharingRef.current = true;
         try {
@@ -1456,6 +1519,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           ['@user_date', dateToSend],
         ]);
         setDriverStatusFromStorage(status);
+        statusSelectDirtyRef.current = false;
         previousStatusRef.current = status;
         await updateLocationSharingBasedOnStatus(status, previousStatus);
         await updateUserLocation(
@@ -1622,15 +1686,24 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         console.warn('Failed to get ZIP code from geocoding:', geoError);
       }
 
-      // TMS driver_status must match server-cached value (WebSocket / profile sync), not the select UI
       const storedStatusForTms = (await AsyncStorage.getItem('@user_status'))?.trim() ?? '';
-      
+      // Use the status shown in the select (user may have changed it before Share; storage still lags until "Update status").
+      const basicShareStatuses: StatusValue[] = [
+        'available',
+        'available_on',
+        'available_off',
+        'loaded_enroute',
+      ];
+      const driverStatusForShare = basicShareStatuses.includes(status)
+        ? status
+        : (storedStatusForTms as StatusValue) || 'available_off';
+
       // Save location and ZIP to AuthContext only if automatic location sharing is enabled
       if (automaticLocationSharing) {
         const finalZipCode = postalCode || zip;
-        
+
         console.log(
-          `[DriverContent] Sync location to backend after Share (driver_status from storage: "${storedStatusForTms || '(empty)'}")...`
+          `[DriverContent] Sync location to backend after Share (driver_status: "${driverStatusForShare}", storage was: "${storedStatusForTms || '(empty)'}")...`,
         );
         const sharePayload = {
           location: locationString,
@@ -1640,12 +1713,34 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           latitude,
           longitude,
           lastUpdateIso: getLocalIsoString(),
-          driverStatus: storedStatusForTms,
+          driverStatus: driverStatusForShare,
           statusDate: formatStatusDate(''),
           isAutoupdate: automaticLocationSharing,
           isManualDriverLocationAction: true as const,
         };
         logLocationApiPayload('Manual share location', sharePayload);
+        console.log(
+          '[Share my location] Payload sent to PUT /v1/users/:id/location:',
+          JSON.stringify(
+            {
+              selectStatusUi: status,
+              asyncStorageUserStatus: storedStatusForTms || null,
+              driverStatusInBody: sharePayload.driverStatus,
+              location: sharePayload.location ?? '',
+              city: sharePayload.city ?? null,
+              state: sharePayload.state ?? null,
+              zip: sharePayload.zip ?? null,
+              latitude: sharePayload.latitude,
+              longitude: sharePayload.longitude,
+              lastUpdateIso: sharePayload.lastUpdateIso,
+              statusDate: sharePayload.statusDate,
+              isAutoupdate: sharePayload.isAutoupdate,
+              isManualDriverLocationAction: sharePayload.isManualDriverLocationAction,
+            },
+            null,
+            2,
+          ),
+        );
         const shareSync = await sendLocationUpdateToBackendUser(sharePayload);
 
         if (shareSync.ok) {
@@ -1665,6 +1760,22 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
 
         await startBackgroundLocationTracking();
       } else {
+        console.log(
+          '[Share my location] No HTTP request (automaticLocationSharing is false). Context:',
+          JSON.stringify(
+            {
+              selectStatusUi: status,
+              asyncStorageUserStatus: storedStatusForTms || null,
+              driverStatusWouldBe: driverStatusForShare,
+              latitude,
+              longitude,
+              postalCodeFromGeocode: postalCode || null,
+              zipState: zip,
+            },
+            null,
+            2,
+          ),
+        );
         // Just update local state for map display, don't save to context
         if (postalCode) {
           zipJustSetFromShareRef.current = true;
@@ -1718,6 +1829,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
 
   const handleStatusChange = async (newStatus: StatusValue) => {
     setStatus(newStatus);
+    statusSelectDirtyRef.current = newStatus !== driverStatusFromStorage;
 
     if (newStatus === driverStatusFromStorage) {
       // User selected the status they're actually in - restore zip and date from AsyncStorage
