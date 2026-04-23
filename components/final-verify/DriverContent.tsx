@@ -1729,10 +1729,12 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         ? status
         : (storedStatusForTms as StatusValue) || 'available_off';
 
-      // Save location and ZIP to AuthContext only if automatic location sharing is enabled
-      if (automaticLocationSharing) {
-        const finalZipCode = postalCode || zip;
+      const finalZipCode = (postalCode || zip || '').trim();
+      // Always persist last fix to AsyncStorage + AuthContext so reopen / profile sync cannot snap the map back to stale coords.
+      await updateUserLocation(latitude, longitude, finalZipCode);
 
+      // Push to backend only when automatic location sharing is enabled (local cache already updated above).
+      if (automaticLocationSharing) {
         console.log(
           `[DriverContent] Sync location to backend after Share (driver_status: "${driverStatusForShare}", storage was: "${storedStatusForTms || '(empty)'}")...`,
         );
@@ -1782,7 +1784,6 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
             });
           }
           await recordSuccessfulLocationApiSend();
-          await updateUserLocation(latitude, longitude, finalZipCode);
         } else {
           fileLogger.error('DriverContent', 'BACKEND_SYNC_FAILED_AFTER_SHARE', {
             status: shareSync.status,
@@ -1792,7 +1793,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         await startBackgroundLocationTracking();
       } else {
         console.log(
-          '[Share my location] No HTTP request (automaticLocationSharing is false). Context:',
+          '[Share my location] No HTTP request (automaticLocationSharing is false); coords cached locally. Context:',
           JSON.stringify(
             {
               selectStatusUi: status,
@@ -1807,7 +1808,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
             2,
           ),
         );
-        // Just update local state for map display, don't save to context
+        // ZIP field + refs (AuthContext/AsyncStorage already updated via updateUserLocation above).
         if (postalCode) {
           zipJustSetFromShareRef.current = true;
           setZip(postalCode);
