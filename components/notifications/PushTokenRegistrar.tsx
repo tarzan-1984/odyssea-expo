@@ -2,6 +2,7 @@
 
 import React from "react";
 import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
 import { registerForPushNotificationsAsync, addNotificationListeners, registerPushTokenToBackend } from "@/services/NotificationsService";
 import { secureStorage } from "@/utils/secureStorage";
 import { useAuth } from "@/context/AuthContext";
@@ -46,6 +47,12 @@ export default function PushTokenRegistrar() {
         const existingToken = await secureStorage.getItemAsync("expoPushToken").catch(() => null);
         if (existingToken) {
           console.log('[PushTokenRegistrar] Push token already exists in secureStorage:', existingToken.substring(0, 20) + '...');
+          return;
+        }
+
+        if (!Device.isDevice) {
+          // Expected on iOS simulator / emulators: no APNs/FCM token. Avoid LogBox (console.error) on recordings.
+          console.log('[PushTokenRegistrar] Skipping push token registration (not a physical device)');
           return;
         }
 

@@ -62,8 +62,8 @@ export async function reverseGeocodeAsync(params: {
   try {
     const { latitude, longitude } = params;
     
-    // OpenStreetMap Nominatim API - free, no API key required
-    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&addressdetails=1`;
+    // Nominatim localizes by HTTP Accept-Language; force English for UI labels (independent of device locale)
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&addressdetails=1&accept-language=en`;
     
     // IMPORTANT: Use XMLHttpRequest instead of fetch - it works in headless JS/background tasks
     // Same approach as in locationApi.ts for sending location updates
@@ -74,6 +74,7 @@ export async function reverseGeocodeAsync(params: {
       xhr.timeout = timeout;
       xhr.open('GET', url, true);
       xhr.setRequestHeader('User-Agent', 'OdysseaApp/1.0'); // Required by Nominatim
+      xhr.setRequestHeader('Accept-Language', 'en');
       
       let resolved = false;
       
@@ -245,6 +246,7 @@ export async function geocodeWithPostalAsync(query: string, countryCode: 'us' | 
       addressdetails: '1',
     });
     params.set('countrycodes', countryCode);
+    params.set('accept-language', 'en');
 
     const url = `https://nominatim.openstreetmap.org/search?${params.toString()}`;
 
@@ -253,6 +255,7 @@ export async function geocodeWithPostalAsync(query: string, countryCode: 'us' | 
       xhr.timeout = 10000;
       xhr.open('GET', url, true);
       xhr.setRequestHeader('User-Agent', 'OdysseaApp/1.0');
+      xhr.setRequestHeader('Accept-Language', 'en');
 
       let resolved = false;
       xhr.onload = () => {
