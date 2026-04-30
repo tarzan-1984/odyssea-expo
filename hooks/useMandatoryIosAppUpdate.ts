@@ -3,16 +3,25 @@ import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import * as Application from 'expo-application';
 import { ApplicationReleaseType } from 'expo-application';
-import { compareAppVersions, fetchAppStoreListing } from '@/services/appStoreUpdate';
+import {
+  compareAppVersions,
+  fetchAppStoreListing,
+  fetchGooglePlayListing,
+} from '@/services/appStoreUpdate';
 
 export type MandatoryIosUpdateState =
   | { phase: 'skip' }
   | { phase: 'loading' }
   | { phase: 'ok' }
-  | { phase: 'force'; storeUrl: string };
+  | {
+      phase: 'force';
+      storeUrl: string;
+      fallbackStoreUrl?: string;
+      storeName: 'App Store' | 'Google Play';
+    };
 
-function shouldSkipIosStoreCheck(): boolean {
-  if (Platform.OS !== 'ios') {
+function shouldSkipStoreCheck(): boolean {
+  if (Platform.OS !== 'ios' && Platform.OS !== 'android') {
     return true;
   }
   if (__DEV__) {
@@ -31,11 +40,11 @@ function shouldSkipIosStoreCheck(): boolean {
  */
 export function useMandatoryIosAppUpdate(): MandatoryIosUpdateState {
   const [state, setState] = useState<MandatoryIosUpdateState>(() =>
-    shouldSkipIosStoreCheck() ? { phase: 'skip' } : { phase: 'loading' },
+    shouldSkipStoreCheck() ? { phase: 'skip' } : { phase: 'loading' },
   );
 
   useEffect(() => {
-    if (shouldSkipIosStoreCheck()) {
+    if (shouldSkipStoreCheck()) {
       setState({ phase: 'skip' });
       return;
     }
@@ -43,21 +52,46 @@ export function useMandatoryIosAppUpdate(): MandatoryIosUpdateState {
     let cancelled = false;
 
     (async () => {
-      try {
-        const releaseType = await Application.getIosApplicationReleaseTypeAsync();
-        if (
-          releaseType === ApplicationReleaseType.SIMULATOR ||
-          releaseType === ApplicationReleaseType.DEVELOPMENT
-        ) {
-          if (!cancelled) setState({ phase: 'skip' });
-          return;
+      if (Platform.OS === 'ios') {
+        try {
+          const releaseType = await Application.getIosApplicationReleaseTypeAsync();
+          if (
+            releaseType === ApplicationReleaseType.SIMULATOR ||
+            releaseType === ApplicationReleaseType.DEVELOPMENT
+          ) {
+            if (!cancelled) setState({ phase: 'skip' });
+            return;
+          }
+        } catch {
+          // Continue with lookup; fail-open if store cannot be reached
         }
-      } catch {
-        // Continue with lookup; fail-open if store cannot be reached
       }
 
-      const bundleId = Application.applicationId ?? '';
-      const listing = await fetchAppStoreListing(bundleId);
+      const installed = Application.nativeApplicationVersion ?? '0';
+      const applicationId = Application.applicationId ?? '';
+
+      if (Platform.OS === 'ios') {
+        const listing = await fetchAppStoreListing(applicationId);
+        if (cancelled) return;
+
+        if (!listing) {
+          setState({ phase: 'ok' });
+          return;
+        }
+
+        if (compareAppVersions(installed, listing.version) < 0) {
+          setState({
+            phase: 'force',
+            storeUrl: listing.trackViewUrl,
+            storeName: 'App Store',
+          });
+        } else {
+          setState({ phase: 'ok' });
+        }
+        return;
+      }
+
+      const listing = await fetchGooglePlayListing(applicationId);
       if (cancelled) return;
 
       if (!listing) {
@@ -65,9 +99,13 @@ export function useMandatoryIosAppUpdate(): MandatoryIosUpdateState {
         return;
       }
 
-      const installed = Application.nativeApplicationVersion ?? '0';
       if (compareAppVersions(installed, listing.version) < 0) {
-        setState({ phase: 'force', storeUrl: listing.trackViewUrl });
+          setState({
+            phase: 'force',
+            storeUrl: listing.marketUrl,
+            fallbackStoreUrl: listing.webUrl,
+            storeName: 'Google Play',
+          });
       } else {
         setState({ phase: 'ok' });
       }
