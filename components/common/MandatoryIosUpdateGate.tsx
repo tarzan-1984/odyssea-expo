@@ -12,9 +12,15 @@ type Props = {
 export default function MandatoryIosUpdateGate({ children }: Props) {
   const updateState = useMandatoryIosAppUpdate();
 
-  const openStore = (url: string) => {
+  const openStore = (url: string, fallbackUrl?: string) => {
     Linking.openURL(url).catch((err) => {
-      console.error('Failed to open App Store URL:', err);
+      if (fallbackUrl) {
+        Linking.openURL(fallbackUrl).catch((fallbackErr) => {
+          console.error('Failed to open store URL:', fallbackErr);
+        });
+        return;
+      }
+      console.error('Failed to open store URL:', err);
     });
   };
 
@@ -47,15 +53,15 @@ export default function MandatoryIosUpdateGate({ children }: Props) {
           <View style={styles.modalCard}>
             <Text style={styles.title}>Update required</Text>
             <Text style={styles.body}>
-              A newer version is available on the App Store. Please update the app to continue
+              A newer version is available on the {updateState.phase === 'force' ? updateState.storeName : 'store'}. Please update the app to continue
               using Odysseia.
             </Text>
             {updateState.phase === 'force' && (
               <Pressable
                 style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]}
-                onPress={() => openStore(updateState.storeUrl)}
+                onPress={() => openStore(updateState.storeUrl, updateState.fallbackStoreUrl)}
               >
-                <Text style={styles.buttonLabel}>Update in App Store</Text>
+                <Text style={styles.buttonLabel}>Update in {updateState.storeName}</Text>
               </Pressable>
             )}
           </View>

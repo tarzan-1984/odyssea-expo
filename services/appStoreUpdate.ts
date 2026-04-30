@@ -32,6 +32,12 @@ export type AppStoreListing = {
   trackViewUrl: string;
 };
 
+export type GooglePlayListing = {
+  version: string;
+  webUrl: string;
+  marketUrl: string;
+};
+
 /**
  * Fetches the public App Store listing for the bundle id (TestFlight builds are not returned here).
  */
@@ -62,6 +68,76 @@ export async function fetchAppStoreListing(bundleId: string): Promise<AppStoreLi
       return null;
     }
     return { version: row.version, trackViewUrl: row.trackViewUrl };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .trim();
+}
+
+function extractGooglePlayVersion(html: string): string | null {
+  const patterns = [
+    /"softwareVersion"\s*:\s*"([^"]+)"/u,
+    /Current Version[\s\S]{0,800}?>(\d+(?:\.\d+)+(?:[-\w.]*)?)</iu,
+    /Version[\s\S]{0,800}?>(\d+(?:\.\d+)+(?:[-\w.]*)?)</iu,
+  ];
+
+  for (const pattern of patterns) {
+    const match = pattern.exec(html);
+    const version = match?.[1] ? decodeHtmlEntities(match[1]) : '';
+    if (/^\d+(?:\.\d+)+(?:[-\w.]*)?$/u.test(version)) {
+      return version;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Fetches the public Google Play listing for the Android package id.
+ * Google Play does not provide a stable public version API, so this is best-effort
+ * and fail-open when the listing format changes.
+ */
+export async function fetchGooglePlayListing(packageId: string): Promise<GooglePlayListing | null> {
+  if (Platform.OS !== 'android' || !packageId) {
+    return null;
+  }
+
+  const webUrl = `https://play.google.com/store/apps/details?id=${encodeURIComponent(packageId)}&hl=en&gl=US`;
+  const marketUrl = `market://details?id=${encodeURIComponent(packageId)}`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), LOOKUP_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(webUrl, {
+      signal: controller.signal,
+      headers: {
+        Accept: 'text/html,application/xhtml+xml,application/xml',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    });
+    if (!res.ok) {
+      return null;
+    }
+
+    const html = await res.text();
+    const version = extractGooglePlayVersion(html);
+    if (!version) {
+      return null;
+    }
+
+    return { version, webUrl, marketUrl };
   } catch {
     return null;
   } finally {
