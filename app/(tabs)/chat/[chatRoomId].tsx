@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useEffect, useCallback, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, KeyboardAvoidingView, Platform, Keyboard, Animated, Easing, Image } from 'react-native';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, KeyboardAvoidingView, Platform, Keyboard, Animated, Easing, Image, Alert } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { BlurView } from 'expo-blur';
 import { colors, fonts, fp, rem } from '@/lib';
@@ -13,7 +13,7 @@ import EmojiPicker from '@/components/EmojiPicker';
 import MessageItem from '@/components/MessageItem';
 import ChatHeaderDropdown from '@/components/ChatHeaderDropdown';
 import { setActiveChatRoomId } from '@/services/ActiveChatService';
-import { useAttachmentHandler } from '@/utils/chatAttachmentHelpers';
+import { type FileData, type UploadQueueItem, uploadAttachmentFile, useAttachmentPicker } from '@/utils/chatAttachmentHelpers';
 import FilesModal from '@/components/modals/FilesModal';
 import ChatInputSection from '@/components/chat/ChatInputSection';
 import { getChatAvatarSource as getChatAvatarSourceUtil, getChatInitials } from '@/utils/chatAvatarUtils';
@@ -39,7 +39,8 @@ export default function ChatRoomScreen() {
   const [messageText, setMessageText] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [uploadQueue, setUploadQueue] = useState<Array<{name: string; mimeType?: string; size?: number; status: 'uploading'|'done'|'error'}>>([]);
+  const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
+  const [pendingAttachment, setPendingAttachment] = useState<FileData | null>(null);
   const [replyingTo, setReplyingTo] = useState<Message['replyData'] | null>(null);
   
   // Use useChatRoom hook for loading chat room and messages with caching (same logic as Next.js)
@@ -55,26 +56,38 @@ export default function ChatRoomScreen() {
     sendMessage,
     isSendingMessage,
   } = useChatRoom(chatRoomId);
-  const handleAttachmentPress = useAttachmentHandler(chatRoomId, sendMessage, setUploadQueue, setIsUploading);
+  const handleFilesSelected = useCallback((files: FileData[]) => {
+    const file = files[0];
+    if (!file) return;
+
+    setPendingAttachment(file);
+    setUploadQueue([{
+      name: file.name,
+      mimeType: file.mimeType,
+      size: file.size,
+      status: 'selected',
+    }]);
+  }, []);
+  const handleAttachmentPress = useAttachmentPicker(handleFilesSelected);
   
   // Get WebSocket connection status
   const { isConnected, sendTyping, typingByRoom } = useWebSocket();
 
-  // Get chat room display name (interlocutor for DIRECT/OFFER)
+  // Get chat room display name
   const getChatDisplayName = (): string => {
     if (!chatRoom) {
       return 'Loading...';
     }
 
-    // For DIRECT and OFFER chats, show the other participant's name
-    if ((chatRoom.type === 'DIRECT' || chatRoom.type === 'OFFER') && chatRoom.participants.length === 2) {
+    // For DIRECT chats, show the other participant's name
+    if (chatRoom.type === 'DIRECT' && chatRoom.participants.length === 2) {
       const otherParticipant = chatRoom.participants.find(
         p => p.user.id !== authState.user?.id
       );
       if (otherParticipant) {
         const name = `${otherParticipant.user.firstName} ${otherParticipant.user.lastName}`;
-        // Add unit if available (DIRECT only)
-        if (chatRoom.type === 'DIRECT' && otherParticipant.user.unit) {
+        // Add unit if available
+        if (otherParticipant.user.unit) {
           return `${name} (Unit ${otherParticipant.user.unit})`;
         }
         return name;
@@ -96,18 +109,6 @@ export default function ChatRoomScreen() {
     }
 
     return 'Unknown Chat';
-  };
-
-  // For OFFER chats: parse chat name to get offer title and id for subtitle
-  const getOfferSubtitle = (): string | null => {
-    if (!chatRoom || chatRoom.type !== 'OFFER' || !chatRoom.name) return null;
-    const lines = chatRoom.name.trim().split('\n');
-    const idMatch = chatRoom.name.match(/\(id:\s*(\d+)\)/);
-    const offerIdVal = chatRoom.offerId ?? (idMatch ? parseInt(idMatch[1], 10) : null);
-    const routeStr = lines.length > 1 ? lines[1].trim() : '';
-    const offerName = routeStr || 'Offer';
-    const idPart = offerIdVal != null ? ` (id: ${offerIdVal})` : '';
-    return `"${offerName}${idPart}"`;
   };
 
   // Format date for date separator
@@ -201,6 +202,61 @@ export default function ChatRoomScreen() {
   const loadMoreTriggeredRef = useRef(false);
   const isReceivingNewMessageRef = useRef(false); // Track if we're receiving a new message via WebSocket
   const isProgrammaticScrollRef = useRef(false); // Track if scroll is programmatic (automatic) vs user-initiated
+
+  const dismissKeyboard = useCallback(() => {
+    Keyboard.dismiss();
+  }, []);
+
+  const clearPendingAttachment = useCallback(() => {
+    setPendingAttachment(null);
+    setUploadQueue([]);
+  }, []);
+
+  const handleSendPress = useCallback(async () => {
+    const trimmedMessage = messageText.trim();
+
+    if ((!trimmedMessage && !pendingAttachment) || isSendingMessage || isUploading || !chatRoomId) {
+      return;
+    }
+
+    try {
+      setIsUploading(!!pendingAttachment);
+      let fileData: { fileUrl: string; fileName: string; fileSize: number } | undefined;
+
+      if (pendingAttachment) {
+        setUploadQueue((queue) => queue.map((item, index) => (
+          index === 0 ? { ...item, status: 'uploading' } : item
+        )));
+        fileData = await uploadAttachmentFile(pendingAttachment);
+      }
+
+      await sendMessage(trimmedMessage, fileData, replyingTo || undefined);
+      setMessageText('');
+      setReplyingTo(null);
+      clearPendingAttachment();
+      sendTyping(chatRoomId as string, false);
+    } catch (error) {
+      console.error('Failed to send message:', error);
+      if (pendingAttachment) {
+        setUploadQueue((queue) => queue.map((item, index) => (
+          index === 0 ? { ...item, status: 'error' } : item
+        )));
+      }
+      Alert.alert('Send failed', 'Failed to send message. Please try again.');
+    } finally {
+      setIsUploading(false);
+    }
+  }, [
+    messageText,
+    pendingAttachment,
+    isSendingMessage,
+    isUploading,
+    chatRoomId,
+    sendMessage,
+    replyingTo,
+    clearPendingAttachment,
+    sendTyping,
+  ]);
 
   // Reset scroll flags when chat room changes
   useEffect(() => {
@@ -460,12 +516,9 @@ export default function ChatRoomScreen() {
               {!chatRoom && isLoadingChatRoom ? (
                 <ActivityIndicator size="small" color={colors.neutral.white} />
               ) : error && !chatRoom ? (
-                <View style={styles.headerTitleWrap}>
-                  <Text style={styles.screenTitle}>Error</Text>
-                </View>
+                <Text style={styles.screenTitle}>Error</Text>
               ) : (
                 <TouchableOpacity
-                  style={styles.headerTitleWrap}
                   activeOpacity={0.8}
                   disabled={!(chatRoom && (chatRoom.type === 'GROUP' || chatRoom.type === 'LOAD'))}
                   onPress={() => {
@@ -474,29 +527,20 @@ export default function ChatRoomScreen() {
                     }
                   }}
                 >
-                  <View style={styles.headerTitleContent}>
-                    <Text style={styles.screenTitle}>
-                      {getChatDisplayName()}
-                    </Text>
-                    {getOfferSubtitle() ? (
-                      <Text style={styles.headerOfferSubtitle}>
-                        {getOfferSubtitle()}
-                      </Text>
-                    ) : null}
-                  </View>
+                  <Text style={styles.screenTitle}>
+                    {getChatDisplayName()}
+                  </Text>
                 </TouchableOpacity>
               )}
             </View>
-
-            <View style={styles.headerRight}>
-              <ChatHeaderDropdown
-                chatRoom={chatRoom || null}
-                chatRoomType={chatRoom?.type}
-                onFilesPress={() => {
-                  setIsFilesModalOpen(true);
-                }}
-              />
-            </View>
+            
+                  <ChatHeaderDropdown
+                    chatRoom={chatRoom || null}
+                    chatRoomType={chatRoom?.type}
+                    onFilesPress={() => {
+                      setIsFilesModalOpen(true);
+                    }}
+                  />
           </View>
           
           <ChatInfoModal
@@ -506,21 +550,16 @@ export default function ChatRoomScreen() {
           />
         
           {isLoadingMessages && messages.length === 0 ? (
-            <View style={styles.loadingContainer}>
+            <View style={styles.loadingContainer} onTouchStart={dismissKeyboard}>
               <ActivityIndicator size="large" color={colors.primary.violet} />
               <Text style={styles.loadingText}>Loading messages...</Text>
             </View>
           ) : error && messages.length === 0 ? (
-            <View style={styles.errorContainer}>
+            <View style={styles.errorContainer} onTouchStart={dismissKeyboard}>
               <Text style={styles.errorText}>{error}</Text>
             </View>
           ) : messages.length === 0 ? (
-            <View style={styles.emptyContainer}>
-              <Image
-                source={require('@/icons/noMessage.png')}
-                style={styles.emptyIcon}
-                resizeMode="contain"
-              />
+            <View style={styles.emptyContainer} onTouchStart={dismissKeyboard}>
               <Text style={styles.emptyText}>No messages yet</Text>
             </View>
           ) : (
@@ -531,6 +570,10 @@ export default function ChatRoomScreen() {
               style={styles.content}
               contentContainerStyle={styles.messagesContainer}
               extraData={messagesRenderVersion}
+              keyboardDismissMode="on-drag"
+              keyboardShouldPersistTaps="handled"
+              onScrollBeginDrag={dismissKeyboard}
+              onTouchStart={dismissKeyboard}
               keyExtractor={(item, index) => {
                 if (item.type === 'date') {
                   return `date-${index}`;
@@ -713,24 +756,14 @@ export default function ChatRoomScreen() {
               sendTyping(chatRoomId as string, t.trim().length > 0);
             }
           }}
-          onSendPress={async () => {
-            if (messageText.trim() && !isSendingMessage && chatRoomId) {
-              try {
-                await sendMessage(messageText.trim(), undefined, replyingTo || undefined);
-                setMessageText('');
-                setReplyingTo(null);
-                sendTyping(chatRoomId as string, false);
-              } catch (error) {
-                console.error('Failed to send message:', error);
-              }
-            }
-          }}
+          onSendPress={handleSendPress}
           onEmojiPress={() => setShowEmojiPicker(!showEmojiPicker)}
           onAttachmentPress={() => handleAttachmentPress().catch(() => {})}
           replyingTo={replyingTo}
           onCancelReply={() => setReplyingTo(null)}
           uploadQueue={uploadQueue}
-          isSendingMessage={isSendingMessage}
+          onRemoveUploadItem={clearPendingAttachment}
+          isSendingMessage={isSendingMessage || isUploading}
           isConnected={isConnected}
           onLayout={setSendSectionHeight}
         />
@@ -794,15 +827,9 @@ const styles = StyleSheet.create({
   },
   screenTitle: {
     color: colors.neutral.white,
-    fontFamily: fonts['700'],
+    fontFamily: fonts["700"],
     fontSize: fp(18),
     textTransform: 'capitalize',
-  },
-  headerOfferSubtitle: {
-    color: 'rgba(255, 255, 255, 0.85)',
-    fontFamily: fonts['400'],
-    fontSize: fp(13),
-    marginTop: rem(2),
   },
   screenWrap: {
     flex: 1,
@@ -815,39 +842,20 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: rem(20),
-    paddingTop: rem(12),
+    paddingHorizontal: 20,
+    paddingTop: 0,
     paddingBottom: rem(16),
-    minHeight: rem(80),
     backgroundColor: colors.primary.violet,
     width: '100%',
     position: 'relative',
     zIndex: 20,
-    flexShrink: 0,
   },
   headerLeft: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     flex: 1,
-    minWidth: 0,
-    flexBasis: 0,
-  },
-  headerTitleWrap: {
-    flex: 1,
-    minWidth: 0,
-    flexBasis: 0,
-    marginRight: rem(8),
-  },
-  headerTitleContent: {
-    flex: 1,
-    minWidth: 0,
-  },
-  headerRight: {
-    flexShrink: 0,
-    marginLeft: rem(8),
-    paddingTop: rem(10),
   },
   headerAvatarContainer: {
     width: rem(48),
@@ -880,7 +888,6 @@ const styles = StyleSheet.create({
     marginRight: rem(18),
     justifyContent: 'center',
     alignItems: 'center',
-    alignSelf: 'center',
   },
   loadingContainer: {
     flex: 1,
@@ -951,11 +958,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingTop: rem(100),
-  },
-  emptyIcon: {
-    width: rem(200),
-    height: rem(200),
-    marginBottom: rem(16),
   },
   emptyText: {
     fontSize: fp(16),
