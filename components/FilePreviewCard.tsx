@@ -4,10 +4,12 @@ import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image, Alert, ActionSheetIOS, Platform, ActivityIndicator } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { openLocalFile } from '@/utils/fileOpener';
 import { colors, fonts, fp, rem } from '@/lib';
 import FileIcon from '@/icons/FileIcon';
 import FileViewerModal from '@/components/modals/FileViewerModal';
+import { imageCacheService } from '@/services/ImageCacheService';
 
 type Props = {
 	fileUrl: string;
@@ -44,7 +46,49 @@ const getMimeType = (extension: string): string => {
 let activeImageOpenCancel: (() => void) | null = null;
 let imageOpenRequestId = 0;
 
+const getCachedHeicFileUri = async (params: {
+	fileUrl: string;
+	fileName: string;
+	signal?: AbortSignal;
+}): Promise<string> => {
+	const { fileUrl, fileName, signal } = params;
+	const localFileUri = imageCacheService.getHeicCacheUri(fileUrl, fileName);
+
+	const existingFile = await FileSystem.getInfoAsync(localFileUri);
+	if (existingFile.exists) {
+		return localFileUri;
+	}
+
+	await imageCacheService.ensureHeicCacheDirectory();
+
+	const downloadResumable = FileSystem.createDownloadResumable(fileUrl, localFileUri);
+	const abortDownload = () => {
+		downloadResumable.pauseAsync().catch(() => {});
+	};
+
+	signal?.addEventListener('abort', abortDownload);
+	try {
+		if (signal?.aborted) {
+			throw new Error('Download was cancelled');
+		}
+
+		const result = await downloadResumable.downloadAsync();
+		if (signal?.aborted) {
+			throw new Error('Download was cancelled');
+		}
+
+		if (!result || result.status !== 200) {
+			throw new Error(`Download failed with status ${result?.status ?? 'unknown'}`);
+		}
+
+		return result.uri;
+	} finally {
+		signal?.removeEventListener('abort', abortDownload);
+	}
+};
+
 export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender, createdAt }: Props) {
+	const queryClient = useQueryClient();
 	const name = fileName || 'Attachment';
 	const ext = name.toLowerCase().split('.').pop() || '';
 	const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tiff'].includes(ext);
@@ -55,6 +99,15 @@ export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender,
 	const [viewerVisible, setViewerVisible] = useState(false);
 	const [downloadedFileUri, setDownloadedFileUri] = useState<string | null>(null);
 	const activeRequestIdRef = useRef<number | null>(null);
+	const heicCacheQueryKey = [...imageCacheService.heicQueryKeyPrefix, fileUrl, name] as const;
+	const heicLocalFileQuery = useQuery({
+		queryKey: heicCacheQueryKey,
+		queryFn: ({ signal }) => getCachedHeicFileUri({ fileUrl, fileName: name, signal }),
+		enabled: false,
+		staleTime: Infinity,
+		gcTime: Infinity,
+		retry: false,
+	});
 
 	useEffect(() => {
 		return () => {
@@ -114,7 +167,19 @@ export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender,
 		let downloadResumable: ReturnType<typeof FileSystem.createDownloadResumable> | null = null;
 		
 		try {
-			if (isImage) {
+			if (needsLocalImageOpen) {
+				activeImageOpenCancel?.();
+				requestId = ++imageOpenRequestId;
+				activeRequestIdRef.current = requestId;
+				activeImageOpenCancel = () => {
+					isCancelled = true;
+					queryClient.cancelQueries({ queryKey: heicCacheQueryKey }).catch(() => {});
+					if (activeRequestIdRef.current === requestId) {
+						activeRequestIdRef.current = null;
+						setIsDownloading(false);
+					}
+				};
+			} else if (isImage) {
 				activeImageOpenCancel?.();
 				requestId = ++imageOpenRequestId;
 				activeRequestIdRef.current = requestId;
@@ -129,6 +194,30 @@ export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender,
 			}
 
 			setIsDownloading(true);
+
+			if (needsLocalImageOpen) {
+				const cachedFileUri = heicLocalFileQuery.data;
+				if (cachedFileUri) {
+					const cachedFileInfo = await FileSystem.getInfoAsync(cachedFileUri);
+					if (cachedFileInfo.exists) {
+						if (isCancelled) return;
+						setDownloadedFileUri(cachedFileUri);
+						setViewerVisible(true);
+						return;
+					}
+				}
+
+				const result = await heicLocalFileQuery.refetch();
+				if (isCancelled) return;
+
+				if (result.error || !result.data) {
+					throw result.error || new Error('Failed to load cached HEIC image');
+				}
+
+				setDownloadedFileUri(result.data);
+				setViewerVisible(true);
+				return;
+			}
 			
 			// File name already contains extension, use it as is
 			// Clean name from invalid characters for file system
