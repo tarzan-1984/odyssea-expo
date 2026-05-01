@@ -1,21 +1,24 @@
 import React, { useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from 'expo-router';
+import { useQueryClient } from '@tanstack/react-query';
 import { chatCacheService } from '@/services/ChatCacheService';
 import { messagesCacheService } from '@/services/MessagesCacheService';
-import { colors, fonts } from '@/lib';
-import { rem, fp } from '@/lib';
+import { imageCacheService } from '@/services/ImageCacheService';
+import { colors, fonts, rem, fp } from '@/lib';
 
 export default function ChatCacheSettings() {
+  const queryClient = useQueryClient();
   const [cacheSize, setCacheSize] = useState<number>(0);
   const [isLoading, setIsLoading] = useState(false);
 
   const loadCacheSize = async () => {
     try {
-      // Get size from both chat cache (chat rooms list) and messages cache (messages in chats)
+      // Include chat list, messages, and local image preview caches.
       const chatCacheSize = await chatCacheService.getCacheSize();
       const messagesCacheSize = await messagesCacheService.getCacheSize();
-      const totalSize = chatCacheSize + messagesCacheSize;
+      const imageCacheSize = await imageCacheService.getHeicCacheSize();
+      const totalSize = chatCacheSize + messagesCacheSize + imageCacheSize;
       setCacheSize(totalSize);
     } catch (error) {
       console.error('[ChatCacheSettings] Failed to load cache size:', error);
@@ -39,8 +42,8 @@ export default function ChatCacheSettings() {
 
   const handleClearCache = async () => {
     Alert.alert(
-      'Clear chat cache',
-      'Are you sure you want to clear all cached chat data? This will free up storage space but chat rooms and messages will need to be reloaded.',
+      'Clear cache',
+      'Are you sure you want to clear cached chat data and image previews? This will free up storage space but cached data will need to be reloaded.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -49,14 +52,16 @@ export default function ChatCacheSettings() {
           onPress: async () => {
             setIsLoading(true);
             try {
-              // Clear both chat cache and messages cache
+              // Clear chat list, messages, and local image preview caches.
               await chatCacheService.clearCache();
               await messagesCacheService.clearAllMessages();
+              await imageCacheService.clearHeicCache();
+              queryClient.removeQueries({ queryKey: imageCacheService.heicQueryKeyPrefix });
               await loadCacheSize();
-              Alert.alert('Success', 'Chat cache cleared');
+              Alert.alert('Success', 'Cache cleared');
             } catch (error) {
               console.error('[ChatCacheSettings] Failed to clear cache:', error);
-              Alert.alert('Error', 'Failed to clear chat cache');
+              Alert.alert('Error', 'Failed to clear cache');
             } finally {
               setIsLoading(false);
             }
@@ -69,7 +74,7 @@ export default function ChatCacheSettings() {
   return (
     <View style={styles.container}>
       <View style={styles.headerRow}>
-        <Text style={styles.title}>Chat Cache</Text>
+        <Text style={styles.title}>Clear Cache</Text>
         <TouchableOpacity
           style={[styles.button, styles.clearButton, isLoading && styles.buttonDisabled]}
           onPress={handleClearCache}
