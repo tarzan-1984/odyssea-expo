@@ -336,6 +336,25 @@ class ChatApiClient {
   }
 
   /**
+   * Delete a message owned by the authenticated user
+   */
+  async deleteMessage(messageId: string): Promise<{
+    success: boolean;
+    messageId: string;
+    chatRoomId: string;
+    deletedBy: string;
+  }> {
+    return this.request<{
+      success: boolean;
+      messageId: string;
+      chatRoomId: string;
+      deletedBy: string;
+    }>(`/v1/messages/${messageId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  /**
    * Delete or hide a chat room
    * For DIRECT chats: hides the chat for the user (marks as hidden in DB)
    * For GROUP chats: if user is admin, deletes the chat; if not admin, user leaves the chat
