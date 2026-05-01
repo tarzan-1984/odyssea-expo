@@ -106,7 +106,7 @@ export default function ResetPasswordScreen() {
             keyboardType="email-address"
             autoCapitalize="none"
             autoCorrect={false}
-            placeholderTextColor={colors.neutral.white}
+            placeholderTextColor="rgba(255, 255, 255, 0.55)"
             accessibilityLabel="Email input"
             accessibilityHint="Enter your email address"
             editable={!isLoading}
