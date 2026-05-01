@@ -12,6 +12,7 @@ type ChatState = {
   setMessages: (chatRoomId: string, messages: Message[]) => void;
   addMessage: (chatRoomId: string, message: Message) => void;
   updateMessage: (chatRoomId: string, messageId: string, updates: Partial<Message>) => void;
+  removeMessage: (chatRoomId: string, messageId: string) => void;
   markMessagesRead: (chatRoomId: string, messageIds: string[], userId: string) => void;
   removeChatRoom: (chatRoomId: string) => void;
   reset: () => void;
@@ -74,6 +75,19 @@ const storeCreator: StateCreator<ChatState> = (set, get) => ({
     const current = get().messagesByRoom[chatRoomId] || [];
     const next = current.map((m) => (m.id === messageId ? ({ ...m, ...updates } as Message) : m));
     set({ messagesByRoom: { ...get().messagesByRoom, [chatRoomId]: next } });
+  },
+
+  removeMessage: (chatRoomId, messageId) => {
+    const current = get().messagesByRoom[chatRoomId] || [];
+    const next = current.filter((m) => m.id !== messageId);
+    set({ messagesByRoom: { ...get().messagesByRoom, [chatRoomId]: next } });
+
+    const room = get().chatRooms.find((r) => r.id === chatRoomId);
+    if (room?.lastMessage?.id === messageId) {
+      get().updateChatRoom(chatRoomId, {
+        lastMessage: next[next.length - 1],
+      });
+    }
   },
 
   markMessagesRead: (chatRoomId, messageIds, userId) => {

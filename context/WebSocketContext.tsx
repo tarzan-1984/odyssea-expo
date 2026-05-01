@@ -73,6 +73,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 5;
   const isConnectingRef = useRef(false);
+  const hasConnectedOnceRef = useRef(false);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
   const normalizeParticipants = useCallback((participants: any[]): any[] => {
@@ -178,9 +179,12 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
       // If we were disconnected and now reconnected, trigger sync
       // This handles the case when device was offline and missed messages
-      if (wasDisconnected) {
+      if (wasDisconnected && hasConnectedOnceRef.current) {
         console.log('🔄 [WebSocket] Reconnected after disconnection');
+        const { eventBus, AppEvents } = require('@/services/EventBus');
+        eventBus.emit(AppEvents.WebSocketReconnected, undefined);
       }
+      hasConnectedOnceRef.current = true;
     });
 
     // Handle server's connected event (with user data)
@@ -262,6 +266,8 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     newSocket.on('reconnect', (attemptNumber: number) => {
       console.log(`✅ [WebSocket] Socket.IO reconnected successfully after ${attemptNumber} attempts`);
       reconnectAttempts.current = 0; // Reset our counter when Socket.IO reconnects
+      const { eventBus, AppEvents } = require('@/services/EventBus');
+      eventBus.emit(AppEvents.WebSocketReconnected, undefined);
     });
 
     newSocket.on('reconnect_error', (error: Error) => {
@@ -468,6 +474,33 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           }
           updateRoom(messageData.chatRoomId, patch);
         } catch {}
+      }
+    });
+
+    newSocket.on('messageDeleted', async (data: any) => {
+      const payload = Array.isArray(data) ? data[0] : data;
+      if (!payload?.chatRoomId || !payload?.messageId) return;
+
+      try {
+        const { removeMessage } = useChatStore.getState();
+        removeMessage(payload.chatRoomId, payload.messageId);
+
+        await messagesCacheService.removeMessage(payload.chatRoomId, payload.messageId).catch((err) => {
+          console.error('❌ [WebSocket] Failed to remove deleted message from cache:', err);
+        });
+
+        const updatedRoom = useChatStore.getState().chatRooms.find((room) => room.id === payload.chatRoomId);
+        if (updatedRoom) {
+          const { chatCacheService } = await import('@/services/ChatCacheService');
+          await chatCacheService.updateChatRoom(payload.chatRoomId, {
+            lastMessage: updatedRoom.lastMessage,
+          }).catch(() => {});
+        }
+
+        const { eventBus, AppEvents } = require('@/services/EventBus');
+        eventBus.emit(AppEvents.MessageDeleted, payload);
+      } catch (error) {
+        console.error('❌ [WebSocket] Failed to handle deleted message:', error);
       }
     });
 

@@ -30,6 +30,7 @@ export const AppEvents = {
   WebSocketReconnected: 'webSocketReconnected',
   WebSocketDisconnect: 'webSocketDisconnect',
   MessageRead: 'messageRead',
+  MessageDeleted: 'messageDeleted',
   MessagesMarkedAsRead: 'messagesMarkedAsRead',
   DriverStatusUpdated: 'DRIVER_STATUS_UPDATED',
 } as const;

@@ -31,6 +31,7 @@ interface UseChatRoomReturn {
   loadMessages: (page?: number, limit?: number) => Promise<void>;
   loadMoreMessages: () => Promise<void>;
   sendMessage: (content: string, fileData?: { fileUrl: string; fileName: string; fileSize: number }, replyData?: Message['replyData']) => Promise<void>;
+  deleteMessage: (messageId: string) => Promise<void>;
   isSendingMessage: boolean;
 }
 
@@ -105,6 +106,19 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
       return changed ? [...storeMessages] : prev;
     });
   }, [chatRoomId, storeMessages]);
+
+  const removeMessageLocally = useCallback((messageId: string) => {
+    if (!chatRoomId) return;
+
+    setMessages((prev) => {
+      const updatedMessages = prev.filter((message) => message.id !== messageId);
+      messagesCacheService.removeMessage(chatRoomId, messageId).catch((error) => {
+        console.error('Failed to remove deleted message from cache:', error);
+      });
+      useChatStore.getState().removeMessage(chatRoomId, messageId);
+      return updatedMessages;
+    });
+  }, [chatRoomId]);
 
   /**
    * Get user's join date for current chat room
@@ -373,6 +387,42 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
       },
     });
   }, [chatRoomId, authState.user?.id]);
+
+  const replaceMessagesFromApi = useCallback(async (limit: number = 50) => {
+    if (!chatRoomId) return;
+
+    const response = await chatApi.getMessages(chatRoomId, 1, limit);
+    const sortedMessages = [...response.messages].sort(
+      (a, b) =>
+        new Date(a.createdAt).getTime() -
+        new Date(b.createdAt).getTime()
+    );
+    const lastMessage = sortedMessages[sortedMessages.length - 1];
+
+    setMessages(sortedMessages);
+
+    const store = useChatStore.getState();
+    store.setMessages(chatRoomId, sortedMessages);
+    store.updateChatRoom(chatRoomId, {
+      lastMessage,
+      updatedAt: lastMessage?.createdAt,
+    });
+
+    await messagesCacheService.clearMessages(chatRoomId);
+    await messagesCacheService.saveMessages(chatRoomId, sortedMessages);
+
+    try {
+      const { chatCacheService } = await import('@/services/ChatCacheService');
+      await chatCacheService.updateChatRoom(chatRoomId, {
+        lastMessage,
+        updatedAt: lastMessage?.createdAt,
+      });
+    } catch {}
+
+    recalculateUnreadCount(sortedMessages);
+    setCurrentPage(1);
+    setHasMoreMessages(response.hasMore);
+  }, [chatRoomId, recalculateUnreadCount]);
 
   /**
    * Smart sync logic: if a chat has unread messages and local tail of messages
@@ -678,6 +728,16 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
           hasOpenedBeforeInSession: openedChats.has(chatRoomId),
         });
 
+        if (forceRefresh && page === 1) {
+          console.log('[useChatRoom][loadMessages] Forced replace refresh from API', {
+            chatRoomId,
+            limit,
+          });
+          await replaceMessagesFromApi(limit);
+          setIsLoadingMessages(false);
+          return;
+        }
+
         // If this chat has never been opened in the current session, always perform
         // a full initial load of the last 50 messages from API, regardless of what
         // WebSocket already placed into the store. This guarantees that on the very
@@ -982,7 +1042,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
         setIsLoadingMessages(false);
       }
     },
-    [chatRoomId, recalculateUnreadCount, isConnected, smartSyncMissingMessages]
+    [chatRoomId, recalculateUnreadCount, isConnected, smartSyncMissingMessages, replaceMessagesFromApi]
   );
 
   /**
@@ -1174,6 +1234,15 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
     },
     [chatRoomId, socket, isConnected, wsSendMessage, authState.user]
   );
+
+  const deleteMessage = useCallback(async (messageId: string) => {
+    if (!chatRoomId) {
+      throw new Error('Cannot delete message: no chat room selected');
+    }
+
+    await chatApi.deleteMessage(messageId);
+    removeMessageLocally(messageId);
+  }, [chatRoomId, removeMessageLocally]);
 
   // Join chat room when component mounts or chatRoomId changes
   useEffect(() => {
@@ -1585,6 +1654,11 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
       });
     };
 
+    const handleMessageDeleted = (data: { messageId: string; chatRoomId: string }) => {
+      if (data.chatRoomId !== chatRoomId) return;
+      removeMessageLocally(data.messageId);
+    };
+
     // Subscribe to messagesMarkedAsRead events via eventBus (emitted by WebSocketContext)
     // This handles bulk marking of messages as read when user enters a chat room
     const offMessagesMarkedAsRead = eventBus.on(AppEvents.MessagesMarkedAsRead, handleMessagesMarkedAsRead);
@@ -1592,27 +1666,35 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
     // Subscribe to messageRead events via eventBus (emitted by WebSocketContext)
     // This handles individual message read status updates
     const offMessageRead = eventBus.on(AppEvents.MessageRead, handleMessageRead);
+
+    const offMessageDeleted = eventBus.on(AppEvents.MessageDeleted, handleMessageDeleted);
     
     return () => {
       offMessagesMarkedAsRead();
       offMessageRead();
+      offMessageDeleted();
     };
-  }, [socket, chatRoomId, chatRoom?.type, authState.user?.id, handleMessagesMarkedAsRead]);
+  }, [socket, chatRoomId, chatRoom?.type, authState.user?.id, handleMessagesMarkedAsRead, removeMessageLocally]);
 
   // Reset flags when app starts (comes to foreground after being closed)
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
       if (nextAppState === 'active') {
         // App came to foreground, reset flags to force refresh on next load
-        // This ensures we get messages that arrived while app was closed
+        // This ensures hard-deleted messages missed while inactive are removed locally.
         hasLoadedMessagesOnceRef.current = {};
+        if (chatRoomId) {
+          loadMessages(1, 50, true).catch((error) => {
+            console.error('Failed to refresh messages after app became active:', error);
+          });
+        }
       }
     });
 
     return () => {
       subscription.remove();
     };
-  }, []);
+  }, [chatRoomId, loadMessages]);
 
   // Load chat room and messages on mount
   // Load chat room and messages immediately when chat room is opened
@@ -1640,6 +1722,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
     loadMessages,
     loadMoreMessages,
     sendMessage,
+    deleteMessage,
     isSendingMessage,
   };
 };

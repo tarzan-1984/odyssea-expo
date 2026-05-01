@@ -54,6 +54,7 @@ export default function ChatRoomScreen() {
     error,
     loadMoreMessages,
     sendMessage,
+    deleteMessage,
     isSendingMessage,
   } = useChatRoom(chatRoomId);
   const handleFilesSelected = useCallback((files: FileData[]) => {
@@ -683,6 +684,26 @@ export default function ChatRoomScreen() {
                     message={message}
                     isSender={isSender}
                     chatType={chatRoom?.type}
+                    currentUserRole={authState.user?.role}
+                    onDeletePress={(msg) => {
+                      Alert.alert(
+                        'Delete message',
+                        'Are you sure you want to delete this message?',
+                        [
+                          { text: 'Cancel', style: 'cancel' },
+                          {
+                            text: 'Delete',
+                            style: 'destructive',
+                            onPress: () => {
+                              deleteMessage(msg.id).catch((error) => {
+                                console.error('Failed to delete message:', error);
+                                Alert.alert('Error', 'Failed to delete message');
+                              });
+                            },
+                          },
+                        ],
+                      );
+                    }}
                     onReplyPress={(msg) => {
                       setReplyingTo({
                         avatar: msg.sender.avatar,

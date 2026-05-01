@@ -213,6 +213,20 @@ class MessagesCacheService {
   }
 
   /**
+   * Remove a single message from cache for a specific chat room
+   */
+  async removeMessage(chatRoomId: string, messageId: string): Promise<void> {
+    try {
+      const currentMessages = await this.getMessages(chatRoomId);
+      const updatedMessages = currentMessages.filter((message) => message.id !== messageId);
+      await this.saveMessages(chatRoomId, updatedMessages);
+    } catch (error) {
+      console.error('❌ [MessagesCache] Failed to remove message from cache:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Clear all messages cache
    */
   async clearAllMessages(): Promise<void> {

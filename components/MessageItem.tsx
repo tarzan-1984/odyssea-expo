@@ -12,10 +12,12 @@ type Props = {
 	message: Message;
 	isSender: boolean;
 	chatType?: string;
+	currentUserRole?: string;
 	onReplyPress?: (message: Message) => void;
+	onDeletePress?: (message: Message) => void;
 };
 
-export default function MessageItem({ message, isSender, chatType, onReplyPress }: Props) {
+export default function MessageItem({ message, isSender, chatType, currentUserRole, onReplyPress, onDeletePress }: Props) {
 	const formatTime = (timestamp: string): string => {
 		const date = new Date(timestamp);
 		return date.toLocaleTimeString('en-US', {
@@ -97,8 +99,10 @@ export default function MessageItem({ message, isSender, chatType, onReplyPress 
 		'';
 	const senderInitials = `${senderFirstName?.[0] || ''}${senderLastName?.[0] || senderFirstName?.[1] || ''}`.toUpperCase();
 	const normalizedChatType = (chatType || '').trim().toUpperCase();
+	const normalizedCurrentUserRole = (currentUserRole || '').trim().toUpperCase();
 	const shouldShowSenderAvatar = !isSender && (normalizedChatType === 'GROUP' || normalizedChatType === 'LOAD');
 	const senderFullName = `${senderFirstName} ${senderLastName}`.trim();
+	const canDeleteMessage = isSender && normalizedCurrentUserRole.length > 0 && normalizedCurrentUserRole !== 'DRIVER';
 	
 	const bubbleNode = (
 		<View style={styles.messageBubbleWrap}>
@@ -128,6 +132,17 @@ export default function MessageItem({ message, isSender, chatType, onReplyPress 
 							isSender={isSender}
 						/>
 					) : null}
+					{message.fileUrl && !message.content ? (
+						<View style={styles.fileOnlyDropdownRow}>
+							<MessageDropdown
+								message={message}
+								isSender={isSender}
+								canDelete={canDeleteMessage}
+								onReplyPress={onReplyPress}
+								onDeletePress={onDeletePress}
+							/>
+						</View>
+					) : null}
 					
 					{!!message.content && (
 						<View style={styles.messageContentRow}>
@@ -150,10 +165,9 @@ export default function MessageItem({ message, isSender, chatType, onReplyPress 
 								<MessageDropdown
 									message={message}
 									isSender={isSender}
+									canDelete={canDeleteMessage}
 									onReplyPress={onReplyPress}
-									onMarkUnreadPress={(messageId) => {
-										// TODO: Implement mark as unread functionality
-									}}
+									onDeletePress={onDeletePress}
 								/>
 							</View>
 						</View>
@@ -198,9 +212,6 @@ export default function MessageItem({ message, isSender, chatType, onReplyPress 
 			</View>
 		</View>
 	);
-	
-	// Role is displayed inside the bubble footer for incoming messages.
-	const metaNode = null;
 	
 	return (
 		<View
@@ -332,6 +343,10 @@ const styles = StyleSheet.create({
 		justifyContent: 'space-between',
 		gap: rem(8),
 		maxWidth: '100%',
+	},
+	fileOnlyDropdownRow: {
+		alignItems: 'flex-end',
+		marginTop: rem(4),
 	},
 	messageTextWrapper: {
 		//flex: 1,

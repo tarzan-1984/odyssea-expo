@@ -4,8 +4,8 @@ import Clipboard from '@react-native-clipboard/clipboard';
 import { colors, fonts, fp, rem } from '@/lib';
 import MoreDotIcon from '@/icons/MoreDotIcon';
 import ReplyIcon from '@/icons/ReplyIcon';
-import MarkUnreadIcon from '@/icons/MarkUnreadIcon';
 import CopyIcon from '@/icons/CopyIcon';
+import DeletedFileIcon from '@/icons/DeletedFileIcon';
 import { Message } from '@/components/ChatListItem';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -16,22 +16,24 @@ const DROPDOWN_HEIGHT = rem(80); // Approximate height of dropdown (2 items: Rep
 interface MessageDropdownProps {
   message: Message;
   isSender: boolean;
+  canDelete?: boolean;
   onReplyPress?: (message: Message) => void;
-  onMarkUnreadPress?: (messageId: string) => void;
+  onDeletePress?: (message: Message) => void;
 }
 
 export default function MessageDropdown({
   message,
   isSender,
+  canDelete = false,
   onReplyPress,
-  onMarkUnreadPress,
+  onDeletePress,
 }: MessageDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
   const triggerRef = useRef<View>(null);
 
-  // Only show dropdown for messages that don't belong to the user (incoming messages)
-  if (isSender) {
+  // Incoming messages can be replied to; own messages can be deleted when allowed by role.
+  if (isSender && !canDelete) {
     return null;
   }
 
@@ -42,9 +44,9 @@ export default function MessageDropdown({
     setIsOpen(false);
   };
 
-  const handleMarkUnreadPress = () => {
-    if (onMarkUnreadPress) {
-      onMarkUnreadPress(message.id);
+  const handleDeletePress = () => {
+    if (onDeletePress) {
+      onDeletePress(message);
     }
     setIsOpen(false);
   };
@@ -116,7 +118,7 @@ export default function MessageDropdown({
         style={styles.triggerButton}
         activeOpacity={0.7}
       >
-        <MoreDotIcon width={rem(18)} height={rem(18)} color={colors.primary.blue} />
+        <MoreDotIcon width={rem(18)} height={rem(18)} color={isSender ? colors.neutral.white : colors.primary.blue} />
       </TouchableOpacity>
       </View>
 
@@ -131,14 +133,25 @@ export default function MessageDropdown({
           onPress={() => setIsOpen(false)}
         >
           <View style={[styles.dropdown, { top: dropdownPosition.top, left: dropdownPosition.left }]}>
-            <TouchableOpacity
-              style={styles.menuItem}
-              onPress={handleReplyPress}
-              activeOpacity={0.7}
-            >
-              <ReplyIcon width={rem(18)} height={rem(18)} color={colors.primary.blue} />
-              <Text style={styles.menuItemText}>Reply</Text>
-            </TouchableOpacity>
+            {canDelete ? (
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={handleDeletePress}
+                activeOpacity={0.7}
+              >
+                <DeletedFileIcon width={rem(18)} height={rem(18)} color={colors.primary.blue} />
+                <Text style={styles.menuItemText}>Delete</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={handleReplyPress}
+                activeOpacity={0.7}
+              >
+                <ReplyIcon width={rem(18)} height={rem(18)} color={colors.primary.blue} />
+                <Text style={styles.menuItemText}>Reply</Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity
               style={styles.menuItem}
@@ -149,15 +162,6 @@ export default function MessageDropdown({
               <Text style={styles.menuItemText}>Copy</Text>
             </TouchableOpacity>
 
-            {/* Temporarily hidden - Mark as unread button */}
-            {/* <TouchableOpacity
-              style={styles.menuItem}
-              onPress={handleMarkUnreadPress}
-              activeOpacity={0.7}
-            >
-              <MarkUnreadIcon width={rem(18)} height={rem(18)} color={colors.primary.blue} />
-              <Text style={styles.menuItemText}>Mark as unread</Text>
-            </TouchableOpacity> */}
           </View>
         </Pressable>
       </Modal>
