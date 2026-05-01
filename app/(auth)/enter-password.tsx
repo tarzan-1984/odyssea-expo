@@ -135,7 +135,7 @@ export default function EnterPasswordScreen() {
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"
                 autoCorrect={false}
-                placeholderTextColor={colors.neutral.white}
+                placeholderTextColor="rgba(255, 255, 255, 0.55)"
                 editable={!authState.isLoading}
                 accessibilityLabel="Password input"
                 accessibilityHint="Enter your password"

@@ -113,7 +113,7 @@ export default function WelcomeScreen() {
           keyboardType="email-address"
           autoCapitalize="none"
           autoCorrect={false}
-          placeholderTextColor={colors.neutral.white}
+          placeholderTextColor="rgba(255, 255, 255, 0.55)"
           editable={!authState.isLoading}
         />
       </View>
