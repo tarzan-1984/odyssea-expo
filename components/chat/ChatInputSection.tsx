@@ -6,6 +6,7 @@ import AttachmentIcon from '@/icons/AttachmentIcon';
 import SendIcon from '@/icons/SendIcon';
 import ReplyPreview from '@/components/ReplyPreview';
 import { Message } from '@/components/ChatListItem';
+import { type UploadQueueItem } from '@/utils/chatAttachmentHelpers';
 
 interface ChatInputSectionProps {
   messageText: string;
@@ -15,7 +16,8 @@ interface ChatInputSectionProps {
   onAttachmentPress: () => void;
   replyingTo: Message['replyData'] | null;
   onCancelReply: () => void;
-  uploadQueue: Array<{ name: string; mimeType?: string; size?: number; status: 'uploading' | 'done' | 'error' }>;
+  uploadQueue: UploadQueueItem[];
+  onRemoveUploadItem?: (index: number) => void;
   isSendingMessage: boolean;
   isConnected: boolean;
   onLayout?: (height: number) => void;
@@ -30,10 +32,13 @@ export default function ChatInputSection({
   replyingTo,
   onCancelReply,
   uploadQueue,
+  onRemoveUploadItem,
   isSendingMessage,
   isConnected,
   onLayout,
 }: ChatInputSectionProps) {
+  const canSend = (!!messageText.trim() || uploadQueue.length > 0) && !isSendingMessage && isConnected;
+
   return (
     <View
       style={styles.sendSection}
@@ -54,12 +59,25 @@ export default function ChatInputSection({
         <View style={styles.uploadRow}>
           {uploadQueue.map((f, idx) => (
             <View key={`${f.name}-${idx}`} style={styles.uploadChip}>
-              <Text style={styles.uploadChipText} numberOfLines={1}>
-                {f.name}
-              </Text>
-              <Text style={styles.uploadChipStatus}>
-                {f.status === 'uploading' ? 'Uploading…' : f.status === 'done' ? 'Sent' : 'Error'}
-              </Text>
+              <View style={styles.uploadChipHeader}>
+                <Text style={styles.uploadChipText} numberOfLines={1}>
+                  {f.name}
+                </Text>
+                {onRemoveUploadItem && f.status !== 'uploading' ? (
+                  <TouchableOpacity
+                    onPress={() => onRemoveUploadItem(idx)}
+                    hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+                    style={styles.removeUploadButton}
+                  >
+                    <Text style={styles.removeUploadButtonText}>×</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+              {f.status === 'uploading' || f.status === 'error' ? (
+                <Text style={styles.uploadChipStatus}>
+                  {f.status === 'uploading' ? 'Uploading...' : 'Error'}
+                </Text>
+              ) : null}
             </View>
           ))}
         </View>
@@ -97,13 +115,13 @@ export default function ChatInputSection({
           style={styles.sendButton}
           onPress={onSendPress}
           activeOpacity={0.7}
-          disabled={!messageText.trim() || isSendingMessage || !isConnected}
+          disabled={!canSend}
         >
           <SendIcon
             width={rem(28)}
             height={rem(28)}
             color={colors.primary.greyIcon}
-            opacity={messageText.trim() ? 1 : 0.5}
+            opacity={canSend ? 1 : 0.5}
           />
         </TouchableOpacity>
       </View>
@@ -157,11 +175,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   uploadRow: {
-    position: 'absolute',
-    left: rem(14),
-    right: rem(14),
-    bottom: '100%',
-    paddingBottom: rem(8),
+    marginBottom: rem(8),
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: rem(8),
@@ -175,7 +189,13 @@ const styles = StyleSheet.create({
     paddingVertical: rem(6),
     maxWidth: '80%',
   },
+  uploadChipHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rem(8),
+  },
   uploadChipText: {
+    flexShrink: 1,
     fontSize: fp(12),
     fontFamily: fonts['600'],
     color: colors.primary.blue,
@@ -183,6 +203,22 @@ const styles = StyleSheet.create({
   uploadChipStatus: {
     fontSize: fp(10),
     color: colors.neutral.darkGrey,
+  },
+  removeUploadButton: {
+    width: rem(18),
+    height: rem(18),
+    borderRadius: rem(9),
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(96, 102, 197, 0.18)',
+  },
+  removeUploadButtonText: {
+    fontSize: fp(14),
+    fontFamily: fonts['700'],
+    color: colors.primary.blue,
+    lineHeight: rem(16),
+    includeFontPadding: false,
+    textAlign: 'center',
   },
 });
 

@@ -16,12 +16,31 @@ export interface UploadQueueItem {
   name: string;
   mimeType?: string;
   size?: number;
-  status: 'uploading' | 'done' | 'error';
+  status: 'selected' | 'uploading' | 'done' | 'error';
+}
+
+export async function uploadAttachmentFile(file: FileData): Promise<{ fileUrl: string; fileName: string; fileSize: number }> {
+  const token = await secureStorage.getItemAsync('accessToken').catch(() => null);
+  if (!token) {
+    throw new Error('Authentication required');
+  }
+
+  const fileUrl = await uploadFileViaPresign({
+    fileUri: file.uri,
+    filename: file.name,
+    mimeType: file.mimeType,
+    accessToken: token,
+  });
+
+  return {
+    fileUrl,
+    fileName: file.name,
+    fileSize: file.size || 0,
+  };
 }
 
 /**
- * Pick files with DocumentPicker, upload via presigned URL and send as messages.
- * For images, thumbnails will display automatically via fileUrl in message.
+ * Pick files with DocumentPicker.
  */
 export async function pickFiles(): Promise<FileData[]> {
   const result = await DocumentPicker.getDocumentAsync({
@@ -222,7 +241,7 @@ export async function handleUploadAndSend(params: {
         copy[idx] = { ...copy[idx], status: 'done' };
         return copy;
       });
-    } catch (e) {
+    } catch {
       setUploadQueue((q) => {
         const idx = q.findIndex((x) => x.name === f.name && x.status === 'uploading');
         if (idx === -1) return q;
@@ -378,6 +397,42 @@ export function useAttachmentHandler(
       { cancelable: true }
     );
   }, [chatRoomId, handlePickAndSendFiles, sendMessage, setUploadQueue, setIsUploading]);
+  return handler;
+}
+
+export function useAttachmentPicker(onFilesSelected: (files: FileData[]) => void) {
+  const handler = useCallback(async () => {
+    Alert.alert(
+      'Attach',
+      'Choose source',
+      [
+        {
+          text: 'Take photo',
+          onPress: async () => {
+            const files = await capturePhoto();
+            if (files.length > 0) onFilesSelected(files);
+          },
+        },
+        {
+          text: 'Choose from gallery',
+          onPress: async () => {
+            const files = await pickPhotoFromGallery();
+            if (files.length > 0) onFilesSelected(files);
+          },
+        },
+        {
+          text: 'Pick files',
+          onPress: async () => {
+            const files = await pickFiles();
+            if (files.length > 0) onFilesSelected(files);
+          },
+        },
+        { text: 'Cancel', style: 'cancel' },
+      ],
+      { cancelable: true }
+    );
+  }, [onFilesSelected]);
+
   return handler;
 }
 

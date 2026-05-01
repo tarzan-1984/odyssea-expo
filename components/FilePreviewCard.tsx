@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, Alert, ActionSheetIOS, Platform } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Image, Alert, ActionSheetIOS, Platform, ActivityIndicator } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { openLocalFile } from '@/utils/fileOpener';
@@ -41,17 +41,28 @@ const getMimeType = (extension: string): string => {
 	return mimeTypes[extension.toLowerCase()] || 'application/octet-stream';
 };
 
+let activeImageOpenCancel: (() => void) | null = null;
+let imageOpenRequestId = 0;
+
 export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender, createdAt }: Props) {
 	const name = fileName || 'Attachment';
 	const ext = name.toLowerCase().split('.').pop() || '';
 	const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tiff'].includes(ext);
 	const isPdf = ext === 'pdf';
-	const isText = ['txt', 'text', 'log', 'md', 'json', 'xml', 'html', 'css', 'js', 'ts'].includes(ext);
-	const isViewable = isPdf || isText || isImage;
+	const needsLocalImageOpen = ['heic', 'heif'].includes(ext);
 	
 	const [isDownloading, setIsDownloading] = useState(false);
 	const [viewerVisible, setViewerVisible] = useState(false);
 	const [downloadedFileUri, setDownloadedFileUri] = useState<string | null>(null);
+	const activeRequestIdRef = useRef<number | null>(null);
+
+	useEffect(() => {
+		return () => {
+			if (activeImageOpenCancel && activeRequestIdRef.current !== null) {
+				activeImageOpenCancel();
+			}
+		};
+	}, []);
 
 	const handleOpenFile = async (fileUri: string) => {
 		// For all files (except images and PDF which open in modal), open with system app
@@ -89,8 +100,34 @@ export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender,
 
 	const handleFileAction = async () => {
 		if (isDownloading) return;
+
+		if (isImage && !needsLocalImageOpen) {
+			activeImageOpenCancel?.();
+			activeImageOpenCancel = null;
+			setDownloadedFileUri(fileUrl);
+			setViewerVisible(true);
+			return;
+		}
+
+		let requestId: number | null = null;
+		let isCancelled = false;
+		let downloadResumable: ReturnType<typeof FileSystem.createDownloadResumable> | null = null;
 		
 		try {
+			if (isImage) {
+				activeImageOpenCancel?.();
+				requestId = ++imageOpenRequestId;
+				activeRequestIdRef.current = requestId;
+				activeImageOpenCancel = () => {
+					isCancelled = true;
+					downloadResumable?.pauseAsync().catch(() => {});
+					if (activeRequestIdRef.current === requestId) {
+						activeRequestIdRef.current = null;
+						setIsDownloading(false);
+					}
+				};
+			}
+
 			setIsDownloading(true);
 			
 			// File name already contains extension, use it as is
@@ -102,7 +139,14 @@ export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender,
 			const fileUri = `${FileSystem.documentDirectory}${localFileName}`;
 			
 			// Download file
-			const downloadResult = await FileSystem.downloadAsync(fileUrl, fileUri);
+			downloadResumable = FileSystem.createDownloadResumable(fileUrl, fileUri);
+			const downloadResult = await downloadResumable.downloadAsync();
+
+			if (isCancelled) return;
+
+			if (!downloadResult) {
+				throw new Error('Download was interrupted');
+			}
 			
 			if (downloadResult.status === 200) {
 				const downloadedUri = downloadResult.uri;
@@ -146,6 +190,7 @@ export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender,
 				throw new Error(`Download failed with status ${downloadResult.status}`);
 			}
 		} catch (error) {
+			if (isCancelled) return;
 			console.error('Failed to download file:', error);
 			Alert.alert(
 				'Error',
@@ -153,7 +198,15 @@ export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender,
 				[{ text: 'OK' }]
 			);
 		} finally {
-			setIsDownloading(false);
+			if (!isCancelled) {
+				setIsDownloading(false);
+			}
+			if (requestId !== null && activeRequestIdRef.current === requestId) {
+				activeRequestIdRef.current = null;
+				if (activeImageOpenCancel) {
+					activeImageOpenCancel = null;
+				}
+			}
 		}
 	};
 
@@ -171,6 +224,11 @@ export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender,
 						style={styles.previewImage}
 						resizeMode="cover"
 					/>
+					{isDownloading ? (
+						<View style={styles.imageLoadingOverlay}>
+							<ActivityIndicator size="large" color={colors.neutral.white} />
+						</View>
+					) : null}
 				</TouchableOpacity>
 				{downloadedFileUri && (
 					<FileViewerModal
@@ -247,11 +305,18 @@ const styles = StyleSheet.create({
 		borderRadius: rem(10),
 		overflow: 'hidden',
 		marginBottom: rem(6),
+		position: 'relative',
 	},
 	previewImage: {
 		width: '100%',
 		height: rem(180),
 		borderRadius: rem(8),
+	},
+	imageLoadingOverlay: {
+		...StyleSheet.absoluteFillObject,
+		alignItems: 'center',
+		justifyContent: 'center',
+		backgroundColor: 'rgba(0, 0, 0, 0.35)',
 	},
 	// Card for files (not images)
 	fileCard: {
