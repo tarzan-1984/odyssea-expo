@@ -35,6 +35,8 @@ export default function ProfileScreen() {
   const [userDetails, setUserDetails] = useState<any | null>(null);
   const [userError, setUserError] = useState<string | null>(null);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const averageRating = userDetails?.organized_data?.statistics?.rating?.average_rating;
+  const averageRatingText = averageRating ? `${averageRating} / 5` : '-';
 
   // Load user info from backend on mount
   React.useEffect(() => {
@@ -446,20 +448,10 @@ export default function ProfileScreen() {
                         
                         <View style={styles.infoSectionWrap}>
                           <View style={styles.infoItem} >
-                            <Text style={styles.infoTitle}>All notifications</Text>
-                            <Text style={styles.infoValue}>{userDetails?.organized_data?.statistics?.notifications?.all_notifications || '-'}</Text>
-                          </View>
-                          
-                          <View style={styles.infoItem} >
-                            <Text style={styles.infoTitle}>Total notifications</Text>
-                            <Text style={styles.infoValue}>{userDetails?.organized_data?.statistics?.notifications?.total_count || '-'}</Text>
-                          </View>
-                          
-                          <View style={styles.infoItem} >
                             <Text style={styles.infoTitle}>Average rating</Text>
-                            <Text style={styles.infoValue}>{userDetails?.organized_data?.statistics?.rating?.average_rating || '-'}</Text>
+                            <Text style={styles.infoValue}>{averageRatingText}</Text>
                           </View>
-                          
+
                           <View style={styles.infoItem} >
                             <Text style={styles.infoTitle}>Total ratings</Text>
                             <Text style={styles.infoValue}>{userDetails?.organized_data?.statistics?.rating?.total_ratings || '-'}</Text>
