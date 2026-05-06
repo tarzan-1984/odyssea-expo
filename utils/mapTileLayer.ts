@@ -18,7 +18,7 @@ export function getLeafletRasterTileConfig(): LeafletRasterTileConfig {
 	const key = process.env.EXPO_PUBLIC_MAPTILER_API_KEY?.trim() ?? '';
 	if (key) {
 		return {
-			url: `https://api.maptiler.com/maps/${MAPTILER_STYLE}/{z}/{x}/{y}.png?key=${encodeURIComponent(key)}`,
+			url: `https://api.maptiler.com/maps/${MAPTILER_STYLE}/{z}/{x}/{y}.png?key=${encodeURIComponent(key)}&language=en`,
 			attribution:
 				'&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
 			subdomains: null,
