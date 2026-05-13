@@ -1717,27 +1717,14 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         console.warn('Failed to get ZIP code from geocoding:', geoError);
       }
 
-      const storedStatusForTms = (await AsyncStorage.getItem('@user_status'))?.trim() ?? '';
-      // Use the status shown in the select (user may have changed it before Share; storage still lags until "Update status").
-      const basicShareStatuses: StatusValue[] = [
-        'available',
-        'available_on',
-        'available_off',
-        'loaded_enroute',
-      ];
-      const driverStatusForShare = basicShareStatuses.includes(status)
-        ? status
-        : (storedStatusForTms as StatusValue) || 'available_off';
-
       const finalZipCode = (postalCode || zip || '').trim();
       // Always persist last fix to AsyncStorage + AuthContext so reopen / profile sync cannot snap the map back to stale coords.
       await updateUserLocation(latitude, longitude, finalZipCode);
 
       // Push to backend only when automatic location sharing is enabled (local cache already updated above).
+      // Do not send driverStatus/statusDate here — only explicit "Update status" should change them; TMS uses DB state.
       if (automaticLocationSharing) {
-        console.log(
-          `[DriverContent] Sync location to backend after Share (driver_status: "${driverStatusForShare}", storage was: "${storedStatusForTms || '(empty)'}")...`,
-        );
+        console.log('[DriverContent] Sync location to backend after Share (location only; driverStatus unchanged on server)...');
         const sharePayload = {
           location: locationString,
           city,
@@ -1746,8 +1733,6 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           latitude,
           longitude,
           lastUpdateIso: getLocalIsoString(),
-          driverStatus: driverStatusForShare,
-          statusDate: formatStatusDate(''),
           isAutoupdate: automaticLocationSharing,
           isManualDriverLocationAction: true as const,
         };
@@ -1756,9 +1741,6 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           '[Share my location] Payload sent to PUT /v1/users/:id/location:',
           JSON.stringify(
             {
-              selectStatusUi: status,
-              asyncStorageUserStatus: storedStatusForTms || null,
-              driverStatusInBody: sharePayload.driverStatus,
               location: sharePayload.location ?? '',
               city: sharePayload.city ?? null,
               state: sharePayload.state ?? null,
@@ -1766,7 +1748,6 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
               latitude: sharePayload.latitude,
               longitude: sharePayload.longitude,
               lastUpdateIso: sharePayload.lastUpdateIso,
-              statusDate: sharePayload.statusDate,
               isAutoupdate: sharePayload.isAutoupdate,
               isManualDriverLocationAction: sharePayload.isManualDriverLocationAction,
             },
@@ -1796,9 +1777,6 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           '[Share my location] No HTTP request (automaticLocationSharing is false); coords cached locally. Context:',
           JSON.stringify(
             {
-              selectStatusUi: status,
-              asyncStorageUserStatus: storedStatusForTms || null,
-              driverStatusWouldBe: driverStatusForShare,
               latitude,
               longitude,
               postalCodeFromGeocode: postalCode || null,
