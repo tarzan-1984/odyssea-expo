@@ -40,6 +40,17 @@ import { toTmsLocationCode } from '@/utils/tmsLocationCode';
 import { toBackendStateDisplayName } from '@/utils/stateDisplayName';
 import { isAllowedNorthAmericaLatLng } from '@/utils/geoFence';
 
+/** Statuses the driver can set in-app; loaded_enroute is TMS-only (read-only in UI). */
+const DRIVER_SELF_SERVICE_STATUSES: StatusValue[] = [
+  'available',
+  'available_on',
+  'available_off',
+];
+
+function isDriverSelfServiceStatus(status: StatusValue): boolean {
+  return DRIVER_SELF_SERVICE_STATUSES.includes(status);
+}
+
 /** Console: same field names as JSON body to PUT /v1/users/:id/location */
 function logLocationApiPayload(
   scenario: string,
@@ -884,17 +895,11 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           if (savedStatus) {
             const parsedStatus = savedStatus as StatusValue;
 
-            const basicStatuses: StatusValue[] = [
-              'available',
-              'available_on',
-              'available_off',
-              'loaded_enroute',
-            ];
-            const isBasic = basicStatuses.includes(parsedStatus);
+            const canEditStatusInApp = isDriverSelfServiceStatus(parsedStatus);
 
             setStatus(parsedStatus);
             setDriverStatusFromStorage(parsedStatus);
-            setIsStatusDisabled(!isBasic);
+            setIsStatusDisabled(!canEditStatusInApp);
             statusSelectDirtyRef.current = false;
 
             previousStatusRef.current = null;
@@ -934,7 +939,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
             previousStatusRef.current = parsedStatus;
 
             console.log(
-              `[DriverContent] Loaded status from AsyncStorage: ${parsedStatus}, disabled: ${!isBasic}`,
+              `[DriverContent] Loaded status from AsyncStorage: ${parsedStatus}, disabled: ${!canEditStatusInApp}`,
             );
           } else {
             console.log(
@@ -1018,16 +1023,14 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         statusSelectDirtyRef.current = false;
       }
 
-      // Check if status is a basic (selectable) status
-      const basicStatuses: StatusValue[] = ['available', 'available_on', 'available_off', 'loaded_enroute'];
-      const isBasic = basicStatuses.includes(newStatus);
-      
+      const canEditStatusInApp = isDriverSelfServiceStatus(newStatus);
+
       setStatus(newStatus);
       setDriverStatusFromStorage(newStatus); // Update status from AsyncStorage for marker
-      setIsStatusDisabled(!isBasic);
-      
+      setIsStatusDisabled(!canEditStatusInApp);
+
       console.log(
-        `[DriverContent] Driver status updated from backend: ${newStatus}, disabled: ${!isBasic}`,
+        `[DriverContent] Driver status updated from backend: ${newStatus}, disabled: ${!canEditStatusInApp}`,
       );
 
       // Auto-manage location sharing based on status transition
@@ -1051,8 +1054,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       if (p.driverStatus !== undefined && p.driverStatus !== null) {
         const newStatus = p.driverStatus as StatusValue;
         const previousStatus = previousStatusRef.current;
-        const basicStatuses: StatusValue[] = ['available', 'available_on', 'available_off', 'loaded_enroute'];
-        const isBasic = basicStatuses.includes(newStatus);
+        const canEditStatusInApp = isDriverSelfServiceStatus(newStatus);
         const uiStatus = statusUiRef.current;
         skippedConflictingStatus =
           statusSelectDirtyRef.current && newStatus !== uiStatus;
@@ -1062,7 +1064,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           }
           setStatus(newStatus);
           setDriverStatusFromStorage(newStatus);
-          setIsStatusDisabled(!isBasic);
+          setIsStatusDisabled(!canEditStatusInApp);
           await updateLocationSharingBasedOnStatus(newStatus, previousStatus);
           previousStatusRef.current = newStatus;
         }
@@ -1860,8 +1862,8 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       setFormState('');
       setFormLocation('');
       setLocationLabel(null);
-    } else if (newStatus === 'available' || newStatus === 'loaded_enroute') {
-      // When "Available" or "Loaded & Enroute" is selected, clear ZIP - coords will come from GPS
+    } else if (newStatus === 'available') {
+      // When "Available" is selected, clear ZIP - coords will come from GPS (loaded_enroute is TMS-only, not in picker)
       zipClearedByStatusSelectRef.current = true;
       setZipState('');
       setFormCity('');
@@ -1873,9 +1875,8 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
     // Don't auto-fill date when selecting any status - user enters via popup when available_on
     
     // Check if new status is basic (selectable)
-    const basicStatuses: StatusValue[] = ['available', 'available_on', 'available_off', 'loaded_enroute'];
-    const isBasic = basicStatuses.includes(newStatus);
-    setIsStatusDisabled(!isBasic);
+    const canEditStatusInApp = isDriverSelfServiceStatus(newStatus);
+    setIsStatusDisabled(!canEditStatusInApp);
     
     // Don't update isLocationSharingAllowed here - it should be determined from AsyncStorage status (synced with backend)
     // Don't save to AsyncStorage here - it will be saved after successful API update
@@ -1891,17 +1892,16 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       await stopBackgroundLocationTracking();
       // Note: We keep coordinates and lastLocationUpdate in AsyncStorage to display on map
 
-      // Persist toggle state to backend (DB + server-side TMS sync if applicable)
+      // Persist toggle state to backend (DB + server-side TMS sync if applicable).
+      // Do not send driverStatus/statusDate — only explicit "Update status" changes those; TMS uses DB state.
       try {
         const loc = authState.userLocation || userLocation;
-        if (loc?.latitude && loc?.longitude && user?.driverStatus) {
+        if (loc?.latitude && loc?.longitude) {
           const disableAutoPayload = {
             latitude: loc.latitude,
             longitude: loc.longitude,
             zip: authState.userZipCode || zip,
             lastUpdateIso: getLocalIsoString(),
-            driverStatus: user.driverStatus,
-            statusDate: formatStatusDate(''),
             isAutoupdate: false,
           };
           logLocationApiPayload(
@@ -2018,8 +2018,6 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           latitude: currentLatitude,
           longitude: currentLongitude,
           lastUpdateIso: getLocalIsoString(),
-          driverStatus: status,
-          statusDate: formatStatusDate(''),
           isAutoupdate: value,
         };
         logLocationApiPayload(
@@ -2232,20 +2230,20 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
               
               <View style={styles.settingsWrap}>
                 <Text style={styles.settingsLabel}></Text>
-          
-          <TouchableOpacity 
-            style={[styles.updateButton, (isStatusDisabled || isUpdatingStatus) && styles.updateButtonDisabled]} 
-            onPress={handleUpdateStatus}
-            disabled={isStatusDisabled || isUpdatingStatus}
-          >
-            {isUpdatingStatus ? (
-              <ActivityIndicator color={colors.neutral.white} size="small" />
-            ) : (
-              <Text style={[styles.updateButtonText, isStatusDisabled && styles.updateButtonTextDisabled]}>
-                Update status
-              </Text>
-            )}
-          </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.updateButton, (isStatusDisabled || isUpdatingStatus) && styles.updateButtonDisabled]}
+                  onPress={handleUpdateStatus}
+                  disabled={isStatusDisabled || isUpdatingStatus}
+                >
+                  {isUpdatingStatus ? (
+                    <ActivityIndicator color={colors.neutral.white} size="small" />
+                  ) : (
+                    <Text style={[styles.updateButtonText, isStatusDisabled && styles.updateButtonTextDisabled]}>
+                      Update status
+                    </Text>
+                  )}
+                </TouchableOpacity>
               </View>
             </View>
 

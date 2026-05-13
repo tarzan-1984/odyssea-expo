@@ -25,12 +25,11 @@ interface StatusOption {
   label: string;
 }
 
-// Basic statuses that are always available for selection
+// In-app selectable statuses (loaded_enroute is TMS-only — shown read-only when current value)
 const BASIC_STATUS_OPTIONS: StatusOption[] = [
   { value: 'available', label: 'Available' },
   { value: 'available_on', label: 'Available on' },
   { value: 'available_off', label: 'Not available' },
-  { value: 'loaded_enroute', label: 'Loaded & Enroute' },
 ];
 
 // Full mapping of all statuses to their labels
@@ -69,8 +68,7 @@ export default function StatusSelect({ value, onChange, style, disabled = false 
   // Get current status label
   const currentStatusLabel = ALL_STATUS_LABELS[value] || 'Unknown';
   
-  // Determine which options to show in modal
-  // If disabled, we don't show modal, but if enabled, show only basic options
+  // Modal lists only statuses the driver may pick; current value may be TMS-only (e.g. loaded_enroute).
   const optionsToShow = BASIC_STATUS_OPTIONS;
   
   const handleSelect = (option: StatusOption) => {
