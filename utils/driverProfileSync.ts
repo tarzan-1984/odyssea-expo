@@ -12,6 +12,8 @@ export type DriverProfileSyncPayload = {
   location: string | null;
   statusDate: string | null;
   isAutoupdate: boolean | null;
+  /** When set, persisted to @user_deactivate_account (TMS soft-remove / restore). */
+  deactivateAccount?: boolean;
 };
 
 /** Same rule as TMS driver webhook on the backend — keep in sync. */
@@ -26,6 +28,7 @@ export function isAutoupdateForTmsDriverStatus(
 }
 
 export const DRIVER_PROFILE_SYNC_LAST_FETCH_KEY = '@driver_profile_sync_last_unix';
+export const USER_DEACTIVATE_ACCOUNT_STORAGE_KEY = '@user_deactivate_account';
 
 export async function fetchDriverProfileFromBackend(
   userId: string,
@@ -53,6 +56,10 @@ export async function fetchDriverProfileFromBackend(
       statusDate: body.statusDate ?? null,
       isAutoupdate:
         typeof body.isAutoupdate === 'boolean' ? body.isAutoupdate : null,
+      deactivateAccount:
+        typeof body.deactivateAccount === 'boolean'
+          ? body.deactivateAccount
+          : false,
     };
   } catch (e) {
     fileLogger.error('driverProfileSync', 'FETCH_FAILED', {
@@ -78,6 +85,13 @@ export async function persistDriverProfileLocally(
     }
     if (payload.statusDate !== null) {
       await AsyncStorage.setItem('@user_date', payload.statusDate || '');
+    }
+
+    if (typeof payload.deactivateAccount === 'boolean') {
+      await AsyncStorage.setItem(
+        USER_DEACTIVATE_ACCOUNT_STORAGE_KEY,
+        payload.deactivateAccount ? '1' : '0',
+      );
     }
 
     if (payload.isAutoupdate !== null) {
@@ -124,6 +138,9 @@ export async function persistDriverProfileLocally(
           if (payload.location !== null) next.location = payload.location || '';
           if (payload.statusDate !== null) next.statusDate = payload.statusDate || '';
           if (payload.isAutoupdate !== null) next.isAutoupdate = payload.isAutoupdate;
+          if (typeof payload.deactivateAccount === 'boolean') {
+            next.deactivateAccount = payload.deactivateAccount;
+          }
           await secureStorage.setItemAsync('user', JSON.stringify(next));
         }
       } catch {
@@ -139,7 +156,10 @@ export async function persistDriverProfileLocally(
 
 export function emitDriverProfileSyncEvents(payload: DriverProfileSyncPayload): void {
   eventBus.emit('DRIVER_PROFILE_SYNCED', payload);
-  eventBus.emit('DRIVER_STATUS_UPDATED', { driverStatus: payload.driverStatus });
+  eventBus.emit('DRIVER_STATUS_UPDATED', {
+    driverStatus: payload.driverStatus,
+    deactivateAccount: payload.deactivateAccount,
+  });
 }
 
 /**

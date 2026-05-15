@@ -660,7 +660,11 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     // Driver status delta (includes isAutoupdate so UI matches DB without waiting for AppState active).
     newSocket.on(
       'driverStatusUpdate',
-      async (data: { driverStatus: string | null; isAutoupdate?: boolean }) => {
+      async (data: {
+        driverStatus: string | null;
+        isAutoupdate?: boolean;
+        deactivateAccount?: boolean;
+      }) => {
         console.log('[WebSocket] Driver status update received:', data);
 
         if (!currentUser || currentUser.role !== 'DRIVER') {
@@ -686,11 +690,14 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
             location: null,
             statusDate: null,
             isAutoupdate,
+            ...(typeof data.deactivateAccount === 'boolean'
+              ? { deactivateAccount: data.deactivateAccount }
+              : {}),
           };
           await persistDriverProfileLocally(payload);
           emitDriverProfileSyncEvents(payload);
           console.log(
-            `✅ [WebSocket] Driver status + autoupdate persisted: ${driverStatus || 'null'} (${isAutoupdate})`
+            `✅ [WebSocket] Driver status + autoupdate persisted: ${driverStatus || 'null'} (${isAutoupdate})`,
           );
         } catch (error) {
           console.error('[WebSocket] Failed to update driver status:', error);
@@ -708,6 +715,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         location: string | null;
         statusDate: string | null;
         isAutoupdate?: boolean;
+        deactivateAccount?: boolean;
       }) => {
         console.log('[WebSocket] driverProfileSync received:', data);
         if (!currentUser || currentUser.role !== 'DRIVER') {
@@ -726,6 +734,9 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
             statusDate: data.statusDate ?? null,
             isAutoupdate:
               typeof data.isAutoupdate === 'boolean' ? data.isAutoupdate : null,
+            ...(typeof data.deactivateAccount === 'boolean'
+              ? { deactivateAccount: data.deactivateAccount }
+              : {}),
           };
           await persistDriverProfileLocally(payload);
           emitDriverProfileSyncEvents(payload);

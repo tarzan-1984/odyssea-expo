@@ -3,7 +3,7 @@ import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useFonts } from 'expo-font';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { View, StyleSheet, LogBox, Platform } from 'react-native';
+import { View, StyleSheet, LogBox, Platform, AppState, AppStateStatus } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
 import { BlurView } from 'expo-blur';
@@ -65,36 +65,66 @@ function RootLayoutNav() {
   const [isAccountBlocked, setIsAccountBlocked] = useState(false);
   const ENABLE_PERMISSIONS_ONBOARDING = false; // temporary disable permissions onboarding modal
 
-  // Check if account is blocked or banned
+  // Blocked / TMS soft-remove overlay: AsyncStorage + WebSocket (DRIVER_STATUS_UPDATED, DRIVER_PROFILE_SYNCED)
   useEffect(() => {
-    const checkBlockedStatus = async () => {
+    const applyBlockedState = async () => {
       if (!authState.isAuthenticated || authState.user?.role !== 'DRIVER') {
         setIsAccountBlocked(false);
         return;
       }
 
       try {
-        const status = await AsyncStorage.getItem('@user_status');
-        setIsAccountBlocked(status === 'blocked' || status === 'banned');
+        const status = (await AsyncStorage.getItem('@user_status')) ?? '';
+        const deactivated =
+          (await AsyncStorage.getItem('@user_deactivate_account')) === '1';
+        setIsAccountBlocked(
+          status === 'blocked' || status === 'banned' || deactivated,
+        );
       } catch (error) {
         console.error('Failed to check blocked status:', error);
       }
     };
 
-    checkBlockedStatus();
+    void applyBlockedState();
 
-    // Listen for driver status updates
     const { eventBus } = require('@/services/EventBus');
-    const handleDriverStatusUpdate = (data: { driverStatus: string | null }) => {
-      if (authState.user?.role === 'DRIVER') {
-        setIsAccountBlocked(data.driverStatus === 'blocked' || data.driverStatus === 'banned');
+
+    /** Yield one tick so AsyncStorage writes from WebSocket handlers are visible. */
+    const refreshBlockedOverlayFromStorage = () => {
+      if (authState.user?.role !== 'DRIVER') {
+        setIsAccountBlocked(false);
+        return;
       }
+      void (async () => {
+        try {
+          await new Promise<void>((r) => setTimeout(r, 0));
+          await applyBlockedState();
+        } catch (e) {
+          console.error('Failed to refresh blocked / deactivated state:', e);
+        }
+      })();
     };
 
-    const unsubscribe = eventBus.on('DRIVER_STATUS_UPDATED', handleDriverStatusUpdate);
+    const unsubStatus = eventBus.on(
+      'DRIVER_STATUS_UPDATED',
+      refreshBlockedOverlayFromStorage,
+    );
+    const unsubProfile = eventBus.on(
+      'DRIVER_PROFILE_SYNCED',
+      refreshBlockedOverlayFromStorage,
+    );
+
+    const onAppStateChange = (next: AppStateStatus) => {
+      if (next === 'active') {
+        refreshBlockedOverlayFromStorage();
+      }
+    };
+    const appSub = AppState.addEventListener('change', onAppStateChange);
 
     return () => {
-      unsubscribe();
+      unsubStatus();
+      unsubProfile();
+      appSub.remove();
     };
   }, [authState.isAuthenticated, authState.user?.role]);
 
@@ -246,9 +276,12 @@ function RootLayoutNav() {
             '@user_status',
             '@user_zip',
             '@user_date',
+            '@user_deactivate_account',
             '@user_location',
             '@pending_location_update',
             '@location_last_update',
+            '@location_last_api_send_at_ms',
+            '@app_activity_ping_last_http_ms',
             '@location_update_queue',
             
             // App Settings

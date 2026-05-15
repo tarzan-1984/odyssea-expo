@@ -11,6 +11,7 @@ import {
   persistDriverProfileLocally,
   emitDriverProfileSyncEvents,
   DRIVER_PROFILE_SYNC_LAST_FETCH_KEY,
+  USER_DEACTIVATE_ACCOUNT_STORAGE_KEY,
   type DriverProfileSyncPayload,
 } from '@/utils/driverProfileSync';
 import { syncAppLocationSettingsFromBackend } from '@/utils/appLocationSettings';
@@ -97,6 +98,9 @@ function mergeDriverProfileIntoUser(
   }
   if (p.isAutoupdate !== null) {
     next.isAutoupdate = p.isAutoupdate;
+  }
+  if (typeof p.deactivateAccount === 'boolean') {
+    next.deactivateAccount = p.deactivateAccount;
   }
   return next;
 }
@@ -778,6 +782,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await AsyncStorage.removeItem('@user_status');
       await AsyncStorage.removeItem('@user_zip');
       await AsyncStorage.removeItem('@user_date');
+      await AsyncStorage.removeItem(USER_DEACTIVATE_ACCOUNT_STORAGE_KEY);
       
       // Clear navigation data
       await AsyncStorage.removeItem('@pending_chat_navigation');
@@ -877,12 +882,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     });
     const unsubStatus = eventBus.on(
       'DRIVER_STATUS_UPDATED',
-      (data: { driverStatus: string | null }) => {
+      (data: { driverStatus: string | null; deactivateAccount?: boolean }) => {
         setAuthState((prev) => {
           if (prev.user?.role !== 'DRIVER' || !prev.user) return prev;
+          const nextUser = { ...prev.user, driverStatus: data.driverStatus ?? '' };
+          if (typeof data.deactivateAccount === 'boolean') {
+            (nextUser as Record<string, unknown>).deactivateAccount =
+              data.deactivateAccount;
+          }
           return {
             ...prev,
-            user: { ...prev.user, driverStatus: data.driverStatus ?? '' },
+            user: nextUser,
           };
         });
       }
