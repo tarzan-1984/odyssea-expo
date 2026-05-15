@@ -78,6 +78,8 @@ export type DriverProfileFromApi = {
   state: string | null;
   location: string | null;
   statusDate: string | null;
+  isAutoupdate: boolean | null;
+  deactivateAccount: boolean;
 };
 
 /**
@@ -109,7 +111,21 @@ export async function getDriverStatus(userId: string): Promise<DriverProfileFrom
   const data = await response.json();
   
   // Backend wraps response in { data: {...} } format due to TransformInterceptor
-  return data.data || data;
+  const raw = data.data || data;
+  return {
+    driverStatus: raw.driverStatus ?? null,
+    zip: raw.zip ?? null,
+    city: raw.city ?? null,
+    state: raw.state ?? null,
+    location: raw.location ?? null,
+    statusDate: raw.statusDate ?? null,
+    isAutoupdate:
+      typeof raw.isAutoupdate === 'boolean' ? raw.isAutoupdate : null,
+    deactivateAccount:
+      typeof raw.deactivateAccount === 'boolean'
+        ? raw.deactivateAccount
+        : false,
+  };
 }
 
 /**

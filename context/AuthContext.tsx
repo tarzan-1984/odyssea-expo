@@ -96,6 +96,9 @@ function mergeDriverProfileIntoUser(
   if (p.statusDate !== null) {
     next.statusDate = p.statusDate ?? '';
   }
+  if (typeof p.deactivateAccount === 'boolean') {
+    next.deactivateAccount = p.deactivateAccount;
+  }
   return next;
 }
 
@@ -779,6 +782,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await AsyncStorage.removeItem('@user_status');
       await AsyncStorage.removeItem('@user_zip');
       await AsyncStorage.removeItem('@user_date');
+      await AsyncStorage.removeItem('@user_deactivate_account');
       
       // Clear navigation data
       await AsyncStorage.removeItem('@pending_chat_navigation');
@@ -878,12 +882,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     });
     const unsubStatus = eventBus.on(
       'DRIVER_STATUS_UPDATED',
-      (data: { driverStatus: string | null }) => {
+      (data: { driverStatus: string | null; deactivateAccount?: boolean }) => {
         setAuthState((prev) => {
           if (prev.user?.role !== 'DRIVER' || !prev.user) return prev;
+          const nextUser = { ...prev.user, driverStatus: data.driverStatus ?? '' };
+          if (typeof data.deactivateAccount === 'boolean') {
+            (nextUser as Record<string, unknown>).deactivateAccount =
+              data.deactivateAccount;
+          }
           return {
             ...prev,
-            user: { ...prev.user, driverStatus: data.driverStatus ?? '' },
+            user: nextUser,
           };
         });
       }
