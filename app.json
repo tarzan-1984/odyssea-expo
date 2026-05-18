@@ -42,7 +42,7 @@
         "foregroundImage": "./assets/android-adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "versionCode": 8,
+      "versionCode": 9,
       "package": "com.odyssea.app",
       "googleServicesFile": "./google-services.json",
       "notification": {

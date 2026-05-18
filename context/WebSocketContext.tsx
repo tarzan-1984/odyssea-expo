@@ -36,6 +36,7 @@ interface SendMessageData {
   fileUrl?: string;
   fileName?: string;
   fileSize?: number;
+  attachments?: { fileUrl: string; fileName: string; fileSize?: number }[];
   replyData?: {
     avatar?: string;
     time: string;

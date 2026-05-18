@@ -40,7 +40,7 @@ export default function ChatRoomScreen() {
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
-  const [pendingAttachment, setPendingAttachment] = useState<FileData | null>(null);
+  const [pendingAttachments, setPendingAttachments] = useState<FileData[]>([]);
   const [replyingTo, setReplyingTo] = useState<Message['replyData'] | null>(null);
   
   // Use useChatRoom hook for loading chat room and messages with caching (same logic as Next.js)
@@ -58,16 +58,17 @@ export default function ChatRoomScreen() {
     isSendingMessage,
   } = useChatRoom(chatRoomId);
   const handleFilesSelected = useCallback((files: FileData[]) => {
-    const file = files[0];
-    if (!file) return;
-
-    setPendingAttachment(file);
-    setUploadQueue([{
-      name: file.name,
-      mimeType: file.mimeType,
-      size: file.size,
-      status: 'selected',
-    }]);
+    if (files.length === 0) return;
+    const capped = files.slice(0, 20);
+    setPendingAttachments(capped);
+    setUploadQueue(
+      capped.map((f) => ({
+        name: f.name,
+        mimeType: f.mimeType,
+        size: f.size,
+        status: 'selected' as const,
+      }))
+    );
   }, []);
   const handleAttachmentPress = useAttachmentPicker(handleFilesSelected);
   
@@ -208,54 +209,90 @@ export default function ChatRoomScreen() {
     Keyboard.dismiss();
   }, []);
 
-  const clearPendingAttachment = useCallback(() => {
-    setPendingAttachment(null);
+  const clearPendingAttachments = useCallback(() => {
+    setPendingAttachments([]);
     setUploadQueue([]);
+  }, []);
+
+  const removeUploadItemAt = useCallback((index: number) => {
+    setPendingAttachments((prev) => prev.filter((_, i) => i !== index));
+    setUploadQueue((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
   const handleSendPress = useCallback(async () => {
     const trimmedMessage = messageText.trim();
 
-    if ((!trimmedMessage && !pendingAttachment) || isSendingMessage || isUploading || !chatRoomId) {
+    if (
+      (!trimmedMessage && pendingAttachments.length === 0) ||
+      isSendingMessage ||
+      isUploading ||
+      !chatRoomId
+    ) {
       return;
     }
 
     try {
-      setIsUploading(!!pendingAttachment);
-      let fileData: { fileUrl: string; fileName: string; fileSize: number } | undefined;
+      const hasFiles = pendingAttachments.length > 0;
+      setIsUploading(hasFiles);
+      const uploaded: { fileUrl: string; fileName: string; fileSize: number }[] = [];
 
-      if (pendingAttachment) {
-        setUploadQueue((queue) => queue.map((item, index) => (
-          index === 0 ? { ...item, status: 'uploading' } : item
-        )));
-        fileData = await uploadAttachmentFile(pendingAttachment);
+      if (hasFiles) {
+        for (let i = 0; i < pendingAttachments.length; i++) {
+          setUploadQueue((queue) =>
+            queue.map((item, index) =>
+              index === i ? { ...item, status: 'uploading' } : item
+            )
+          );
+          try {
+            const fd = await uploadAttachmentFile(pendingAttachments[i]);
+            uploaded.push(fd);
+            setUploadQueue((queue) =>
+              queue.map((item, index) =>
+                index === i ? { ...item, status: 'done' } : item
+              )
+            );
+          } catch {
+            setUploadQueue((queue) =>
+              queue.map((item, index) =>
+                index === i ? { ...item, status: 'error' } : item
+              )
+            );
+            Alert.alert(
+              'Send failed',
+              'Failed to upload one or more files. Please try again.'
+            );
+            return;
+          }
+        }
       }
 
-      await sendMessage(trimmedMessage, fileData, replyingTo || undefined);
+      if (uploaded.length >= 2) {
+        await sendMessage(trimmedMessage, undefined, replyingTo || undefined, uploaded);
+      } else if (uploaded.length === 1) {
+        await sendMessage(trimmedMessage, uploaded[0], replyingTo || undefined);
+      } else {
+        await sendMessage(trimmedMessage, undefined, replyingTo || undefined);
+      }
+
       setMessageText('');
       setReplyingTo(null);
-      clearPendingAttachment();
+      clearPendingAttachments();
       sendTyping(chatRoomId as string, false);
     } catch (error) {
       console.error('Failed to send message:', error);
-      if (pendingAttachment) {
-        setUploadQueue((queue) => queue.map((item, index) => (
-          index === 0 ? { ...item, status: 'error' } : item
-        )));
-      }
       Alert.alert('Send failed', 'Failed to send message. Please try again.');
     } finally {
       setIsUploading(false);
     }
   }, [
     messageText,
-    pendingAttachment,
+    pendingAttachments,
     isSendingMessage,
     isUploading,
     chatRoomId,
     sendMessage,
     replyingTo,
-    clearPendingAttachment,
+    clearPendingAttachments,
     sendTyping,
   ]);
 
@@ -783,7 +820,7 @@ export default function ChatRoomScreen() {
           replyingTo={replyingTo}
           onCancelReply={() => setReplyingTo(null)}
           uploadQueue={uploadQueue}
-          onRemoveUploadItem={clearPendingAttachment}
+          onRemoveUploadItem={removeUploadItemAt}
           isSendingMessage={isSendingMessage || isUploading}
           isConnected={isConnected}
           onLayout={setSendSectionHeight}
