@@ -153,8 +153,8 @@ export async function reverseGeocodeAsync(params: {
 }
 
 /**
- * Nominatim first (works everywhere, no Google key), then device geocoder for missing postcode/city.
- * Apple/Google reverse geocode often returns postal codes where OSM omits them (e.g. Ukraine, EU).
+ * Nominatim first (English labels via Accept-Language), then device geocoder only for missing
+ * postal code. Native city/region strings are not merged — they follow the device locale.
  */
 export async function reverseGeocodeWithDeviceFallback(params: {
   latitude: number;
@@ -189,14 +189,8 @@ export async function reverseGeocodeWithDeviceFallback(params: {
       if (needPostal && n.postalCode) {
         merged.postalCode = n.postalCode;
       }
-      if (needCity) {
-        merged.city =
-          resolveCityForApi({
-            city: n.city || undefined,
-            district: n.district || undefined,
-            subregion: n.subregion || undefined,
-          }) || resolveCityForApi(base);
-      }
+      // Do not merge native city/region strings: iOS/Android reverse geocode follows the device
+      // locale (e.g. Arabic city names). English labels come from Nominatim only.
       if ((!merged.region || !String(merged.region).trim()) && n.region) {
         merged.region = n.region;
       }
