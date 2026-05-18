@@ -19,6 +19,16 @@ export interface UploadQueueItem {
   status: 'selected' | 'uploading' | 'done' | 'error';
 }
 
+export type ChatSendFileAttachment = { fileUrl: string; fileName: string; fileSize?: number };
+
+/** Matches useChatRoom.sendMessage (2+ files → one message via attachments). */
+export type ChatSendMessageFn = (
+  content: string,
+  fileData?: { fileUrl: string; fileName: string; fileSize: number },
+  replyData?: unknown,
+  attachments?: ChatSendFileAttachment[],
+) => Promise<void>;
+
 export async function uploadAttachmentFile(file: FileData): Promise<{ fileUrl: string; fileName: string; fileSize: number }> {
   const token = await secureStorage.getItemAsync('accessToken').catch(() => null);
   if (!token) {
@@ -91,8 +101,56 @@ export async function capturePhoto(): Promise<FileData[]> {
   ];
 }
 
+const GALLERY_EXTENSION_TO_MIME: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  bmp: 'image/bmp',
+  tiff: 'image/tiff',
+};
+
+const GALLERY_ALLOWED_MIME = [
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+  'image/bmp',
+  'image/tiff',
+];
+
+function fileDataFromGalleryAsset(
+  asset: ImagePicker.ImagePickerAsset,
+  uniqueIndex: number
+): FileData {
+  const fileName = asset.fileName || asset.filename || '';
+  const fileExtension = fileName.split('.').pop()?.toLowerCase() || '';
+
+  let mimeType = asset.mimeType;
+  if (!mimeType || !GALLERY_ALLOWED_MIME.includes(mimeType)) {
+    mimeType = GALLERY_EXTENSION_TO_MIME[fileExtension] || 'image/jpeg';
+  }
+
+  const fallbackExt = mimeType.includes('jpeg') ? 'jpg' : 'bin';
+  const filename =
+    fileName ||
+    `photo_${Date.now()}_${uniqueIndex}.${fileExtension || fallbackExt}`;
+
+  return {
+    uri: asset.uri,
+    name: filename,
+    mimeType,
+    size: asset.fileSize || undefined,
+  };
+}
+
 /**
- * Pick a photo from device gallery and return as a single-file array.
+ * Pick photo(s) from device gallery (multi-select when supported by the OS).
  */
 export async function pickPhotoFromGallery(): Promise<FileData[]> {
   try {
@@ -106,20 +164,18 @@ export async function pickPhotoFromGallery(): Promise<FileData[]> {
     let mediaTypes: any;
     const MP: any = (ImagePicker as any).MediaType;
     if (MP && (MP.Images || MP.images || MP.image)) {
-      // New API: use MediaType enum
       mediaTypes = [MP.Images ?? MP.images ?? MP.image];
     } else if ((ImagePicker as any).MediaTypeOptions) {
-      // Legacy API: use MediaTypeOptions
       mediaTypes = (ImagePicker as any).MediaTypeOptions.Images;
     } else {
-      // Fallback: string array
       mediaTypes = ['images'];
     }
 
     console.log('[chatAttachmentHelpers] Opening image library with mediaTypes:', mediaTypes);
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes,
-      allowsMultipleSelection: false,
+      allowsMultipleSelection: true,
+      selectionLimit: 20,
       quality: 0.9,
       allowsEditing: false,
       exif: false,
@@ -130,77 +186,13 @@ export async function pickPhotoFromGallery(): Promise<FileData[]> {
       return [];
     }
 
-    const asset = result.assets?.[0];
-    if (!asset) {
-      console.warn('[chatAttachmentHelpers] No asset returned from image picker');
+    const assets = result.assets || [];
+    if (assets.length === 0) {
+      console.warn('[chatAttachmentHelpers] No assets returned from image picker');
       return [];
     }
 
-    console.log('[chatAttachmentHelpers] Selected image:', {
-      uri: asset.uri?.substring(0, 50) + '...',
-      fileName: asset.fileName,
-      filename: asset.filename,
-      mimeType: asset.mimeType,
-      fileSize: asset.fileSize,
-      type: asset.type,
-    });
-
-    // Derive filename and mime type
-    const fileName = asset.fileName || asset.filename || '';
-    const fileExtension = fileName.split('.').pop()?.toLowerCase() || '';
-    
-    // Map common image extensions to mime types (must match backend allowed types)
-    const extensionToMime: Record<string, string> = {
-      'jpg': 'image/jpeg',
-      'jpeg': 'image/jpeg',
-      'png': 'image/png',
-      'gif': 'image/gif',
-      'webp': 'image/webp',
-      'heic': 'image/heic',
-      'heif': 'image/heif',
-      'bmp': 'image/bmp',
-      'tiff': 'image/tiff',
-    };
-    
-    // List of allowed MIME types on backend (must match s3.service.ts)
-    const allowedMimeTypes = [
-      'image/jpeg',
-      'image/png',
-      'image/gif',
-      'image/webp',
-      'image/heic',
-      'image/heif',
-      'image/bmp',
-      'image/tiff',
-    ];
-    
-    // Determine mime type: prefer asset.mimeType if it's allowed, otherwise use extension
-    let mimeType = asset.mimeType;
-    if (!mimeType || !allowedMimeTypes.includes(mimeType)) {
-      // Use extension-based mime type if asset.mimeType is missing or not allowed
-      mimeType = extensionToMime[fileExtension] || 'image/jpeg';
-      console.log('[chatAttachmentHelpers] Using extension-based mimeType:', mimeType, 'for extension:', fileExtension);
-    }
-    
-    // Generate filename if not provided
-    const filename = fileName || 
-      `photo_${Date.now()}.${fileExtension || (mimeType.includes('jpeg') ? 'jpg' : 'bin')}`;
-    
-    console.log('[chatAttachmentHelpers] Processed file info:', {
-      filename,
-      mimeType,
-      fileExtension,
-      originalFileName: fileName,
-    });
-
-    return [
-      {
-        uri: asset.uri,
-        name: filename,
-        mimeType,
-        size: asset.fileSize || undefined,
-      },
-    ];
+    return assets.map((asset, i) => fileDataFromGalleryAsset(asset, i));
   } catch (error) {
     console.error('[chatAttachmentHelpers] Error picking photo from gallery:', error);
     Alert.alert('Error', 'Failed to select photo from gallery. Please try again.');
@@ -213,7 +205,7 @@ export async function pickPhotoFromGallery(): Promise<FileData[]> {
  */
 export async function handleUploadAndSend(params: {
   chatRoomId?: string;
-  sendMessage: (content: string, fileData?: { fileUrl: string; fileName: string; fileSize: number }) => Promise<void>;
+  sendMessage: ChatSendMessageFn;
   setUploadQueue: React.Dispatch<React.SetStateAction<UploadQueueItem[]>>;
   setIsUploading: React.Dispatch<React.SetStateAction<boolean>>;
 }) {
@@ -224,6 +216,7 @@ export async function handleUploadAndSend(params: {
   setIsUploading(true);
   // Load token
   const token = await secureStorage.getItemAsync('accessToken').catch(() => null);
+  const uploaded: ChatSendFileAttachment[] = [];
   for (const f of files) {
     setUploadQueue((q) => [...q, { name: f.name, mimeType: f.mimeType, size: f.size, status: 'uploading' }]);
     try {
@@ -233,7 +226,7 @@ export async function handleUploadAndSend(params: {
         mimeType: f.mimeType,
         accessToken: token || '',
       });
-      await sendMessage('', { fileUrl, fileName: f.name, fileSize: f.size || 0 });
+      uploaded.push({ fileUrl, fileName: f.name, fileSize: f.size || 0 });
       setUploadQueue((q) => {
         const idx = q.findIndex((x) => x.name === f.name && x.status === 'uploading');
         if (idx === -1) return q;
@@ -251,6 +244,16 @@ export async function handleUploadAndSend(params: {
       });
     }
   }
+  if (uploaded.length >= 2) {
+    await sendMessage('', undefined, undefined, uploaded);
+  } else if (uploaded.length === 1) {
+    const one = uploaded[0];
+    await sendMessage('', {
+      fileUrl: one.fileUrl,
+      fileName: one.fileName,
+      fileSize: one.fileSize ?? 0,
+    });
+  }
   // Auto-clear items that are done
   setTimeout(() => setUploadQueue([]), 1200);
   setIsUploading(false);
@@ -261,7 +264,7 @@ export async function handleUploadAndSend(params: {
  */
 export function useUploadHandlers(
   chatRoomId: string | undefined,
-  sendMessage: (content: string, fileData?: { fileUrl: string; fileName: string; fileSize: number }) => Promise<void>,
+  sendMessage: ChatSendMessageFn,
   setUploadQueue: React.Dispatch<React.SetStateAction<UploadQueueItem[]>>,
   setIsUploading: React.Dispatch<React.SetStateAction<boolean>>
 ) {
@@ -277,7 +280,7 @@ export function useUploadHandlers(
 async function uploadPhotoAndSend(params: {
   files: FileData[];
   chatRoomId?: string;
-  sendMessage: (content: string, fileData?: { fileUrl: string; fileName: string; fileSize: number }) => Promise<void>;
+  sendMessage: ChatSendMessageFn;
   setUploadQueue: React.Dispatch<React.SetStateAction<UploadQueueItem[]>>;
   setIsUploading: React.Dispatch<React.SetStateAction<boolean>>;
 }) {
@@ -310,6 +313,8 @@ async function uploadPhotoAndSend(params: {
   
   setIsUploading(true);
   
+  const uploaded: ChatSendFileAttachment[] = [];
+
   for (const f of files) {
     console.log('[chatAttachmentHelpers] Uploading file:', f.name);
     setUploadQueue((q) => [...q, { name: f.name, mimeType: f.mimeType, size: f.size, status: 'uploading' }]);
@@ -324,9 +329,8 @@ async function uploadPhotoAndSend(params: {
       });
       console.log('[chatAttachmentHelpers] File uploaded successfully, URL:', fileUrl?.substring(0, 50) + '...');
       
-      console.log('[chatAttachmentHelpers] Sending message with file attachment');
-      await sendMessage('', { fileUrl, fileName: f.name, fileSize: f.size || 0 });
-      console.log('[chatAttachmentHelpers] Message sent successfully');
+      uploaded.push({ fileUrl, fileName: f.name, fileSize: f.size || 0 });
+      console.log('[chatAttachmentHelpers] File staged for send');
       
       setUploadQueue((q) => {
         const idx = q.findIndex((x) => x.name === f.name && x.status === 'uploading');
@@ -353,6 +357,20 @@ async function uploadPhotoAndSend(params: {
       Alert.alert('Upload failed', `Failed to upload ${f.name}. Please try again.`);
     }
   }
+
+  if (uploaded.length >= 2) {
+    console.log('[chatAttachmentHelpers] Sending one message with', uploaded.length, 'attachments');
+    await sendMessage('', undefined, undefined, uploaded);
+  } else if (uploaded.length === 1) {
+    const one = uploaded[0];
+    console.log('[chatAttachmentHelpers] Sending message with file attachment');
+    await sendMessage('', {
+      fileUrl: one.fileUrl,
+      fileName: one.fileName,
+      fileSize: one.fileSize ?? 0,
+    });
+    console.log('[chatAttachmentHelpers] Message sent successfully');
+  }
   
   setTimeout(() => setUploadQueue([]), 1200);
   setIsUploading(false);
@@ -364,7 +382,7 @@ async function uploadPhotoAndSend(params: {
  */
 export function useAttachmentHandler(
   chatRoomId: string | undefined,
-  sendMessage: (content: string, fileData?: { fileUrl: string; fileName: string; fileSize: number }) => Promise<void>,
+  sendMessage: ChatSendMessageFn,
   setUploadQueue: React.Dispatch<React.SetStateAction<UploadQueueItem[]>>,
   setIsUploading: React.Dispatch<React.SetStateAction<boolean>>
 ) {

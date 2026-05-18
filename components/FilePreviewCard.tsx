@@ -17,6 +17,8 @@ type Props = {
 	fileSize?: number;
 	isSender: boolean;
 	createdAt?: string; // Optional date to display next to file size
+	/** Compact width for multi-attach grid (max 2 per row in chat). */
+	variant?: 'default' | 'gridCell';
 };
 
 // Helper function to determine MIME type
@@ -87,7 +89,14 @@ const getCachedHeicFileUri = async (params: {
 	}
 };
 
-export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender, createdAt }: Props) {
+export default function FilePreviewCard({
+	fileUrl,
+	fileName,
+	fileSize,
+	isSender,
+	createdAt,
+	variant = 'default',
+}: Props) {
 	const queryClient = useQueryClient();
 	const name = fileName || 'Attachment';
 	const ext = name.toLowerCase().split('.').pop() || '';
@@ -299,6 +308,8 @@ export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender,
 		}
 	};
 
+	const isGridCell = variant === 'gridCell';
+
 	// Show preview for images
 	if (isImage) {
 		return (
@@ -306,11 +317,11 @@ export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender,
 				<TouchableOpacity
 					onPress={handleFileAction}
 					activeOpacity={0.9}
-					style={styles.imageCard}
+					style={[styles.imageCard, isGridCell && styles.imageCardGrid]}
 				>
 					<Image
 						source={{ uri: fileUrl }}
-						style={styles.previewImage}
+						style={[styles.previewImage, isGridCell && styles.previewImageGrid]}
 						resizeMode="cover"
 					/>
 					{isDownloading ? (
@@ -344,18 +355,24 @@ export default function FilePreviewCard({ fileUrl, fileName, fileSize, isSender,
 				style={[
 					styles.fileCard,
 					isSender ? styles.fileCardSender : styles.fileCardOther,
+					isGridCell && styles.fileCardGrid,
 				]}
 			>
 				<View style={styles.fileIconContainer}>
-					<FileIcon width={rem(40)} height={rem(40)} color={isSender ? colors.neutral.white : colors.primary.blue} />
+					<FileIcon
+						width={isGridCell ? rem(28) : rem(40)}
+						height={isGridCell ? rem(28) : rem(40)}
+						color={isSender ? colors.neutral.white : colors.primary.blue}
+					/>
 				</View>
 				<View style={styles.fileInfo}>
 					<Text 
 						style={[
 							styles.fileName,
+							isGridCell && styles.fileNameGrid,
 							isSender ? styles.fileNameSender : styles.fileNameOther,
 						]}
-						numberOfLines={1}
+						numberOfLines={isGridCell ? 2 : 1}
 					>
 						{name}
 					</Text>
@@ -396,10 +413,20 @@ const styles = StyleSheet.create({
 		marginBottom: rem(6),
 		position: 'relative',
 	},
+	imageCardGrid: {
+		width: '100%',
+		maxWidth: '100%',
+		alignSelf: 'stretch',
+		marginBottom: 0,
+	},
 	previewImage: {
 		width: '100%',
 		height: rem(180),
 		borderRadius: rem(8),
+	},
+	previewImageGrid: {
+		height: rem(104),
+		borderRadius: rem(6),
 	},
 	imageLoadingOverlay: {
 		...StyleSheet.absoluteFillObject,
@@ -416,6 +443,15 @@ const styles = StyleSheet.create({
 		borderRadius: rem(10),
 		marginBottom: rem(6),
 		gap: rem(12),
+	},
+	fileCardGrid: {
+		width: '100%',
+		maxWidth: '100%',
+		alignSelf: 'stretch',
+		padding: rem(8),
+		gap: rem(8),
+		marginBottom: 0,
+		minHeight: rem(88),
 	},
 	fileCardSender: {
 		backgroundColor: 'rgba(255, 255, 255, 0.15)',
@@ -435,6 +471,10 @@ const styles = StyleSheet.create({
 		fontSize: fp(14),
 		fontFamily: fonts['600'],
 		marginBottom: rem(4),
+	},
+	fileNameGrid: {
+		fontSize: fp(11),
+		marginBottom: rem(2),
 	},
 	fileNameSender: {
 		color: colors.neutral.white,

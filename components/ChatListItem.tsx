@@ -9,6 +9,7 @@ import MuteIcon from '@/icons/MuteIcon';
 import MutedIcon from '@/icons/MutedIcon';
 import MoreDotsIcon from '@/icons/MoreDotsIcon';
 import { chatApi } from '@/app-api/chatApi';
+import { getMessageMultiAttachments } from '@/utils/messageAttachments';
 
 // Types for chat data
 export interface User {
@@ -30,6 +31,8 @@ export interface Message {
   fileUrl?: string;
   fileName?: string;
   fileSize?: number;
+  /** Legacy JSON multi-attach; new rows use pipe "|" in fileUrl/fileName. */
+  attachments?: unknown;
   isRead: boolean;
   readBy?: string[];
   replyData?: {
@@ -386,6 +389,10 @@ export default function ChatListItem({
     }
     
     if (chatRoom.lastMessage.fileUrl) {
+      const multi = getMessageMultiAttachments(chatRoom.lastMessage);
+      if (multi) {
+        return `📎 ${multi.length} files`;
+      }
       return `📎 ${chatRoom.lastMessage.fileName || 'File'}`;
     }
     

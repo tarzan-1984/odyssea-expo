@@ -30,7 +30,12 @@ interface UseChatRoomReturn {
   loadChatRoom: () => Promise<void>;
   loadMessages: (page?: number, limit?: number) => Promise<void>;
   loadMoreMessages: () => Promise<void>;
-  sendMessage: (content: string, fileData?: { fileUrl: string; fileName: string; fileSize: number }, replyData?: Message['replyData']) => Promise<void>;
+  sendMessage: (
+    content: string,
+    fileData?: { fileUrl: string; fileName: string; fileSize: number },
+    replyData?: Message['replyData'],
+    attachments?: { fileUrl: string; fileName: string; fileSize?: number }[]
+  ) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   isSendingMessage: boolean;
 }
@@ -1194,7 +1199,8 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
     async (
       content: string,
       fileData?: { fileUrl: string; fileName: string; fileSize: number },
-      replyData?: Message['replyData']
+      replyData?: Message['replyData'],
+      attachments?: { fileUrl: string; fileName: string; fileSize?: number }[]
     ) => {
       if (!chatRoomId) {
         throw new Error('Cannot send message: no chat room selected');
@@ -1211,15 +1217,19 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
       try {
         setIsSendingMessage(true);
 
+        const multi =
+          attachments && attachments.length >= 2 ? attachments : null;
+
         // Send via WebSocket
         // Message will be added to state when we receive 'newMessage' event from server
         // This matches the Next.js implementation - no optimistic updates
         wsSendMessage({
           chatRoomId,
           content,
-          fileUrl: fileData?.fileUrl,
-          fileName: fileData?.fileName,
-          fileSize: fileData?.fileSize,
+          fileUrl: multi ? multi[0].fileUrl : fileData?.fileUrl,
+          fileName: multi ? multi[0].fileName : fileData?.fileName,
+          fileSize: multi ? multi[0].fileSize : fileData?.fileSize,
+          attachments: multi ?? undefined,
           replyData,
         });
         
