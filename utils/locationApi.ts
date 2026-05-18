@@ -4,6 +4,8 @@ import { API_BASE_URL } from '@/lib/config';
 import { secureStorage } from '@/utils/secureStorage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fileLogger } from '@/utils/fileLogger';
+import { reverseGeocodeAsync, resolveCityForApi } from '@/utils/geocoding';
+import { toBackendStateDisplayName } from '@/utils/stateDisplayName';
 
 /**
  * Format date and time for TMS API
@@ -50,20 +52,39 @@ export async function getLocationDetails(
   let city = '';
   let state = '';
   let country = 'USA';
-  
+
   try {
-    // Use expo-location's native reverseGeocodeAsync - works in both foreground and background
+    const rows = await reverseGeocodeAsync({ latitude, longitude });
+    if (rows.length > 0) {
+      const g = rows[0]!;
+      city = resolveCityForApi(g);
+      state =
+        toBackendStateDisplayName(g.region, g.isoCountryCode) ||
+        (g.region ? String(g.region).trim() : '');
+      const c = g.country || '';
+      country =
+        c === 'United States' || g.isoCountryCode === 'US'
+          ? 'USA'
+          : c || g.isoCountryCode || 'USA';
+      return { city, state, country };
+    }
+  } catch (geoError) {
+    console.warn('[locationApi] Nominatim location details failed:', geoError);
+  }
+
+  try {
     const reverseGeocode = await Location.reverseGeocodeAsync({ latitude, longitude });
-    if (reverseGeocode && reverseGeocode.length > 0) {
+    if (reverseGeocode?.[0]) {
       const geo = reverseGeocode[0];
       city = geo.city || geo.subregion || geo.district || '';
       state = geo.region ? geo.region.split(' ')[0] : '';
-      country = geo.country === 'United States' ? 'USA' : (geo.country || geo.isoCountryCode || 'USA');
+      country =
+        geo.country === 'United States' ? 'USA' : geo.country || geo.isoCountryCode || 'USA';
     }
   } catch (geoError) {
-    console.warn('[locationApi] Failed to get location details from geocoding:', geoError);
+    console.warn('[locationApi] Native reverse geocode fallback failed:', geoError);
   }
-  
+
   return { city, state, country };
 }
 
