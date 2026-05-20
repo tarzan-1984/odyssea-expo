@@ -30,6 +30,8 @@ const BASIC_STATUS_OPTIONS: StatusOption[] = [
   { value: 'available', label: 'Available' },
   { value: 'available_on', label: 'Available on' },
   { value: 'available_off', label: 'Not available' },
+  { value: 'on_vocation', label: 'On vacation' },
+  { value: 'banned', label: 'Out of service' },
   { value: 'loaded_enroute', label: 'Loaded & Enroute' },
 ];
 

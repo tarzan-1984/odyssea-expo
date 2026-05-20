@@ -77,8 +77,9 @@ function RootLayoutNav() {
         const status = (await AsyncStorage.getItem('@user_status')) ?? '';
         const deactivated =
           (await AsyncStorage.getItem('@user_deactivate_account')) === '1';
+        // banned = self-service "Out of service"; overlay only for real block / deactivated
         setIsAccountBlocked(
-          status === 'blocked' || status === 'banned' || deactivated,
+          status === 'blocked' || deactivated,
         );
       } catch (error) {
         console.error('Failed to check blocked status:', error);

@@ -85,7 +85,7 @@ Notifications.setNotificationHandler({
         } catch {}
       }
 
-      // Check if sound should be blocked for drivers with expired_documents or blocked status
+      // Check push/sound suppression: expired_documents rules, account blocked only (banned = driver-selected)
       let shouldBlockSound = false;
       try {
         const secureStorage = (await import('@/utils/secureStorage')).secureStorage;
@@ -96,8 +96,7 @@ Notifications.setNotificationHandler({
           const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
           const driverStatus = await AsyncStorage.getItem('@user_status').catch(() => null);
 
-          // Block all push notifications for drivers with 'blocked' or 'banned' status
-          if (userRole === 'DRIVER' && (driverStatus === 'blocked' || driverStatus === 'banned')) {
+          if (userRole === 'DRIVER' && driverStatus === 'blocked') {
             shouldBlockSound = true;
           }
 
