@@ -73,9 +73,8 @@ function RootLayoutNav() {
         const status = (await AsyncStorage.getItem('@user_status')) ?? '';
         const deactivated =
           (await AsyncStorage.getItem('@user_deactivate_account')) === '1';
-        setIsAccountBlocked(
-          status === 'blocked' || status === 'banned' || deactivated
-        );
+        // banned = driver-selected "Out of service" (same as on_vocation); only blocked/deactivated = account modal
+        setIsAccountBlocked(status === 'blocked' || deactivated);
       } catch (error) {
         console.error('Failed to check blocked status:', error);
       }

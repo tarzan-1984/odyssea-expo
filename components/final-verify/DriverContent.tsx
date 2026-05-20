@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, TextInput, Platform, AppState, ActivityIndicator, Linking, Animated, Modal } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet, TextInput, Platform, AppState, ActivityIndicator, Linking, Animated, Modal, Image } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import OSMMapView, { Region } from '@/components/maps/OSMMapView';
 import { BlurView } from 'expo-blur';
@@ -45,10 +45,31 @@ const DRIVER_SELF_SERVICE_STATUSES: StatusValue[] = [
   'available',
   'available_on',
   'available_off',
+  'on_vocation',
+  'banned',
 ];
+
+/** Inactive-style statuses: same save rules and hidden ZIP/Date as available_off / on_vocation */
+function isInactiveDriverSelfServiceStatus(status: StatusValue): boolean {
+  return (
+    status === 'available_off' || status === 'on_vocation' || status === 'banned'
+  );
+}
 
 function isDriverSelfServiceStatus(status: StatusValue): boolean {
   return DRIVER_SELF_SERVICE_STATUSES.includes(status);
+}
+
+/** No live OSM/WebView tile traffic for these statuses — static illustration + blur overlay. */
+const STATIC_MAP_PLACEHOLDER_STATUSES: StatusValue[] = [
+  'available_off',
+  'on_vocation',
+  'banned',
+  'blocked',
+];
+
+function showsStaticMapPlaceholder(status: StatusValue): boolean {
+  return STATIC_MAP_PLACEHOLDER_STATUSES.includes(status);
 }
 
 /** Console: same field names as JSON body to PUT /v1/users/:id/location */
@@ -1397,7 +1418,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         setTimeout(() => postDriverBanner(null), 3000);
         return;
       }
-      const isNotAvailable = status === 'available_off';
+      const isNotAvailable = isInactiveDriverSelfServiceStatus(status);
       const useCurrentDateTime = status === 'available' || status === 'loaded_enroute';
       let zipToSend = zip;
       let dateToSend = date;
@@ -2046,6 +2067,17 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
     }
   };
 
+  const staticMapMode = showsStaticMapPlaceholder(status);
+
+  const mapBlurPinOverlay = (
+    <>
+      <BlurView intensity={12} tint="light" style={StyleSheet.absoluteFill} pointerEvents="none" />
+      <View style={styles.mapPin} pointerEvents="none">
+        <PinMapIcon />
+      </View>
+    </>
+  );
+
   return (
     <View style={styles.contentWrapper}>
       {/* Animated success/error message from top */}
@@ -2073,43 +2105,49 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           </Text>
         </Animated.View>
       )}
-          {/* Map section */}
+          {/* Map section — skip WebView tiles when location UI is irrelevant */}
           <View style={styles.mapContainer}>
-              <OSMMapView
-                ref={mapRef}
-                style={StyleSheet.absoluteFill}
-                initialRegion={initialRegion}
-                markers={userLocation ? [{
-                  coordinate: userLocation,
-                  anchor: { x: 0.5, y: 1.0 }, // Anchor at bottom point of teardrop pin
-                  driverStatus: driverStatusFromStorage || user?.driverStatus || null // Use status from AsyncStorage (synced with backend)
-                }] : []}
-                showsUserLocation={false}
-                showsMyLocationButton={false}
-                scrollEnabled
-                zoomEnabled={false}
-                rotateEnabled
-                pitchEnabled
-                showsCompass
-              />
-              {/* Until location is ready, show center overlay with blur */}
-              {!isLocationReady && (
-                <>
-                  <BlurView intensity={12} tint="light" style={StyleSheet.absoluteFill} pointerEvents="none" />
-                  <View style={styles.mapPin} pointerEvents="none">
-                    <PinMapIcon />
+            {staticMapMode ? (
+              <>
+                <Image
+                  source={require('@/assets/images/mapscreen.png')}
+                  style={StyleSheet.absoluteFill}
+                  resizeMode="cover"
+                  accessibilityIgnoresInvertColors
+                />
+                {mapBlurPinOverlay}
+              </>
+            ) : (
+              <>
+                <OSMMapView
+                  ref={mapRef}
+                  style={StyleSheet.absoluteFill}
+                  initialRegion={initialRegion}
+                  markers={userLocation ? [{
+                    coordinate: userLocation,
+                    anchor: { x: 0.5, y: 1.0 }, // Anchor at bottom point of teardrop pin
+                    driverStatus: driverStatusFromStorage || user?.driverStatus || null // Use status from AsyncStorage (synced with backend)
+                  }] : []}
+                  showsUserLocation={false}
+                  showsMyLocationButton={false}
+                  scrollEnabled
+                  zoomEnabled={false}
+                  rotateEnabled
+                  pitchEnabled
+                  showsCompass
+                />
+                {/* Until location is ready, show center overlay with blur */}
+                {!isLocationReady && mapBlurPinOverlay}
+                {/* Address label overlay */}
+                {userLocation && locationLabel && (
+                  <View style={styles.addressBadge} pointerEvents="none">
+                    <Text style={styles.addressText} numberOfLines={1}>
+                      {locationLabel}
+                    </Text>
                   </View>
-                </>
-              )}
-              
-              {/* Address label overlay */}
-              {userLocation && locationLabel && (
-                <View style={styles.addressBadge} pointerEvents="none">
-                  <Text style={styles.addressText} numberOfLines={1}>
-                    {locationLabel}
-                  </Text>
-              </View>
-              )}
+                )}
+              </>
+            )}
           </View>
           
             {/* Settings section */}
@@ -2117,7 +2155,13 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           <TouchableOpacity
             style={[
               styles.shareButton,
-              (status === 'available_on' || status === 'available_off') && { opacity: 0, pointerEvents: 'none' as const },
+              (status === 'available_on' ||
+                status === 'available_off' ||
+                status === 'on_vocation' ||
+                status === 'banned') && {
+                opacity: 0,
+                pointerEvents: 'none' as const,
+              },
             ]}
             onPress={handleShareLocation}
             disabled={isSharingLocation}
@@ -2187,7 +2231,18 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           </View>
           
           {/* ZIP - hidden when not available; when available_on: tappable; otherwise read-only */}
-              <View style={[styles.settingsWrap, status === 'available_off' && { opacity: 0, height: 0, marginBottom: 0, overflow: 'hidden' }]} pointerEvents={status === 'available_off' ? 'none' : 'auto'}>
+              <View
+                style={[
+                  styles.settingsWrap,
+                  isInactiveDriverSelfServiceStatus(status) && {
+                    opacity: 0,
+                    height: 0,
+                    marginBottom: 0,
+                    overflow: 'hidden',
+                  },
+                ]}
+                pointerEvents={isInactiveDriverSelfServiceStatus(status) ? 'none' : 'auto'}
+              >
                 <Text style={styles.settingsLabel}>ZIP</Text>
                 {status === 'available_on' ? (
                   <TouchableOpacity
@@ -2210,8 +2265,27 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
                 )}
           </View>
           
-          {/* Date - hidden for available_off, available, loaded_enroute; always tappable when shown (pick date and time) */}
-              <View style={[styles.settingsWrap, (status === 'available_off' || status === 'available' || status === 'loaded_enroute') && { opacity: 0, height: 0, marginBottom: 0, overflow: 'hidden' }]} pointerEvents={(status === 'available_off' || status === 'available' || status === 'loaded_enroute') ? 'none' : 'auto'}>
+          {/* Date - hidden for inactive self-service, available, loaded_enroute; tappable when shown */}
+              <View
+                style={[
+                  styles.settingsWrap,
+                  (isInactiveDriverSelfServiceStatus(status) ||
+                    status === 'available' ||
+                    status === 'loaded_enroute') && {
+                    opacity: 0,
+                    height: 0,
+                    marginBottom: 0,
+                    overflow: 'hidden',
+                  },
+                ]}
+                pointerEvents={
+                  isInactiveDriverSelfServiceStatus(status) ||
+                  status === 'available' ||
+                  status === 'loaded_enroute'
+                    ? 'none'
+                    : 'auto'
+                }
+              >
                 <Text style={styles.settingsLabel}>Date</Text>
                 <TouchableOpacity
                   style={[styles.input, styles.textInput]}
