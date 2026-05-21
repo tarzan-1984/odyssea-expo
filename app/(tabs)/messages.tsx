@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Platform, Keyboard, AppState, AppStateStatus, Modal } from 'react-native';
 import type { TextInput as RNTextInput } from 'react-native';
 import { colors, fonts, rem, fp, borderRadius } from '@/lib';
@@ -23,6 +23,7 @@ import { chatApi } from '@/app-api/chatApi';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { eventBus } from '@/services/EventBus';
 import { useChatStore } from '@/stores/chatStore';
+import LoadChatsArchiveSection from '@/components/LoadChatsArchiveSection';
 
 type FilterType = 'all' | 'muted' | 'unread' | 'favorite';
 
@@ -51,6 +52,7 @@ export default function MessagesScreen() {
   const { chatRooms, isLoading, error, loadChatRooms, updateChatRoom } = useChatRooms();
   const activeTab = useChatStore((s) => s.messagesTab);
   const setActiveTab = useChatStore((s) => s.setMessagesTab);
+  const mergeChatRooms = useChatStore((s) => s.mergeChatRooms);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [isFilterDropdownOpen, setIsFilterDropdownOpen] = useState(false);
@@ -167,10 +169,14 @@ export default function MessagesScreen() {
     setIsFilterDropdownOpen(false);
   };
 
+  /** Active Shipments tab list: LOAD chats excluding load-archived (shown under ARCHIVE). */
+  const isShipmentsTabMainListLoadRoom = (room: ChatRoom) =>
+    room.type === 'LOAD' && room.isLoadArchived !== true;
+
   // Determine if all chats are muted (mirrors Next.js logic)
   const allChatsMuted = useMemo(() => {
     const tabScopedRooms = chatRooms.filter((room) =>
-      activeTab === 'chats' ? room.type !== 'LOAD' : room.type === 'LOAD'
+      activeTab === 'chats' ? room.type !== 'LOAD' : isShipmentsTabMainListLoadRoom(room)
     );
     return tabScopedRooms.length > 0 && tabScopedRooms.every((room) => room.isMuted);
   }, [chatRooms, activeTab]);
@@ -191,7 +197,7 @@ export default function MessagesScreen() {
     try {
       // Get all unmuted chat room IDs
       const unmutedChatRoomIds = chatRooms
-        .filter((room) => (activeTab === 'chats' ? room.type !== 'LOAD' : room.type === 'LOAD'))
+        .filter((room) => (activeTab === 'chats' ? room.type !== 'LOAD' : isShipmentsTabMainListLoadRoom(room)))
         .filter(room => !room.isMuted)
         .map(room => room.id);
 
@@ -221,7 +227,7 @@ export default function MessagesScreen() {
     try {
       // Get all muted chat room IDs
       const mutedChatRoomIds = chatRooms
-        .filter((room) => (activeTab === 'chats' ? room.type !== 'LOAD' : room.type === 'LOAD'))
+        .filter((room) => (activeTab === 'chats' ? room.type !== 'LOAD' : isShipmentsTabMainListLoadRoom(room)))
         .filter(room => room.isMuted)
         .map(room => room.id);
 
@@ -251,7 +257,7 @@ export default function MessagesScreen() {
     try {
       // Get all chat room IDs with unread messages
       const unreadChatRoomIds = chatRooms
-        .filter((room) => (activeTab === 'chats' ? room.type !== 'LOAD' : room.type === 'LOAD'))
+        .filter((room) => (activeTab === 'chats' ? room.type !== 'LOAD' : isShipmentsTabMainListLoadRoom(room)))
         .filter(room => (room.unreadCount || 0) > 0)
         .map(room => room.id);
 
@@ -306,10 +312,10 @@ export default function MessagesScreen() {
     return chatRooms.filter(chatRoom => {
       // Tab filtering:
       // - Chats tab: show all chats except LOAD
-      // - Shipments tab: show only LOAD chats
+      // - Shipments tab: LOAD only when not TMS load-archived (ARCHIVE section fetches separately)
       const isAllowedByTab = activeTab === 'chats'
         ? chatRoom.type !== 'LOAD'
-        : chatRoom.type === 'LOAD';
+        : isShipmentsTabMainListLoadRoom(chatRoom);
       if (!isAllowedByTab) return false;
 
       // Filter out blocked chats for drivers with expired_documents status
@@ -717,11 +723,13 @@ export default function MessagesScreen() {
               </View>
             )}
           </View>
-          
+
+          <View style={styles.listScrollAndArchive}>
           <ScrollView
             style={styles.content}
             contentContainerStyle={styles.contentContainer}
             showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
             onScrollBeginDrag={() => {
               // Close any open dropdowns when scrolling starts
               // This is handled by the ChatListItem component itself
@@ -743,16 +751,22 @@ export default function MessagesScreen() {
                   <Text style={styles.retryButtonText}>Retry</Text>
                 </TouchableOpacity>
               </View>
-            ) : filteredChatRooms.length === 0 ? (
-              <View style={styles.emptyContainer}>
-                <Text style={styles.emptyText}>
-                  {debouncedSearchQuery.trim() ? 'No chats found' : 'No chats yet'}
-                </Text>
-                {debouncedSearchQuery.trim() && (
-                  <Text style={styles.emptySubtext}>Try a different search term</Text>
-                )}
-              </View>
             ) : (
+              <>
+                {filteredChatRooms.length === 0 ? (
+                  <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyText}>
+                      {debouncedSearchQuery.trim()
+                        ? 'No chats found'
+                        : activeTab === 'shipments'
+                          ? 'No active shipments'
+                          : 'No chats yet'}
+                    </Text>
+                    {debouncedSearchQuery.trim() ? (
+                      <Text style={styles.emptySubtext}>Try a different search term</Text>
+                    ) : null}
+                  </View>
+                ) : (
                   <View style={styles.chatList}>
                     {filteredChatRooms.map((chatRoom) => {
                       // Determine online status for DIRECT chats
@@ -765,7 +779,7 @@ export default function MessagesScreen() {
                           userStatus = 'online';
                         }
                       }
-                      
+
                       return (
                         <ChatListItem
                           key={chatRoom.id}
@@ -778,7 +792,6 @@ export default function MessagesScreen() {
                           isDropdownOpen={openDropdownId === chatRoom.id}
                           onDropdownToggle={(isOpen, chatId) => {
                             if (isOpen) {
-                              // Simply set the new dropdown ID - React will close the old Modal automatically
                               setOpenDropdownId(chatId);
                             } else {
                               setOpenDropdownId(null);
@@ -790,7 +803,25 @@ export default function MessagesScreen() {
                     })}
                   </View>
                 )}
+              </>
+            )}
           </ScrollView>
+          {!isExpiredDocumentsDriver && activeTab === 'shipments' && (
+            <View style={styles.archiveStickyFooter}>
+              <LoadChatsArchiveSection
+                tabActive={true}
+                pinnedToBottom
+                selectedChatId={selectedChatId}
+                currentUserId={authState.user?.id}
+                isUserOnline={isUserOnline}
+                mergeChatRooms={mergeChatRooms}
+                onChatPress={handleChatPress}
+                openDropdownId={openDropdownId}
+                setOpenDropdownId={setOpenDropdownId}
+              />
+            </View>
+          )}
+          </View>
         </View>
         
         {/* Bottom Navigation */}
@@ -859,11 +890,25 @@ const styles = StyleSheet.create({
     flex: 1,
     position: "relative"
   },
+  listScrollAndArchive: {
+    flex: 1,
+    minHeight: 0,
+  },
+  archiveStickyFooter: {
+    flexShrink: 0,
+    paddingHorizontal: rem(15),
+    paddingTop: rem(6),
+    paddingBottom: rem(6),
+    backgroundColor: 'rgba(247, 248, 255, 1)',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(96, 102, 197, 0.12)',
+  },
   chatList: {
     flex: 1,
   },
   content: {
     flex: 1,
+    minHeight: 0,
   },
   contentContainer: {
     paddingBottom: rem(20),

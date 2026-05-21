@@ -115,6 +115,55 @@ class ChatApiClient {
   }
 
   /**
+   * Paginated LOAD chats where is_load_archived (main list excludes these).
+   */
+  async getArchivedLoadChatRooms(
+    page: number = 1,
+    limit: number = 10,
+  ): Promise<{
+    chatRooms: ChatRoom[];
+    pagination: { page: number; limit: number; hasMore: boolean };
+  }> {
+    const params = new URLSearchParams({
+      page: String(page),
+      limit: String(limit),
+    });
+    const raw = await this.request<unknown>(
+      `/v1/chat-rooms/load-archived?${params}`,
+    );
+
+    const body =
+      typeof raw === 'object' && raw !== null && !Array.isArray(raw)
+        ? (raw as Record<string, unknown>)
+        : {};
+
+    const rooms = Array.isArray(body.chatRooms)
+      ? (body.chatRooms as ChatRoom[])
+      : [];
+    const pag = body.pagination;
+
+    let pagination = {
+      page,
+      limit,
+      hasMore: false,
+    };
+
+    if (pag && typeof pag === 'object' && !Array.isArray(pag)) {
+      const p = pag as Record<string, unknown>;
+      pagination = {
+        page: typeof p.page === 'number' ? p.page : page,
+        limit: typeof p.limit === 'number' ? p.limit : limit,
+        hasMore: typeof p.hasMore === 'boolean' ? p.hasMore : false,
+      };
+    }
+
+    return {
+      chatRooms: rooms,
+      pagination,
+    };
+  }
+
+  /**
    * Get a specific chat room by ID
    */
   async getChatRoom(chatRoomId: string): Promise<ChatRoom> {

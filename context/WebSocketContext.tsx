@@ -510,19 +510,33 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         const updatedChatRoom = data?.updatedChatRoom ?? data?.chatRoom ?? data;
         if (!chatRoomId || !updatedChatRoom) return;
 
-        const normalized: ChatRoom = {
-          ...updatedChatRoom,
-          participants: normalizeParticipants(updatedChatRoom.participants || []),
-        };
-
         const state = useChatStore.getState();
-        state.updateChatRoom(chatRoomId, normalized);
+        const existing = state.chatRooms.find((r) => r.id === chatRoomId);
+        const incomingParticipants = updatedChatRoom.participants;
+        const patch: Partial<ChatRoom> = { ...updatedChatRoom };
+        delete (patch as { participants?: unknown }).participants;
+        if (Array.isArray(incomingParticipants) && incomingParticipants.length > 0) {
+          patch.participants = normalizeParticipants(incomingParticipants);
+        }
+        state.updateChatRoom(chatRoomId, patch);
+
+        const mergedForCache: ChatRoom = existing
+          ? ({ ...existing, ...patch } as ChatRoom)
+          : ({
+              ...updatedChatRoom,
+              participants: patch.participants ?? normalizeParticipants(updatedChatRoom.participants || []),
+            } as ChatRoom);
 
         // Update cache (best-effort)
         try {
           const { chatCacheService } = await import('@/services/ChatCacheService');
-          await chatCacheService.updateChatRoom(chatRoomId, normalized);
+          await chatCacheService.updateChatRoom(chatRoomId, mergedForCache);
         } catch {}
+
+        if (mergedForCache.type === 'LOAD') {
+          const { eventBus, AppEvents } = await import('@/services/EventBus');
+          eventBus.emit(AppEvents.ArchivedLoadChatsNeedRefresh, { chatRoomId });
+        }
       } catch (e) {
         console.error('Failed to handle chatRoomUpdated:', e);
       }
