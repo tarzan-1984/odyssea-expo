@@ -6,6 +6,10 @@ import {
   StyleSheet,
   ActivityIndicator,
   FlatList,
+  TextInput,
+  Platform,
+  Keyboard,
+  useWindowDimensions,
 } from 'react-native';
 import {
   useInfiniteQuery,
@@ -14,6 +18,8 @@ import {
 } from '@tanstack/react-query';
 import { colors, fonts, rem, fp, borderRadius } from '@/lib';
 import ArrowDownIcon from '@/icons/ArrowDownIcon';
+import SearchIcon from '@/icons/SearchIcon';
+import ClearIcon from '@/icons/ClearIcon';
 import ChatListItem, { ChatRoom } from '@/components/ChatListItem';
 import { chatApi } from '@/app-api/chatApi';
 import { eventBus, AppEvents } from '@/services/EventBus';
@@ -54,6 +60,39 @@ function normalizeParticipants(participants: any[]): ChatRoom['participants'] {
   }));
 }
 
+/** Mirrors Next.js ChatList.getChatDisplayName; LOAD behaves like GROUP for fallback. */
+function getArchiveChatDisplayName(
+  chatRoom: ChatRoom,
+  currentUserId?: string,
+): string {
+  if (
+    chatRoom.type === 'DIRECT' &&
+    chatRoom.participants.length === 2 &&
+    currentUserId
+  ) {
+    const otherParticipant = chatRoom.participants.find(
+      (p) => p.user.id !== currentUserId,
+    );
+    if (otherParticipant) {
+      return `${otherParticipant.user.firstName} ${otherParticipant.user.lastName}`;
+    }
+  }
+
+  if (chatRoom.name) {
+    return chatRoom.name;
+  }
+
+  if (chatRoom.type === 'GROUP' || chatRoom.type === 'LOAD') {
+    const participantNames = chatRoom.participants
+      .slice(0, 2)
+      .map((p) => p.user.firstName)
+      .join(', ');
+    return participantNames + (chatRoom.participants.length > 2 ? '...' : '');
+  }
+
+  return 'Unknown Chat';
+}
+
 export default function LoadChatsArchiveSection({
   tabActive,
   pinnedToBottom = false,
@@ -65,8 +104,23 @@ export default function LoadChatsArchiveSection({
   openDropdownId,
   setOpenDropdownId,
 }: LoadChatsArchiveSectionProps) {
+  const { height: winH } = useWindowDimensions();
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState(false);
+  const [archiveSearchQuery, setArchiveSearchQuery] = useState('');
+  const [debouncedArchiveSearch, setDebouncedArchiveSearch] = useState('');
+
+  const clearArchiveSearch = useCallback(() => {
+    setArchiveSearchQuery('');
+    setDebouncedArchiveSearch('');
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedArchiveSearch(archiveSearchQuery);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [archiveSearchQuery]);
 
   const mergeNormalized = useCallback((list: ChatRoom[]): ChatRoom[] => {
     return list.map((room) => ({
@@ -148,6 +202,31 @@ export default function LoadChatsArchiveSection({
     [archivedRooms, mergeNormalized],
   );
 
+  const filteredDisplayRooms = useMemo(() => {
+    const q = debouncedArchiveSearch.trim().toLowerCase();
+    if (!q) return displayRooms;
+    return displayRooms.filter((room) => {
+      const displayName =
+        getArchiveChatDisplayName(room, currentUserId).toLowerCase();
+      if (displayName.includes(q)) return true;
+      if (
+        room.type === 'DIRECT' &&
+        room.participants.length === 2 &&
+        currentUserId
+      ) {
+        const other = room.participants.find(
+          (p) => p.user.id !== currentUserId,
+        );
+        if (other) {
+          const fn = other.user.firstName?.toLowerCase() || '';
+          const ln = other.user.lastName?.toLowerCase() || '';
+          if (fn.includes(q) || ln.includes(q)) return true;
+        }
+      }
+      return false;
+    });
+  }, [displayRooms, debouncedArchiveSearch, currentUserId]);
+
   useEffect(() => {
     if (displayRooms.length > 0) {
       mergeChatRooms(displayRooms);
@@ -168,11 +247,20 @@ export default function LoadChatsArchiveSection({
     void fetchNextPage();
   }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
+  const archiveFlatListHeight = useMemo(() => {
+    const searchStripeH = Platform.OS === 'android' ? rem(68) : rem(70);
+    const blockMinPx = Math.floor(winH * 0.5);
+    const computed = Math.max(blockMinPx - searchStripeH, rem(170));
+    const cap = Math.floor(winH * (pinnedToBottom ? 0.52 : 0.62));
+    return Math.min(computed, cap);
+  }, [pinnedToBottom, winH]);
+
   const closeAllDropdowns = useCallback(() => {
     setOpenDropdownId?.(null);
   }, [setOpenDropdownId]);
 
   const onToggle = useCallback(() => {
+    Keyboard.dismiss();
     setExpanded((x) => !x);
     closeAllDropdowns();
   }, [closeAllDropdowns]);
@@ -241,12 +329,31 @@ export default function LoadChatsArchiveSection({
         </View>
       );
     }
+    if (
+      archivedRooms.length > 0 &&
+      filteredDisplayRooms.length === 0 &&
+      debouncedArchiveSearch.trim()
+    ) {
+      return (
+        <View style={styles.centerPad}>
+          <Text style={styles.muted}>No chats found</Text>
+          <Text style={styles.emptyHint}>Try a different search term</Text>
+        </View>
+      );
+    }
     return (
       <View style={styles.centerPad}>
         <Text style={styles.muted}>No archived shipments</Text>
       </View>
     );
-  }, [error, isError, isPending]);
+  }, [
+    archivedRooms.length,
+    debouncedArchiveSearch,
+    error,
+    filteredDisplayRooms.length,
+    isError,
+    isPending,
+  ]);
 
   const ListFooter = useMemo(() => {
     if (!isFetchingNextPage) return null;
@@ -279,26 +386,64 @@ export default function LoadChatsArchiveSection({
         </TouchableOpacity>
 
         {expanded && (
-          <FlatList
-            nestedScrollEnabled
-            keyboardShouldPersistTaps="handled"
-            style={[styles.listPanel, pinnedToBottom && styles.listPanelSticky]}
-            contentContainerStyle={
-              displayRooms.length === 0
-                ? [
-                    styles.archiveListPaddingOnly,
-                    styles.archiveListInnerCentered,
-                  ]
-                : styles.archiveListPaddingOnly
-            }
-            data={displayRooms}
-            keyExtractor={(item) => `arch-${item.id}`}
-            renderItem={renderItem}
-            ListEmptyComponent={ListEmpty}
-            ListFooterComponent={ListFooter}
-            onEndReached={handleEndReached}
-            onEndReachedThreshold={0.35}
-          />
+          <>
+            <View
+              style={[
+                styles.archiveExpandedBody,
+                { minHeight: Math.floor(winH * 0.5) },
+              ]}
+            >
+              <View style={styles.archiveSearchOuter}>
+                <View style={styles.archiveSearchInner}>
+                  <View style={styles.archiveSearchIcon}>
+                    <SearchIcon />
+                  </View>
+                  <TextInput
+                    style={styles.archiveSearchInput}
+                    placeholder="Search chats..."
+                    placeholderTextColor={colors.neutral.darkGrey}
+                    value={archiveSearchQuery}
+                    onChangeText={setArchiveSearchQuery}
+                    autoCorrect={false}
+                    autoCapitalize="none"
+                    accessibilityLabel="Search archived chats"
+                  />
+                  {archiveSearchQuery.length > 0 ? (
+                    <TouchableOpacity
+                      style={styles.archiveSearchClear}
+                      onPress={clearArchiveSearch}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      accessibilityLabel="Clear archived chat search"
+                    >
+                      <ClearIcon />
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              </View>
+              <FlatList
+                nestedScrollEnabled
+                keyboardShouldPersistTaps="handled"
+                style={[styles.listPanel, { height: archiveFlatListHeight }]}
+                contentContainerStyle={
+                  filteredDisplayRooms.length === 0
+                    ? [
+                        styles.archiveListPaddingOnly,
+                        styles.archiveListInnerCentered,
+                      ]
+                    : styles.archiveListPaddingOnly
+                }
+                data={filteredDisplayRooms}
+                keyExtractor={(item) => `arch-${item.id}`}
+                renderItem={renderItem}
+                ListEmptyComponent={ListEmpty}
+                ListFooterComponent={ListFooter}
+                onEndReached={handleEndReached}
+                onEndReachedThreshold={0.35}
+                onScrollBeginDrag={() => Keyboard.dismiss()}
+                onMomentumScrollBegin={() => Keyboard.dismiss()}
+              />
+            </View>
+          </>
         )}
       </View>
     </View>
@@ -340,14 +485,56 @@ const styles = StyleSheet.create({
   chevronRotated: {
     transform: [{ rotate: '180deg' }],
   },
+  archiveExpandedBody: {
+    flexDirection: 'column',
+  },
+  archiveSearchOuter: {
+    paddingHorizontal: rem(10),
+    paddingVertical: rem(8),
+    backgroundColor: 'rgba(247, 248, 255, 0.96)',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(96, 102, 197, 0.15)',
+  },
+  archiveSearchInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: rem(100),
+    backgroundColor: 'rgba(96, 102, 197, 0.1)',
+    minHeight: rem(36),
+    paddingHorizontal: rem(12),
+  },
+  archiveSearchIcon: {
+    marginRight: rem(8),
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  archiveSearchInput: {
+    flex: 1,
+    fontSize: fp(14),
+    fontFamily: fonts['400'],
+    color: colors.primary.blue,
+    ...(Platform.OS === 'android'
+      ? {
+          paddingVertical: 0,
+          textAlignVertical: 'center' as const,
+          includeFontPadding: false as const,
+          lineHeight: rem(36),
+        }
+      : {
+          paddingVertical: rem(8),
+          lineHeight: fp(14),
+        }),
+  },
+  archiveSearchClear: {
+    marginLeft: rem(8),
+    padding: rem(4),
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   listPanel: {
-    maxHeight: rem(340),
     borderTopWidth: 1,
     borderTopColor: 'rgba(96, 102, 197, 0.15)',
     backgroundColor: 'rgba(247, 248, 255, 0.96)',
-  },
-  listPanelSticky: {
-    maxHeight: rem(280),
   },
   archiveListPaddingOnly: {
     paddingVertical: rem(6),
@@ -368,6 +555,13 @@ const styles = StyleSheet.create({
     fontSize: fp(13),
     fontFamily: fonts['400'],
     color: colors.neutral.darkGrey,
+  },
+  emptyHint: {
+    marginTop: rem(6),
+    fontSize: fp(12),
+    fontFamily: fonts['400'],
+    color: colors.neutral.darkGrey,
+    textAlign: 'center',
   },
   errorText: {
     fontSize: fp(13),

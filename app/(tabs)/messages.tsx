@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Platform, Keyboard, AppState, AppStateStatus, Modal } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Pressable, TextInput, ActivityIndicator, Platform, Keyboard, AppState, AppStateStatus, Modal } from 'react-native';
 import type { TextInput as RNTextInput } from 'react-native';
 import { colors, fonts, rem, fp, borderRadius } from '@/lib';
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -165,6 +165,7 @@ export default function MessagesScreen() {
   };
 
   const handleFilterSelect = (filter: FilterType) => {
+    Keyboard.dismiss();
     setSelectedFilter(filter);
     setIsFilterDropdownOpen(false);
   };
@@ -183,6 +184,7 @@ export default function MessagesScreen() {
 
   // Smart mute/unmute function (mirrors Next.js handleSmartMuteToggle)
   const handleSmartMuteToggle = async () => {
+    Keyboard.dismiss();
     if (allChatsMuted) {
       // All chats are muted, so unmute all
       await handleUnmuteAll();
@@ -254,6 +256,7 @@ export default function MessagesScreen() {
 
   // Mark all messages as read in all chat rooms with unread messages (mirrors Next.js handleReadAll)
   const handleReadAll = async () => {
+    Keyboard.dismiss();
     try {
       // Get all chat room IDs with unread messages
       const unreadChatRoomIds = chatRooms
@@ -456,7 +459,7 @@ export default function MessagesScreen() {
         <View style={{ height: insets.top, backgroundColor: colors.primary.violet }} />
         <View style={styles.container}>
           {/* Header with time and profile */}
-          <View style={styles.header}>
+          <Pressable style={styles.header} onPress={() => Keyboard.dismiss()}>
             <View style={styles.titleContainer}>
               <Text style={styles.screenTitle}>Conversations</Text>
               <View style={styles.statusContainer}>
@@ -472,19 +475,25 @@ export default function MessagesScreen() {
             {isExpiredDocumentsDriver ? (
               <TouchableOpacity
                 style={styles.contactsButton}
-                onPress={() => setIsContactsOpen(true)}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setIsContactsOpen(true);
+                }}
               >
                 <Text style={styles.contactsButtonText}>Contacts</Text>
               </TouchableOpacity>
             ) : (
               <TouchableOpacity
                 style={styles.contactsButton}
-                onPress={() => setIsAddNewMenuOpen(true)}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setIsAddNewMenuOpen(true);
+                }}
               >
                 <Text style={styles.contactsButtonText}>Add new</Text>
               </TouchableOpacity>
             )}
-          </View>
+          </Pressable>
 
           {/* Add New toolbar */}
           {!isExpiredDocumentsDriver && (
@@ -507,6 +516,7 @@ export default function MessagesScreen() {
                     style={styles.addNewMenuItem}
                     activeOpacity={0.7}
                     onPress={() => {
+                      Keyboard.dismiss();
                       setIsAddNewMenuOpen(false);
                       setIsCreateGroupOpen(true);
                     }}
@@ -520,6 +530,7 @@ export default function MessagesScreen() {
                     style={styles.addNewMenuItem}
                     activeOpacity={0.7}
                     onPress={() => {
+                      Keyboard.dismiss();
                       setIsAddNewMenuOpen(false);
                       setIsContactsOpen(true);
                     }}
@@ -580,7 +591,10 @@ export default function MessagesScreen() {
                     styles.tabButton,
                     activeTab === 'chats' && styles.tabButtonActive,
                   ]}
-                  onPress={() => setActiveTab('chats')}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setActiveTab('chats');
+                  }}
                   activeOpacity={0.8}
                 >
                   <Text
@@ -598,7 +612,10 @@ export default function MessagesScreen() {
                     styles.tabButton,
                     activeTab === 'shipments' && styles.tabButtonActive,
                   ]}
-                  onPress={() => setActiveTab('shipments')}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setActiveTab('shipments');
+                  }}
                   activeOpacity={0.8}
                 >
                   <Text
@@ -641,7 +658,10 @@ export default function MessagesScreen() {
               <View style={styles.filterContainer}>
                 <TouchableOpacity
                   style={styles.filterButton}
-                  onPress={() => setIsFilterDropdownOpen(!isFilterDropdownOpen)}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setIsFilterDropdownOpen(!isFilterDropdownOpen);
+                  }}
                   activeOpacity={0.7}
                 >
                   <View style={styles.filterButtonContent}>
@@ -730,9 +750,12 @@ export default function MessagesScreen() {
             contentContainerStyle={styles.contentContainer}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
             onScrollBeginDrag={() => {
-              // Close any open dropdowns when scrolling starts
-              // This is handled by the ChatListItem component itself
+              Keyboard.dismiss();
+            }}
+            onMomentumScrollBegin={() => {
+              Keyboard.dismiss();
             }}
           >
             {isLoading && chatRooms.length === 0 ? (
@@ -745,7 +768,10 @@ export default function MessagesScreen() {
                 <Text style={styles.errorText}>{error}</Text>
                 <TouchableOpacity
                   style={styles.retryButton}
-                  onPress={() => { void loadChatRooms(true); }}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    void loadChatRooms(true);
+                  }}
                   activeOpacity={0.7}
                 >
                   <Text style={styles.retryButtonText}>Retry</Text>
@@ -807,7 +833,7 @@ export default function MessagesScreen() {
             )}
           </ScrollView>
           {!isExpiredDocumentsDriver && activeTab === 'shipments' && (
-            <View style={styles.archiveStickyFooter}>
+            <Pressable style={styles.archiveStickyFooter} onPress={() => Keyboard.dismiss()}>
               <LoadChatsArchiveSection
                 tabActive={true}
                 pinnedToBottom
@@ -819,7 +845,7 @@ export default function MessagesScreen() {
                 openDropdownId={openDropdownId}
                 setOpenDropdownId={setOpenDropdownId}
               />
-            </View>
+            </Pressable>
           )}
           </View>
         </View>

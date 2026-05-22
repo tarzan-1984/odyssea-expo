@@ -577,7 +577,9 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     newSocket.on('chatRoomDeleted', async (data: { chatRoomId: string; deletedBy: string }) => {
       try {
         console.log('🗑️ [WebSocket] Chat room deleted:', data.chatRoomId);
-        const { removeChatRoom } = useChatStore.getState();
+        const state = useChatStore.getState();
+        const deletedRoom = state.chatRooms.find((r) => r.id === data.chatRoomId);
+        const { removeChatRoom } = state;
         removeChatRoom(data.chatRoomId);
 
         // Remove chat room from chat rooms cache so it doesn't reappear on next sync
@@ -592,6 +594,11 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         await messagesCacheService.clearMessages(data.chatRoomId).catch((err) => {
           console.error('Failed to clear messages cache:', err);
         });
+
+        if (deletedRoom?.type === 'LOAD') {
+          const { eventBus, AppEvents } = await import('@/services/EventBus');
+          eventBus.emit(AppEvents.ArchivedLoadChatsNeedRefresh, { chatRoomId: data.chatRoomId });
+        }
       } catch (e) {
         console.error('Failed to handle chatRoomDeleted:', e);
       }
