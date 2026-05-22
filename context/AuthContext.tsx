@@ -4,7 +4,11 @@ import { secureStorage } from '@/utils/secureStorage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authApi, CheckEmailResponse, LoginResponse, OtpVerificationResponse } from '@/services/authApi';
 import { registerForPushNotificationsAsync, registerPushTokenToBackend } from '@/services/NotificationsService';
-import { registerMobileDeviceAfterLogin } from '@/services/mobileDeviceApi';
+import {
+  clearMobileDeviceSyncFingerprint,
+  registerMobileDeviceAfterLogin,
+  syncMobileDeviceIfFingerprintChanged,
+} from '@/services/mobileDeviceApi';
 import { syncDriversForMapAfterLogin } from '@/services/DriversMapService';
 import { getDriverStatus } from '@/app-api/users';
 import {
@@ -609,6 +613,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         
         console.log('✅ [AuthContext] Auth state restored');
 
+        if (user?.externalId) {
+          const pushSnap = await secureStorage
+            .getItemAsync('expoPushToken')
+            .catch(() => null);
+          void syncMobileDeviceIfFingerprintChanged(finalAccessToken, {
+            pushToken: pushSnap,
+          });
+        }
+
         if ((user?.role ?? '').toUpperCase() === 'DRIVER' && user?.id) {
           void (async () => {
             try {
@@ -788,6 +801,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await AsyncStorage.removeItem('@pending_chat_navigation');
       // Clear per-session chat state (opened chat rooms list)
       await AsyncStorage.removeItem('@chat_opened_rooms');
+
+      await clearMobileDeviceSyncFingerprint();
       
       console.log('💾 [AuthContext] Cleared all AsyncStorage data (settings, location, user profile, navigation)');
       
