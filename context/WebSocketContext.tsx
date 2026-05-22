@@ -525,6 +525,12 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           const { chatCacheService } = await import('@/services/ChatCacheService');
           await chatCacheService.updateChatRoom(chatRoomId, normalized);
         } catch {}
+
+        const mergedRoom = useChatStore.getState().chatRooms.find((r) => r.id === chatRoomId);
+        if (mergedRoom?.type === 'LOAD') {
+          const { eventBus, AppEvents } = await import('@/services/EventBus');
+          eventBus.emit(AppEvents.ArchivedLoadChatsNeedRefresh, { chatRoomId });
+        }
       } catch (e) {
         console.error('Failed to handle chatRoomUpdated:', e);
       }
@@ -579,6 +585,11 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         // Clear messages cache for this chat room
         await messagesCacheService.clearMessages(data.chatRoomId).catch((err) => {
           console.error('Failed to clear messages cache:', err);
+        });
+
+        const { eventBus, AppEvents } = await import('@/services/EventBus');
+        eventBus.emit(AppEvents.ArchivedLoadChatsNeedRefresh, {
+          chatRoomId: data.chatRoomId,
         });
       } catch (e) {
         console.error('Failed to handle chatRoomDeleted:', e);

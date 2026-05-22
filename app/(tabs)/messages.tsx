@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Platform, Keyboard, AppState, AppStateStatus, Modal } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Platform, Keyboard, AppState, AppStateStatus, Modal, Pressable } from 'react-native';
 import type { TextInput as RNTextInput } from 'react-native';
 import { colors, fonts, rem, fp, borderRadius } from '@/lib';
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -23,6 +23,7 @@ import { chatApi } from '@/app-api/chatApi';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { eventBus } from '@/services/EventBus';
 import { useChatStore } from '@/stores/chatStore';
+import LoadChatsArchiveSection from '@/components/LoadChatsArchiveSection';
 
 type FilterType = 'all' | 'muted' | 'unread' | 'favorite';
 
@@ -42,7 +43,9 @@ type MessagesTab = 'chats' | 'shipments' | 'offers';
 
 function isRoomInMessagesTab(room: ChatRoom, tab: MessagesTab): boolean {
   if (tab === 'chats') return room.type !== 'LOAD' && room.type !== 'OFFER';
-  if (tab === 'shipments') return room.type === 'LOAD';
+  if (tab === 'shipments') {
+    return room.type === 'LOAD' && room.isLoadArchived !== true;
+  }
   return room.type === 'OFFER';
 }
 
@@ -59,6 +62,7 @@ export default function MessagesScreen() {
   const { chatRooms, isLoading, error, loadChatRooms, updateChatRoom } = useChatRooms();
   const activeTab = useChatStore((s) => s.messagesTab);
   const setActiveTab = useChatStore((s) => s.setMessagesTab);
+  const mergeChatRooms = useChatStore((s) => s.mergeChatRooms);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
   const [isFilterDropdownOpen, setIsFilterDropdownOpen] = useState(false);
@@ -325,7 +329,8 @@ export default function MessagesScreen() {
   const filteredChatRooms = useMemo(() => {
     return chatRooms.filter(chatRoom => {
       // Tab filtering (same as Next.js ChatList):
-      // Chats: not LOAD, not OFFER | Shipments: LOAD | Offers: OFFER
+      // Chats: not LOAD, not OFFER | Shipments: active LOAD only (archive section is separate)
+      // | Offers: OFFER
       if (!isRoomInMessagesTab(chatRoom, activeTab)) return false;
 
       // Filter out blocked chats for drivers with expired_documents status
@@ -466,7 +471,7 @@ export default function MessagesScreen() {
         <View style={{ height: insets.top, backgroundColor: colors.primary.violet }} />
         <View style={styles.container}>
           {/* Header with time and profile */}
-          <View style={styles.header}>
+          <Pressable style={styles.header} onPress={Keyboard.dismiss}>
             <View style={styles.titleContainer}>
               <Text style={styles.screenTitle}>Conversations</Text>
               <View style={styles.statusContainer}>
@@ -482,21 +487,25 @@ export default function MessagesScreen() {
             {isExpiredDocumentsDriver ? (
               <TouchableOpacity
                 style={styles.contactsButton}
-                onPress={() => setIsContactsOpen(true)}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setIsContactsOpen(true);
+                }}
               >
                 <Text style={styles.contactsButtonText}>Contacts</Text>
               </TouchableOpacity>
             ) : (
               <TouchableOpacity
                 style={styles.contactsButton}
-                onPress={() => setIsAddNewMenuOpen(true)}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setIsAddNewMenuOpen(true);
+                }}
               >
                 <Text style={styles.contactsButtonText}>Add new</Text>
               </TouchableOpacity>
             )}
-          </View>
-
-          {/* Add New toolbar */}
+          </Pressable>
           {!isExpiredDocumentsDriver && (
             <Modal
               transparent
@@ -590,7 +599,10 @@ export default function MessagesScreen() {
                     styles.tabButton,
                     activeTab === 'chats' && styles.tabButtonActive,
                   ]}
-                  onPress={() => setActiveTab('chats')}
+                  onPress={() => {
+                      Keyboard.dismiss();
+                      setActiveTab('chats');
+                    }}
                   activeOpacity={0.8}
                 >
                   <Text
@@ -608,7 +620,10 @@ export default function MessagesScreen() {
                     styles.tabButton,
                     activeTab === 'shipments' && styles.tabButtonActive,
                   ]}
-                  onPress={() => setActiveTab('shipments')}
+                  onPress={() => {
+                      Keyboard.dismiss();
+                      setActiveTab('shipments');
+                    }}
                   activeOpacity={0.8}
                 >
                   <Text
@@ -626,7 +641,10 @@ export default function MessagesScreen() {
                     styles.tabButton,
                     activeTab === 'offers' && styles.tabButtonActive,
                   ]}
-                  onPress={() => setActiveTab('offers')}
+                  onPress={() => {
+                      Keyboard.dismiss();
+                      setActiveTab('offers');
+                    }}
                   activeOpacity={0.8}
                 >
                   <Text
@@ -646,7 +664,10 @@ export default function MessagesScreen() {
               {/* Mute All Button */}
               <TouchableOpacity
                 style={styles.muteAllButton}
-                onPress={handleSmartMuteToggle}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  void handleSmartMuteToggle();
+                }}
                 activeOpacity={0.7}
               >
                 <Text style={styles.muteAllButtonText}>
@@ -657,7 +678,10 @@ export default function MessagesScreen() {
               {/* Read All Button */}
               <TouchableOpacity
                 style={styles.readAllButton}
-                onPress={handleReadAll}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  void handleReadAll();
+                }}
                 activeOpacity={0.7}
               >
                 <Text style={styles.readAllButtonText}>
@@ -669,7 +693,10 @@ export default function MessagesScreen() {
               <View style={styles.filterContainer}>
                 <TouchableOpacity
                   style={styles.filterButton}
-                  onPress={() => setIsFilterDropdownOpen(!isFilterDropdownOpen)}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    setIsFilterDropdownOpen(!isFilterDropdownOpen);
+                  }}
                   activeOpacity={0.7}
                 >
                   <View style={styles.filterButtonContent}>
@@ -713,7 +740,10 @@ export default function MessagesScreen() {
                       selectedFilter === option.value && styles.dropdownItemSelected,
                       index === visibleFilterOptions.length - 1 && styles.dropdownItemLast,
                     ]}
-                    onPress={() => handleFilterSelect(option.value)}
+                    onPress={() => {
+                      Keyboard.dismiss();
+                      handleFilterSelect(option.value);
+                    }}
                     activeOpacity={0.7}
                   >
                     <View style={styles.dropdownItemContent}>
@@ -751,15 +781,16 @@ export default function MessagesScreen() {
               </View>
             )}
           </View>
-          
+
+          <View style={styles.listScrollAndArchive}>
           <ScrollView
             style={styles.content}
             contentContainerStyle={styles.contentContainer}
             showsVerticalScrollIndicator={false}
-            onScrollBeginDrag={() => {
-              // Close any open dropdowns when scrolling starts
-              // This is handled by the ChatListItem component itself
-            }}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            onScrollBeginDrag={() => Keyboard.dismiss()}
+            onMomentumScrollBegin={() => Keyboard.dismiss()}
           >
             {isLoading && chatRooms.length === 0 ? (
               <View style={styles.loadingContainer}>
@@ -771,7 +802,10 @@ export default function MessagesScreen() {
                 <Text style={styles.errorText}>{error}</Text>
                 <TouchableOpacity
                   style={styles.retryButton}
-                  onPress={() => { void loadChatRooms(true); }}
+                  onPress={() => {
+                    Keyboard.dismiss();
+                    void loadChatRooms(true);
+                  }}
                   activeOpacity={0.7}
                 >
                   <Text style={styles.retryButtonText}>Retry</Text>
@@ -780,11 +814,15 @@ export default function MessagesScreen() {
             ) : filteredChatRooms.length === 0 ? (
               <View style={styles.emptyContainer}>
                 <Text style={styles.emptyText}>
-                  {debouncedSearchQuery.trim() ? 'No chats found' : 'No chats yet'}
+                  {debouncedSearchQuery.trim()
+                    ? 'No chats found'
+                    : activeTab === 'shipments'
+                      ? 'No active shipments'
+                      : 'No chats yet'}
                 </Text>
-                {debouncedSearchQuery.trim() && (
+                {debouncedSearchQuery.trim() ? (
                   <Text style={styles.emptySubtext}>Try a different search term</Text>
-                )}
+                ) : null}
               </View>
             ) : (
                   <View style={styles.chatList}>
@@ -825,6 +863,25 @@ export default function MessagesScreen() {
                   </View>
                 )}
           </ScrollView>
+          {!isExpiredDocumentsDriver && activeTab === 'shipments' && (
+            <Pressable
+              style={styles.archiveStickyFooter}
+              onPress={Keyboard.dismiss}
+            >
+              <LoadChatsArchiveSection
+                tabActive
+                pinnedToBottom
+                selectedChatId={selectedChatId}
+                currentUserId={authState.user?.id}
+                isUserOnline={isUserOnline}
+                mergeChatRooms={mergeChatRooms}
+                onChatPress={handleChatPress}
+                openDropdownId={openDropdownId}
+                setOpenDropdownId={setOpenDropdownId}
+              />
+            </Pressable>
+          )}
+          </View>
         </View>
         
         {/* Bottom Navigation */}
@@ -892,6 +949,19 @@ const styles = StyleSheet.create({
   screenContent: {
     flex: 1,
     position: "relative"
+  },
+  listScrollAndArchive: {
+    flex: 1,
+    minHeight: 0,
+  },
+  archiveStickyFooter: {
+    flexShrink: 0,
+    paddingHorizontal: rem(15),
+    paddingTop: rem(6),
+    paddingBottom: rem(6),
+    backgroundColor: 'rgba(247, 248, 255, 1)',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(96, 102, 197, 0.12)',
   },
   chatList: {
     flex: 1,

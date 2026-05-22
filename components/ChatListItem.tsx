@@ -62,6 +62,8 @@ export interface ChatRoom {
   unreadCount?: number;
   isMuted?: boolean;
   isPinned?: boolean;
+  /** LOAD chat marked as load-archived (e.g. cron after deliveryAt + configured hours). */
+  isLoadArchived?: boolean;
   adminId?: string;
   loadId?: string;
   offerId?: number;

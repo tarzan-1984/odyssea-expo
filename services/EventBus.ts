@@ -33,4 +33,6 @@ export const AppEvents = {
   MessageDeleted: 'messageDeleted',
   MessagesMarkedAsRead: 'messagesMarkedAsRead',
   DriverStatusUpdated: 'DRIVER_STATUS_UPDATED',
+  /** Reload paginated archived LOAD chats when LOAD rooms change via WS/sync. */
+  ArchivedLoadChatsNeedRefresh: 'ARCHIVED_LOAD_CHATS_NEED_REFRESH',
 } as const;
