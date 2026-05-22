@@ -20,3 +20,10 @@ export function buildMobileDevicePayload(): {
 		osVersion: Device.osVersion ?? undefined,
 	};
 }
+
+/** Version + native build — used to detect App Store / Play updates without re-login. */
+export function getMobileDeviceAppFingerprint(): string {
+	const v = Application.nativeApplicationVersion ?? '';
+	const b = Application.nativeBuildVersion ?? '';
+	return `${v}|${b}`;
+}
