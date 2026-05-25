@@ -81,7 +81,7 @@ export async function playIncomingMessageSound(): Promise<void> {
 				loadPromise = (async () => {
 					if (__DEV__) console.log('[SoundManager] creating sound...');
 					const { sound } = await Audio.Sound.createAsync(
-						require('../assets/sounds/livechat.wav'),
+						require('../assets/sounds/livechat.mp3'),
 						{
 							shouldPlay: false,
 							isLooping: false,

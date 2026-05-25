@@ -205,8 +205,6 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 			await Notifications.setNotificationChannelAsync(ANDROID_NOTIFICATION_CHANNEL_ID, {
 				name: 'Odysseia Messages',
 				importance: Notifications.AndroidImportance.MAX,
-				// Use custom bundled sound; file must be declared in app.json plugin "sounds".
-				// Name without extension as required by Android channels.
 				sound: 'livechat',
 				vibrationPattern: [0, 250, 250, 250],
 				lightColor: '#FF231F7C',

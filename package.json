@@ -1,6 +1,6 @@
 {
   "name": "my-app",
-  "main": "expo-router/entry",
+  "main": "./index.js",
   "version": "1.0.0",
   "scripts": {
     "start": "expo start",
@@ -12,16 +12,17 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "postinstall": "patch-package",
-    "build:dev:android": "npx -y eas-cli@18.7.0 build --profile development --platform android",
-    "build:dev:android:local": "npx -y eas-cli@18.7.0 build --profile development --platform android --local",
-    "build:dev:ios": "npx -y eas-cli@18.7.0 build --profile development --platform ios",
-    "build:dev:ios:local": "npx -y eas-cli@18.7.0 build --profile development --platform ios --local",
-    "build:preview:android": "npx -y eas-cli@18.7.0 build --profile preview --platform android",
-    "build:preview:ios": "npx -y eas-cli@18.7.0 build --profile preview --platform ios",
-    "build:prod:android": "npx -y eas-cli@18.7.0 build --profile production --platform android",
-    "build:prod:android:local": "npx -y eas-cli@18.7.0 build --profile production --platform android --local --non-interactive",
-    "build:prod:ios": "npx -y eas-cli@18.7.0 build --profile production --platform ios",
-    "build:prod:ios:local": "npx -y eas-cli@18.7.0 build --profile production --platform ios --local"
+    "sync-notification-sounds": "bash ./scripts/sync-notification-sounds.sh",
+    "build:dev:android": "eas build --profile development --platform android",
+    "build:dev:android:local": "eas build --profile development --platform android --local",
+    "build:dev:ios": "eas build --profile development --platform ios",
+    "build:dev:ios:local": "eas build --profile development --platform ios --local",
+    "build:preview:android": "eas build --profile preview --platform android",
+    "build:preview:ios": "eas build --profile preview --platform ios",
+    "build:prod:android": "eas build --profile production --platform android",
+    "build:prod:android:local": "eas build --profile production --platform android --local --non-interactive",
+    "build:prod:ios": "eas build --profile production --platform ios",
+    "build:prod:ios:local": "eas build --profile production --platform ios --local"
   },
   "dependencies": {
     "@expo/metro-config": "^54.0.11",
@@ -50,7 +51,6 @@
     "expo-image": "~3.0.10",
     "expo-image-picker": "^17.0.8",
     "expo-intent-launcher": "^13.0.8",
-    "expo-linear-gradient": "^55.0.9",
     "expo-linking": "~8.0.8",
     "expo-local-authentication": "~17.0.7",
     "expo-location": "~19.0.7",
@@ -62,7 +62,7 @@
     "expo-status-bar": "~3.0.8",
     "expo-symbols": "~1.0.7",
     "expo-system-ui": "~6.0.8",
-    "expo-task-manager": "~14.0.8",
+    "expo-task-manager": "~14.0.9",
     "expo-web-browser": "~15.0.9",
     "patch-package": "^8.0.1",
     "postinstall-postinstall": "^2.1.0",
@@ -74,7 +74,6 @@
     "react-native-blob-util": "^0.24.6",
     "react-native-calendars": "^1.1314.0",
     "react-native-device-info": "^15.0.1",
-    "react-native-draggable-flatlist": "^4.0.3",
     "react-native-file-viewer": "^2.1.5",
     "react-native-gesture-handler": "~2.28.0",
     "react-native-keyboard-aware-scroll-view": "^0.9.5",
@@ -93,6 +92,9 @@
     "socket.io-client": "^4.8.1",
     "yup": "^1.7.0",
     "zustand": "^5.0.8"
+  },
+  "resolutions": {
+    "expo-task-manager": "~14.0.9"
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
