@@ -12,6 +12,7 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "postinstall": "patch-package",
+    "sync-notification-sounds": "bash ./scripts/sync-notification-sounds.sh",
     "build:dev:android": "eas build --profile development --platform android",
     "build:dev:android:local": "eas build --profile development --platform android --local",
     "build:dev:ios": "eas build --profile development --platform ios",
