@@ -554,25 +554,30 @@ export default function ChatRoomScreen() {
               {!chatRoom && isLoadingChatRoom ? (
                 <ActivityIndicator size="small" color={colors.neutral.white} />
               ) : error && !chatRoom ? (
-                <Text style={styles.screenTitle}>Error</Text>
+                <View style={styles.headerTitleWrap}>
+                  <Text style={styles.screenTitle}>Error</Text>
+                </View>
               ) : (
-                <TouchableOpacity
-                  activeOpacity={0.8}
-                  disabled={!(chatRoom && (chatRoom.type === 'GROUP' || chatRoom.type === 'LOAD'))}
-                  onPress={() => {
-                    if (chatRoom && (chatRoom.type === 'GROUP' || chatRoom.type === 'LOAD')) {
-                      setIsChatInfoModalOpen(true);
-                    }
-                  }}
-                >
-                  <Text style={styles.screenTitle}>
-                    {getChatDisplayName()}
-                  </Text>
-                </TouchableOpacity>
+                <View style={styles.headerTitleWrap}>
+                  <TouchableOpacity
+                    style={styles.headerTitlePressable}
+                    activeOpacity={0.8}
+                    disabled={!(chatRoom && (chatRoom.type === 'GROUP' || chatRoom.type === 'LOAD'))}
+                    onPress={() => {
+                      if (chatRoom && (chatRoom.type === 'GROUP' || chatRoom.type === 'LOAD')) {
+                        setIsChatInfoModalOpen(true);
+                      }
+                    }}
+                  >
+                    <Text style={styles.screenTitle}>
+                      {getChatDisplayName()}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
               )}
             </View>
-            
-                  <ChatHeaderDropdown
+
+            <ChatHeaderDropdown
                     chatRoom={chatRoom || null}
                     chatRoomType={chatRoom?.type}
                     onFilesPress={() => {
@@ -887,6 +892,8 @@ const styles = StyleSheet.create({
     color: colors.neutral.white,
     fontFamily: fonts["700"],
     fontSize: fp(18),
+    lineHeight: fp(22),
+    flexShrink: 1,
     textTransform: 'capitalize',
   },
   screenWrap: {
@@ -909,11 +916,21 @@ const styles = StyleSheet.create({
     width: '100%',
     position: 'relative',
     zIndex: 20,
+    gap: rem(8),
   },
   headerLeft: {
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
+    minWidth: 0,
+  },
+  headerTitleWrap: {
+    flex: 1,
+    minWidth: 0,
+    justifyContent: 'center',
+  },
+  headerTitlePressable: {
+    alignSelf: 'stretch',
   },
   headerAvatarContainer: {
     width: rem(48),
