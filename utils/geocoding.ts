@@ -4,7 +4,33 @@
  */
 
 import * as Location from 'expo-location';
+import {
+  englishCountryLabel,
+  isLatinGeocodeText,
+  sanitizeLatinGeocodeField,
+} from '@/utils/geocodeLocale';
 import { toBackendStateDisplayName } from '@/utils/stateDisplayName';
+
+const NOMINATIM_ACCEPT_LANGUAGE = 'en-US,en;q=0.9';
+
+function sanitizeGeocodedAddress(geo: GeocodedAddress): GeocodedAddress {
+  const regionRaw = geo.region ? String(geo.region).trim() : '';
+  const stateSanitized =
+    sanitizeLatinGeocodeField(
+      toBackendStateDisplayName(regionRaw, geo.isoCountryCode) || regionRaw,
+    ) || '';
+  const citySanitized = sanitizeLatinGeocodeField(resolveCityForApi(geo));
+  const countryEn = englishCountryLabel(geo.isoCountryCode, geo.country);
+  return {
+    ...geo,
+    city: citySanitized || sanitizeLatinGeocodeField(geo.city),
+    region: stateSanitized,
+    state: stateSanitized,
+    country: countryEn,
+    district: sanitizeLatinGeocodeField(geo.district),
+    subregion: sanitizeLatinGeocodeField(geo.subregion),
+  };
+}
 
 export interface GeocodedAddress {
   city?: string;
@@ -62,8 +88,8 @@ export async function reverseGeocodeAsync(params: {
   try {
     const { latitude, longitude } = params;
     
-    // OpenStreetMap Nominatim API - free, no API key required
-    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&addressdetails=1`;
+    // Nominatim localizes by HTTP Accept-Language; force English for UI labels (independent of device locale)
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&addressdetails=1&accept-language=${encodeURIComponent(NOMINATIM_ACCEPT_LANGUAGE)}`;
     
     // IMPORTANT: Use XMLHttpRequest instead of fetch - it works in headless JS/background tasks
     // Same approach as in locationApi.ts for sending location updates
@@ -74,6 +100,7 @@ export async function reverseGeocodeAsync(params: {
       xhr.timeout = timeout;
       xhr.open('GET', url, true);
       xhr.setRequestHeader('User-Agent', 'OdysseaApp/1.0'); // Required by Nominatim
+      xhr.setRequestHeader('Accept-Language', NOMINATIM_ACCEPT_LANGUAGE);
       
       let resolved = false;
       
@@ -86,6 +113,9 @@ export async function reverseGeocodeAsync(params: {
             const data = JSON.parse(xhr.responseText);
             
             if (!data || !data.address) {
+              console.warn(
+                '[geocoding][Nominatim] HTTP OK but no address in response — treating as no result',
+              );
               resolve([]);
               return;
             }
@@ -112,13 +142,18 @@ export async function reverseGeocodeAsync(params: {
               isoCountryCode: address.country_code?.toUpperCase() || '',
             };
 
-            resolve([result]);
+            resolve([sanitizeGeocodedAddress(result)]);
           } else {
-            console.warn(`[geocoding] Geocoding failed: ${xhr.status}`);
+            console.warn(
+              `[geocoding][Nominatim] Request failed — HTTP ${xhr.status} (no address data; Expo fallback may run)`,
+            );
             resolve([]);
           }
         } catch (parseError) {
-          console.warn('[geocoding] Failed to parse geocoding response:', parseError);
+          console.warn(
+            '[geocoding][Nominatim] Failed to parse response:',
+            parseError,
+          );
           resolve([]);
         }
       };
@@ -126,14 +161,18 @@ export async function reverseGeocodeAsync(params: {
       xhr.onerror = () => {
         if (resolved) return;
         resolved = true;
-        console.warn('[geocoding] Geocoding request failed: Network error');
+        console.warn(
+          '[geocoding][Nominatim] Network error (no address data; Expo fallback may run)',
+        );
         resolve([]);
       };
       
       xhr.ontimeout = () => {
         if (resolved) return;
         resolved = true;
-        console.warn('[geocoding] Geocoding request timed out');
+        console.warn(
+          '[geocoding][Nominatim] Request timed out after 10s (Expo fallback may run)',
+        );
         resolve([]);
       };
       
@@ -142,26 +181,246 @@ export async function reverseGeocodeAsync(params: {
       } catch (sendError) {
         if (resolved) return;
         resolved = true;
-        console.warn('[geocoding] Failed to send geocoding request:', sendError);
+        console.warn(
+          '[geocoding][Nominatim] Failed to send request:',
+          sendError,
+        );
         resolve([]);
       }
     });
   } catch (error) {
-    console.warn('[geocoding] Reverse geocoding failed:', error);
+    console.warn('[geocoding][Nominatim] Reverse geocode exception:', error);
     return [];
   }
 }
 
+export type ResolvedAddressFields = {
+  postalCode: string;
+  city: string;
+  state: string;
+  nominatimOk: boolean;
+  expoFilledFields: string[];
+};
+
+const NOMINATIM_REVERSE_TIMEOUT_MS = 10_000;
+const EXPO_REVERSE_TIMEOUT_MS = 8_000;
+
+function geocodeLogTag(logTag?: string): string {
+  return logTag?.trim() || '[geocoding]';
+}
+
+function applyNominatimGeoToFields(geo: GeocodedAddress): ResolvedAddressFields {
+  const safe = sanitizeGeocodedAddress(geo);
+  const regionRaw = safe.region ? String(safe.region).trim() : '';
+  return {
+    postalCode: (safe.postalCode || '').trim(),
+    city: sanitizeLatinGeocodeField(resolveCityForApi(safe)),
+    state: sanitizeLatinGeocodeField(
+      toBackendStateDisplayName(regionRaw, safe.isoCountryCode) || regionRaw,
+    ),
+    nominatimOk: true,
+    expoFilledFields: [],
+  };
+}
+
+function hasAnyAddressField(fields: Pick<ResolvedAddressFields, 'postalCode' | 'city' | 'state'>): boolean {
+  return !!(
+    (fields.postalCode && fields.postalCode.trim()) ||
+    fields.city.trim() ||
+    fields.state.trim()
+  );
+}
+
 /**
- * Nominatim first (English labels via Accept-Language), then device geocoder only for missing
- * postal code. Native city/region strings are not merged — they follow the device locale.
+ * Fill missing postal code via Expo Location.reverseGeocodeAsync (device locale).
+ * City/state are never taken from the device — only Nominatim (English) may set them.
+ */
+export async function fillAddressGapsFromExpo(params: {
+  latitude: number;
+  longitude: number;
+  postalCode: string;
+  city: string;
+  state: string;
+  logTag?: string;
+  /** @deprecated Ignored — Expo never fills city/state (avoids Cyrillic from phone locale). */
+  allowExpoCityState?: boolean;
+}): Promise<ResolvedAddressFields> {
+  const tag = geocodeLogTag(params.logTag);
+  let { postalCode, city, state } = params;
+  const expoFilledFields: string[] = [];
+
+  const needsPostal = !(postalCode && postalCode.trim());
+  const needsCity = !city.trim();
+  const needsState = !state.trim();
+
+  if (!needsPostal && !needsCity && !needsState) {
+    console.log(`${tag}[Expo] Skipped — Nominatim already provided postal/city/state`);
+    return { postalCode, city, state, nominatimOk: false, expoFilledFields };
+  }
+
+  if (!needsPostal) {
+    console.log(`${tag}[Expo] Skipped — only postalCode may be filled from device geocoder`);
+    return { postalCode, city, state, nominatimOk: false, expoFilledFields };
+  }
+
+  console.log(`${tag}[Expo] Requesting device reverse geocode for postalCode only`);
+
+  try {
+    const expoPromise = Location.reverseGeocodeAsync({
+      latitude: params.latitude,
+      longitude: params.longitude,
+    });
+    const expoTimeout = new Promise<never>((_, reject) => {
+      setTimeout(
+        () => reject(new Error('Expo reverseGeocode timeout')),
+        EXPO_REVERSE_TIMEOUT_MS,
+      );
+    });
+    const expoRows = (await Promise.race([expoPromise, expoTimeout]).catch(
+      () => [],
+    )) as Location.LocationGeocodedAddress[];
+    const e = expoRows[0];
+
+    if (!e) {
+      console.warn(
+        `${tag}[Expo] No result (empty response or timeout) — gaps may remain unfilled`,
+      );
+      return { postalCode, city, state, nominatimOk: false, expoFilledFields };
+    }
+
+    const pc = (e.postalCode || '').trim();
+    if (pc) {
+      postalCode = pc;
+      expoFilledFields.push('postalCode');
+    }
+    const expoCity = (
+      e.city ||
+      e.subregion ||
+      e.district ||
+      e.name ||
+      ''
+    ).trim();
+    const expoState = (e.region ? String(e.region).trim() : '').trim();
+    if ((expoCity || expoState) && (!isLatinGeocodeText(expoCity) || !isLatinGeocodeText(expoState))) {
+      console.warn(
+        `${tag}[Expo] Ignoring non-Latin city/state from device geocoder (use Nominatim English labels)`,
+      );
+    }
+
+    if (expoFilledFields.length > 0) {
+      console.log(
+        `${tag}[Expo] OK — filled missing field(s): ${expoFilledFields.join(', ')} (zip="${postalCode || ''}" city="${city || ''}" state="${state || ''}")`,
+      );
+    } else {
+      console.warn(
+        `${tag}[Expo] Response received but could not fill remaining gap(s): postal=${needsPostal && !postalCode} city=${needsCity && !city} state=${needsState && !state}`,
+      );
+    }
+  } catch (expoErr) {
+    console.warn(
+      `${tag}[Expo] reverseGeocodeAsync failed:`,
+      expoErr instanceof Error ? expoErr.message : String(expoErr),
+    );
+  }
+
+  return { postalCode, city, state, nominatimOk: false, expoFilledFields };
+}
+
+/**
+ * Nominatim reverse geocode, then Expo for any missing postal/city/state.
+ * Logs clearly when Nominatim fails, when Expo rescues, and when both fail.
+ */
+export async function reverseGeocodeNominatimThenExpo(params: {
+  latitude: number;
+  longitude: number;
+  logTag?: string;
+  /** @deprecated Ignored — Expo never fills city/state. */
+  allowExpoCityState?: boolean;
+}): Promise<ResolvedAddressFields> {
+  const tag = geocodeLogTag(params.logTag);
+
+  const nominatimPromise = reverseGeocodeAsync({
+    latitude: params.latitude,
+    longitude: params.longitude,
+  });
+  const nominatimTimeout = new Promise<GeocodedAddress[]>((_, reject) => {
+    setTimeout(
+      () => reject(new Error('Nominatim reverse geocode timeout')),
+      NOMINATIM_REVERSE_TIMEOUT_MS,
+    );
+  });
+
+  let fields: ResolvedAddressFields = {
+    postalCode: '',
+    city: '',
+    state: '',
+    nominatimOk: false,
+    expoFilledFields: [],
+  };
+
+  try {
+    const nominatimRows = await Promise.race([nominatimPromise, nominatimTimeout]);
+    if (nominatimRows.length > 0) {
+      fields = { ...applyNominatimGeoToFields(nominatimRows[0]!), nominatimOk: true };
+      console.log(
+        `${tag}[Nominatim] OK — zip="${fields.postalCode || ''}" city="${fields.city || ''}" state="${fields.state || ''}"`,
+      );
+    } else {
+      console.warn(
+        `${tag}[Nominatim] No usable address (empty or error — see [Nominatim] warnings above); trying Expo`,
+      );
+    }
+  } catch {
+    console.warn(
+      `${tag}[Nominatim] Timed out after ${NOMINATIM_REVERSE_TIMEOUT_MS / 1000}s; trying Expo`,
+    );
+  }
+
+  const afterExpo = await fillAddressGapsFromExpo({
+    latitude: params.latitude,
+    longitude: params.longitude,
+    postalCode: fields.postalCode,
+    city: fields.city,
+    state: fields.state,
+    logTag: params.logTag,
+  });
+
+  const merged: ResolvedAddressFields = {
+    postalCode: afterExpo.postalCode,
+    city: sanitizeLatinGeocodeField(afterExpo.city),
+    state: sanitizeLatinGeocodeField(afterExpo.state),
+    nominatimOk: fields.nominatimOk,
+    expoFilledFields: afterExpo.expoFilledFields,
+  };
+
+  if (!hasAnyAddressField(merged)) {
+    console.error(
+      `${tag}[Geocode] FAILED — neither Nominatim nor Expo returned postal/city/state; coordinates-only update may be sent`,
+    );
+  } else if (!fields.nominatimOk && afterExpo.expoFilledFields.length > 0) {
+    console.log(
+      `${tag}[Geocode] Resolved via Expo after Nominatim had no usable address`,
+    );
+  } else if (fields.nominatimOk && afterExpo.expoFilledFields.length > 0) {
+    console.log(
+      `${tag}[Geocode] Nominatim partial — Expo completed: ${afterExpo.expoFilledFields.join(', ')}`,
+    );
+  }
+
+  return merged;
+}
+
+/**
+ * Nominatim first (English via Accept-Language), then device geocoder for postal code only.
  */
 export async function reverseGeocodeWithDeviceFallback(params: {
   latitude: number;
   longitude: number;
 }): Promise<GeocodedAddress[]> {
   const nominatimRows = await reverseGeocodeAsync(params);
-  const base: GeocodedAddress = nominatimRows[0] || {
+  const base: GeocodedAddress = nominatimRows[0]
+    ? sanitizeGeocodedAddress(nominatimRows[0])
+    : {
     postalCode: '',
     city: '',
     region: '',
@@ -171,42 +430,44 @@ export async function reverseGeocodeWithDeviceFallback(params: {
     isoCountryCode: '',
   };
 
-  const needPostal = !(base.postalCode && String(base.postalCode).trim());
-  const needCity = !(base.city && String(base.city).trim());
-
-  if (!needPostal && !needCity) {
-    return [base];
+  if (nominatimRows.length > 0) {
+    console.log(
+      `[geocoding][Share][Nominatim] OK — zip="${(base.postalCode || '').trim()}" city="${resolveCityForApi(base)}"`,
+    );
   }
 
-  try {
-    const nativeList = await Location.reverseGeocodeAsync({
-      latitude: params.latitude,
-      longitude: params.longitude,
-    });
-    const n = nativeList[0];
-    if (n) {
-      const merged: GeocodedAddress = { ...base };
-      if (needPostal && n.postalCode) {
-        merged.postalCode = n.postalCode;
-      }
-      // Do not merge native city/region strings: iOS/Android reverse geocode follows the device
-      // locale (e.g. Arabic city names). English labels come from Nominatim only.
-      if ((!merged.region || !String(merged.region).trim()) && n.region) {
-        merged.region = n.region;
-      }
-      if ((!merged.country || !String(merged.country).trim()) && n.country) {
-        merged.country = n.country;
-      }
-      if ((!merged.isoCountryCode || !String(merged.isoCountryCode).trim()) && n.isoCountryCode) {
-        merged.isoCountryCode = n.isoCountryCode;
-      }
-      return [merged];
-    }
-  } catch (e) {
-    console.warn('[geocoding] Device reverseGeocodeAsync failed:', e);
+  const filled = await fillAddressGapsFromExpo({
+    latitude: params.latitude,
+    longitude: params.longitude,
+    postalCode: (base.postalCode || '').trim(),
+    city: resolveCityForApi(base),
+    state:
+      toBackendStateDisplayName(base.region, base.isoCountryCode) ||
+      (base.region ? String(base.region).trim() : ''),
+    logTag: '[geocoding][Share]',
+  });
+
+  const merged: GeocodedAddress = sanitizeGeocodedAddress({
+    ...base,
+    postalCode: filled.postalCode || base.postalCode,
+    city: base.city,
+    region: base.region,
+  });
+
+  const hasUseful =
+    !!(merged.postalCode && String(merged.postalCode).trim()) ||
+    !!(merged.city && String(merged.city).trim());
+  if (!hasUseful) {
+    console.error(
+      '[geocoding][Share][Geocode] FAILED — neither Nominatim nor Expo returned postal/city',
+    );
+  } else if (nominatimRows.length === 0 && filled.expoFilledFields.length > 0) {
+    console.log(
+      '[geocoding][Share][Geocode] Resolved via Expo after Nominatim had no usable address',
+    );
   }
 
-  return [base];
+  return [merged];
 }
 
 export interface GeocodeResult {
@@ -239,6 +500,7 @@ export async function geocodeWithPostalAsync(query: string, countryCode: 'us' | 
       addressdetails: '1',
     });
     params.set('countrycodes', countryCode);
+    params.set('accept-language', NOMINATIM_ACCEPT_LANGUAGE);
 
     const url = `https://nominatim.openstreetmap.org/search?${params.toString()}`;
 
@@ -247,6 +509,7 @@ export async function geocodeWithPostalAsync(query: string, countryCode: 'us' | 
       xhr.timeout = 10000;
       xhr.open('GET', url, true);
       xhr.setRequestHeader('User-Agent', 'OdysseaApp/1.0');
+      xhr.setRequestHeader('Accept-Language', NOMINATIM_ACCEPT_LANGUAGE);
 
       let resolved = false;
       xhr.onload = () => {
@@ -279,22 +542,6 @@ export async function geocodeWithPostalAsync(query: string, countryCode: 'us' | 
       };
       xhr.send();
     });
-
-    // Fallback: use native device geocoder (foreground only).
-    if (!result) {
-      try {
-        const device = await Location.geocodeAsync(trimmed);
-        const first = device?.[0];
-        if (first && Number.isFinite(first.latitude) && Number.isFinite(first.longitude)) {
-          return {
-            latitude: first.latitude,
-            longitude: first.longitude,
-          };
-        }
-      } catch {
-        // ignore device geocoder failures
-      }
-    }
 
     // If search didn't return postcode, reverse geocode to get it
     if (result && !result.postalCode) {
@@ -331,3 +578,4 @@ export async function geocodeZipToAddress(
     toBackendStateDisplayName(g.region, g.isoCountryCode) || '';
   return { city, state };
 }
+

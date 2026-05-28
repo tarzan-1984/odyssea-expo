@@ -29,6 +29,7 @@ import {
   proactiveRefreshFromSecureStorage,
   persistAccessTokenToAllStorages,
 } from '@/utils/accessTokenRefresh';
+import { ensureBackgroundLocationTrackingForAutoupdate } from '@/utils/backgroundLocationTracking';
 
 // User interface
 export interface User {
@@ -311,6 +312,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               const result = await getDriverStatus(user.id);
               await persistDriverProfileLocally(result);
               emitDriverProfileSyncEvents(result);
+              await ensureBackgroundLocationTrackingForAutoupdate(result.isAutoupdate);
               await syncAppLocationSettingsFromBackend(accessToken);
             } catch (e) {
               fileLogger.error('AuthContext', 'DRIVER_PROFILE_REFRESH_AFTER_LOGIN', {
@@ -628,6 +630,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               const result = await getDriverStatus(user.id);
               await persistDriverProfileLocally(result);
               emitDriverProfileSyncEvents(result);
+              await ensureBackgroundLocationTrackingForAutoupdate(result.isAutoupdate);
               await syncAppLocationSettingsFromBackend(finalAccessToken);
             } catch (e) {
               fileLogger.error('AuthContext', 'DRIVER_PROFILE_REFRESH_AFTER_RESTORE', {
@@ -942,23 +945,41 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       // When app becomes active again after being in background
       if (nextAppState === 'active' && wasInBackground) {
         wasInBackground = false;
-        console.log('📱 [AuthContext] App became active after being in background, refreshing driver profile...');
-        
+        console.log(
+          '═══════════════════════════════════════════════════════════',
+        );
+        console.log(
+          '📱 [AppActive] App became ACTIVE (returned from background/inactive)',
+        );
+        console.log(
+          '📱 [AppActive] Fetching driver profile from server (GET /driver-status)...',
+        );
+
         try {
           const userId = authState.user?.id;
           if (!userId) {
-            console.warn('⚠️ [AuthContext] No user ID available for driver status update');
+            console.warn('⚠️ [AppActive] No user ID — skip foreground location heal');
             return;
           }
 
           const result = await getDriverStatus(userId);
+          console.log(
+            `📱 [AppActive] Server profile: isAutoupdate=${String(result.isAutoupdate)} driverStatus=${result.driverStatus ?? '(null)'}`,
+          );
           await persistDriverProfileLocally(result);
           emitDriverProfileSyncEvents(result);
+          console.log(
+            '📱 [AppActive] Ensuring background GPS task matches isAutoupdate (may start task + immediate PUT)...',
+          );
+          await ensureBackgroundLocationTrackingForAutoupdate(result.isAutoupdate);
           const token = await AsyncStorage.getItem('@user_access_token');
           if (token) {
             await syncAppLocationSettingsFromBackend(token);
           }
-          console.log(`✅ [AuthContext] Driver profile synced from backend (foreground)`);
+          console.log('✅ [AppActive] Foreground driver profile sync completed');
+          console.log(
+            '═══════════════════════════════════════════════════════════',
+          );
         } catch (error) {
           console.error('❌ [AuthContext] Failed to update driver status:', error);
           fileLogger.error('AuthContext', 'FAILED_TO_UPDATE_DRIVER_STATUS', {
@@ -975,6 +996,25 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       subscription.remove();
     };
   }, [authState.isAuthenticated, authState.user?.id, authState.user?.role]);
+
+  // Heal background location task from server isAutoupdate (any screen, after profile sync).
+  useEffect(() => {
+    if (!authState.isAuthenticated || authState.user?.role?.trim().toUpperCase() !== 'DRIVER') {
+      return;
+    }
+    const unsub = eventBus.on(
+      'DRIVER_PROFILE_SYNCED',
+      (payload: DriverProfileSyncPayload) => {
+        console.log(
+          `📱 [AppActive] DRIVER_PROFILE_SYNCED — isAutoupdate=${String(payload.isAutoupdate)}, ensuring background task...`,
+        );
+        void ensureBackgroundLocationTrackingForAutoupdate(payload.isAutoupdate);
+      },
+    );
+    return () => {
+      unsub();
+    };
+  }, [authState.isAuthenticated, authState.user?.role]);
 
   const value: AuthContextValue = {
     authState,

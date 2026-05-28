@@ -72,19 +72,6 @@ export async function getLocationDetails(
     console.warn('[locationApi] Nominatim location details failed:', geoError);
   }
 
-  try {
-    const reverseGeocode = await Location.reverseGeocodeAsync({ latitude, longitude });
-    if (reverseGeocode?.[0]) {
-      const geo = reverseGeocode[0];
-      city = geo.city || geo.subregion || geo.district || '';
-      state = geo.region ? geo.region.split(' ')[0] : '';
-      country =
-        geo.country === 'United States' ? 'USA' : geo.country || geo.isoCountryCode || 'USA';
-    }
-  } catch (geoError) {
-    console.warn('[locationApi] Native reverse geocode fallback failed:', geoError);
-  }
-
   return { city, state, country };
 }
 
@@ -370,16 +357,31 @@ export async function sendLocationUpdateToBackendUser(params: {
 
     const url = `${API_BASE_URL}/v1/users/${userId}/location`;
 
+    /** Non-empty trimmed string → set on body; empty/omit → backend keeps existing columns. */
+    const putTrimmed = (
+      obj: Record<string, unknown>,
+      key: string,
+      value: string | undefined,
+    ): void => {
+      if (value === undefined || value === null) {
+        return;
+      }
+      const t = String(value).trim();
+      if (t === '') {
+        return;
+      }
+      obj[key] = t;
+    };
+
     const body: Record<string, unknown> = {
-      // Empty string when no TMS region code (e.g. Ukraine); backend skips DB update for location
-      location: params.location ?? '',
-      city: params.city,
-      state: params.state,
-      zip: params.zip,
       latitude: params.latitude,
       longitude: params.longitude,
       lastLocationUpdateAt: params.lastUpdateIso ?? getLocalIsoString(),
     };
+    putTrimmed(body, 'location', params.location);
+    putTrimmed(body, 'city', params.city);
+    putTrimmed(body, 'state', params.state);
+    putTrimmed(body, 'zip', params.zip);
     if (params.country !== undefined) body.country = params.country;
     if (params.driverStatus !== undefined) body.driverStatus = params.driverStatus;
     if (params.statusDate !== undefined) body.statusDate = params.statusDate;
@@ -392,7 +394,16 @@ export async function sendLocationUpdateToBackendUser(params: {
     }
 
     try {
-      console.log('[locationApi] Sending location update to backend...');
+      const isImmediateBackground =
+        params.isBackgroundTaskLocationUpdate === true &&
+        params.isManualDriverLocationAction !== true;
+      if (isImmediateBackground) {
+        console.log(
+          `[locationApi] PUT ${url} (background/automatic${params.isAutoupdate ? ', autoupdate on' : ''})`,
+        );
+      } else {
+        console.log('[locationApi] Sending location update to backend...');
+      }
 
       const response = await fetch(url, {
         method: 'PUT',

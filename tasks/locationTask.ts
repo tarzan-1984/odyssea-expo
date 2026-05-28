@@ -17,8 +17,9 @@ import {
   haversineDistanceMeters,
 } from '@/constants/locationSendThrottle';
 import { toTmsLocationCode } from '@/utils/tmsLocationCode';
-import { resolveCityForApi } from '@/utils/geocoding';
+import { reverseGeocodeNominatimThenExpo } from '@/utils/geocoding';
 import { toBackendStateDisplayName } from '@/utils/stateDisplayName';
+import { isAllowedNorthAmericaLatLng } from '@/utils/geoFence';
 
 const LOCATION_TASK_NAME = 'background-location-task';
 // Hint for OS location updates; aligns with LOCATION_API_MIN_INTERVAL_MS in locationSendThrottle.
@@ -161,9 +162,14 @@ try {
         // Test environment gate: when backend is in "test" mode, only one allowed driver (by externalId)
         // may send automatic background updates to the API.
         const appLocEnv = await getResolvedAppLocationSettings();
+        const currentExternalId =
+          (await AsyncStorage.getItem('@user_external_id').catch(() => null))?.trim() || '';
+        const isTestDriver =
+          !!currentExternalId &&
+          !!appLocEnv.locationTestDriverExternalId &&
+          currentExternalId === String(appLocEnv.locationTestDriverExternalId).trim();
         if (appLocEnv.locationEnvironmentMode === 'test') {
           const allowed = (appLocEnv.locationTestDriverExternalId || '').trim();
-          const currentExternalId = (await AsyncStorage.getItem('@user_external_id').catch(() => null))?.trim() || '';
           if (!allowed || !currentExternalId || currentExternalId !== allowed) {
             console.log(
               `⏸️ [LocationTask] Test mode gate: skipping auto-send (current externalId="${currentExternalId || '(missing)'}", allowed="${allowed || '(missing)'}")`
@@ -172,15 +178,27 @@ try {
           }
         }
 
+        // Geo-fence: prevent obviously wrong fixes for non-test drivers.
+        if (!isTestDriver) {
+          const ok = isAllowedNorthAmericaLatLng({ latitude, longitude });
+          if (!ok) {
+            console.warn(
+              `⛔️ [LocationTask] Geo-fence blocked location send (lat=${latitude}, lng=${longitude}, externalId="${currentExternalId || ''}")`
+            );
+            return;
+          }
+        }
+
         const sendGate = await shouldSendAutomaticLocationUpdate(latitude, longitude);
         if (!sendGate.ok) {
           console.log(`⏸️ [LocationTask] Skipping API send: ${sendGate.reason}`);
+          // activity ping removed; rely on location updates only
           return;
         }
 
         // Reverse geocode only for loaded_enroute & available, when moved ≥ threshold from
         // last anchor. Nominatim first (Accept-Language: en — city/state for DB/TMS in English).
-        // Expo Location only to fill missing postalCode (native locality is locale-dependent).
+        // Expo may fill postal code only (never city/state — device locale). No AsyncStorage merge.
         let postalCode = '';
         let city = '';
         let state = '';
@@ -204,7 +222,7 @@ try {
           if (!anchor) {
             shouldRunReverseGeocode = true;
             console.log(
-              `[LocationTask] Geocode: no anchor yet — will run (Nominatim en → Expo ZIP if needed)`
+              `[LocationTask] Geocode: no anchor yet — will run (Nominatim → Expo for gaps)`
             );
           } else {
             const movedM = haversineDistanceMeters(
@@ -220,141 +238,41 @@ try {
               );
             } else {
               console.log(
-                `[LocationTask] Geocode: moved ${Math.round(movedM)}m < ${geocodeThresholdM}m — using cache`
+                `[LocationTask] Geocode: moved ${Math.round(movedM)}m < ${geocodeThresholdM}m — skipping reverse geocode (coords-only update)`
               );
             }
           }
         }
 
-        const loadZipCityStateFromCache = async () => {
-          const z = await AsyncStorage.getItem('@user_zip');
-          if (z) postalCode = z;
-          try {
-            const locJson = await AsyncStorage.getItem(USER_LOCATION_KEY);
-            if (locJson) {
-              const loc = JSON.parse(locJson) as {
-                zipCode?: string;
-                city?: string;
-                state?: string;
-              };
-              if (loc.zipCode && !postalCode) postalCode = loc.zipCode;
-              if (loc.city) city = loc.city;
-              if (loc.state) state = loc.state;
-            }
-          } catch {
-            // ignore
-          }
-        };
-
-        const applyNominatimFirst = (geo: {
-          postalCode?: string;
-          city?: string;
-          subregion?: string;
-          district?: string;
-          region?: string;
-          isoCountryCode?: string;
-        }) => {
-          postalCode = geo.postalCode || '';
-          city = resolveCityForApi(geo);
-          state =
-            toBackendStateDisplayName(geo.region, geo.isoCountryCode) ||
-            (geo.region ? String(geo.region).trim() : '');
-        };
-
         if (!shouldRunReverseGeocode) {
-          await loadZipCityStateFromCache();
+          console.log(
+            `[LocationTask] Reverse geocode skipped (distance/status) — omit address fields; coords-only PATCH so DB city/state/zip/location unchanged`,
+          );
         } else {
           try {
-            let filled = false;
-
-            const reverseGeocodePromise = (async () => {
-              try {
-                const reverseGeocodeModule = require('@/utils/geocoding');
-                const reverseGeocodeAsync = reverseGeocodeModule.reverseGeocodeAsync;
-                if (!reverseGeocodeAsync) {
-                  return [];
-                }
-                return await reverseGeocodeAsync({ latitude, longitude });
-              } catch {
-                return [];
-              }
-            })();
-
-            const nominatimTimeout = new Promise<never>((_, reject) => {
-              setTimeout(
-                () => reject(new Error('Nominatim geocoding timeout')),
-                10000
-              );
+            const resolved = await reverseGeocodeNominatimThenExpo({
+              latitude,
+              longitude,
+              logTag: '[LocationTask]',
             });
+            postalCode = resolved.postalCode;
+            city = resolved.city;
+            state = resolved.state;
 
-            const nominatimRows = await Promise.race([
-              reverseGeocodePromise,
-              nominatimTimeout,
-            ]).catch(() => [] as Awaited<typeof reverseGeocodePromise>);
-
-            if (nominatimRows && nominatimRows.length > 0) {
-              applyNominatimFirst(nominatimRows[0]!);
-              filled = true;
-              console.log(`[LocationTask] Reverse geocode: Nominatim OK (English labels)`);
-            } else {
-              console.log(
-                `[LocationTask] Reverse geocode: Nominatim empty or timed out — may use Expo for ZIP only`
-              );
-            }
-
-            if (!(postalCode && postalCode.trim())) {
-              try {
-                const expoPromise = Location.reverseGeocodeAsync({
-                  latitude,
-                  longitude,
-                });
-                const expoTimeout = new Promise<never>((_, reject) => {
-                  setTimeout(
-                    () => reject(new Error('Expo reverseGeocode timeout')),
-                    8000
-                  );
-                });
-                const expoRows = (await Promise.race([
-                  expoPromise,
-                  expoTimeout,
-                ]).catch(() => [])) as Location.LocationGeocodedAddress[];
-
-                const pc = (expoRows[0]?.postalCode || '').trim();
-                if (pc) {
-                  postalCode = pc;
-                  filled = true;
-                  console.log(
-                    `[LocationTask] Reverse geocode: Expo filled postalCode only (locale-agnostic)`
-                  );
-                }
-              } catch (expoErr) {
-                console.warn(
-                  `[LocationTask] Expo reverseGeocodeAsync (postal only) failed:`,
-                  expoErr
-                );
-              }
-            }
-
-            if (filled) {
-              if (!city.trim() || !state.trim()) {
-                const zipKeep = postalCode;
-                await loadZipCityStateFromCache();
-                if (zipKeep.trim()) postalCode = zipKeep;
-              }
+            const hasAnyResolvedAddressPart = !!(
+              (postalCode && postalCode.trim()) ||
+              city.trim() ||
+              state.trim()
+            );
+            if (hasAnyResolvedAddressPart) {
               await saveGeocodeAnchor(latitude, longitude);
               await saveLastSuccessfulReverseGeocodeTimestamp();
-            } else {
-              await loadZipCityStateFromCache();
-              console.log(
-                `[LocationTask] Reverse geocode: no fresh data — using cache (anchor unchanged)`
-              );
             }
           } catch (geoError) {
             fileLogger.error('LocationTask', 'GEOCODING_ERROR', {
               error:
                 geoError instanceof Error ? geoError.message : String(geoError),
             });
-            await loadZipCityStateFromCache();
           }
         }
 
@@ -491,9 +409,11 @@ try {
 
               // Single request: our backend persists + syncs to TMS for drivers. Do not send driverStatus/statusDate from background (keep DB fields).
               if (externalId) {
-                  const finalPostalCode = postalCode || '';
-                  if (!postalCode) {
-                    console.warn(`⚠️ [LocationTask] No postal code available, will send with empty postal code`);
+                  const finalPostalCode = postalCode.trim();
+                  if (!finalPostalCode) {
+                    console.warn(
+                      `⚠️ [LocationTask] No postal code from geocoder — omitting zip (backend preserves existing ZIP)`,
+                    );
                   }
 
                   let sendLocationUpdateToBackendUser;
@@ -523,9 +443,9 @@ try {
                         : undefined;
                       const locResult = await sendLocationUpdateToBackendUser({
                         location: locationStr,
-                        city: city || undefined,
+                        city: city.trim() ? city.trim() : undefined,
                         state: stateForBackend,
-                        zip: finalPostalCode,
+                        zip: finalPostalCode ? finalPostalCode : undefined,
                         latitude,
                         longitude,
                         lastUpdateIso: timestamp,
@@ -579,9 +499,9 @@ try {
                       const locationData = {
                         latitude,
                         longitude,
-                        zipCode: finalPostalCode,
-                        city: city || undefined,
-                        state: state || undefined,
+                        zipCode: finalPostalCode ? finalPostalCode : undefined,
+                        city: city.trim() ? city.trim() : undefined,
+                        state: state.trim() ? state.trim() : undefined,
                         lastUpdate: new Date().toISOString()
                       };
                       // Save to AsyncStorage (unified storage for both foreground and background)
@@ -627,6 +547,7 @@ try {
             });
           }
         }
+        // activity ping removed; rely on location updates only
       } catch (err) {
         const totalDuration = Date.now() - taskStartTime;
         const errorMessage = err instanceof Error ? err.message : String(err);
