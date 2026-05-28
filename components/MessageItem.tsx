@@ -111,7 +111,7 @@ export default function MessageItem({ message, isSender, chatType, currentUserRo
 	const hasFiles = Boolean(multiAttachments || showSingleFile);
 	const showMessageMenu = !isSender || canDeleteMessage;
 
-	/** Same visual budget as two single-file previews (rem(260) each) + padding/menu — not a %-of-screen stretch. */
+	/** Same visual budget as two single-file previews (rem(260) each) + padding/menu. */
 	const multiAttachBubbleWidth = useMemo(() => {
 		const singleCard = rem(260);
 		const colGap = rem(6);
@@ -378,7 +378,8 @@ const styles = StyleSheet.create({
 		borderBottomLeftRadius: 0,
 	},
 	messageText: {
-		fontSize: fp(15),
+		fontSize: fp(17),
+		lineHeight: fp(23),
 		fontFamily: fonts['400'],
 		letterSpacing: 0,
 	},
@@ -396,11 +397,10 @@ const styles = StyleSheet.create({
 		columnGap: rem(6),
 		rowGap: rem(8),
 	},
-	/** At most 2 files per row on mobile */
+	/** Two files per row */
 	multiAttachCell: {
-		flex: 1,
-		minWidth: 0,
-		maxWidth: '50%',
+		width: '48%',
+		maxWidth: '48%',
 	},
 	messageTimeContainerRight: {
 		justifyContent: 'flex-end',

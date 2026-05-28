@@ -17,7 +17,7 @@ type Props = {
 	fileSize?: number;
 	isSender: boolean;
 	createdAt?: string; // Optional date to display next to file size
-	/** Compact width for multi-attach grid (max 2 per row in chat). */
+	/** Compact width for multi-attach grid (2 per row in chat). */
 	variant?: 'default' | 'gridCell';
 };
 
