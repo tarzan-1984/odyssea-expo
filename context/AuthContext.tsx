@@ -29,6 +29,7 @@ import {
   proactiveRefreshFromSecureStorage,
   persistAccessTokenToAllStorages,
 } from '@/utils/accessTokenRefresh';
+import { ensureBackgroundLocationTrackingForAutoupdate } from '@/utils/backgroundLocationTracking';
 
 // User interface
 export interface User {
@@ -308,8 +309,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               const result = await getDriverStatus(user.id);
               await persistDriverProfileLocally(result);
               emitDriverProfileSyncEvents(result);
+              await ensureBackgroundLocationTrackingForAutoupdate(result.isAutoupdate);
               await syncAppLocationSettingsFromBackend(accessToken);
-              // no-op: activity ping removed; rely on location updates only
             } catch (e) {
               fileLogger.error('AuthContext', 'DRIVER_PROFILE_REFRESH_AFTER_LOGIN', {
                 error: e instanceof Error ? e.message : String(e),
@@ -626,8 +627,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               const result = await getDriverStatus(user.id);
               await persistDriverProfileLocally(result);
               emitDriverProfileSyncEvents(result);
+              await ensureBackgroundLocationTrackingForAutoupdate(result.isAutoupdate);
               await syncAppLocationSettingsFromBackend(finalAccessToken);
-              // no-op: activity ping removed; rely on location updates only
             } catch (e) {
               fileLogger.error('AuthContext', 'DRIVER_PROFILE_REFRESH_AFTER_RESTORE', {
                 error: e instanceof Error ? e.message : String(e),
@@ -954,6 +955,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           const result = await getDriverStatus(userId);
           await persistDriverProfileLocally(result);
           emitDriverProfileSyncEvents(result);
+          await ensureBackgroundLocationTrackingForAutoupdate(result.isAutoupdate);
           const token = await AsyncStorage.getItem('@user_access_token');
           if (token) {
             await syncAppLocationSettingsFromBackend(token);
@@ -976,7 +978,21 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     };
   }, [authState.isAuthenticated, authState.user?.id, authState.user?.role]);
 
-  // activity ping removed; rely on location updates only
+  // Heal background location task from server isAutoupdate (any screen, after profile sync).
+  useEffect(() => {
+    if (!authState.isAuthenticated || authState.user?.role?.trim().toUpperCase() !== 'DRIVER') {
+      return;
+    }
+    const unsub = eventBus.on(
+      'DRIVER_PROFILE_SYNCED',
+      (payload: DriverProfileSyncPayload) => {
+        void ensureBackgroundLocationTrackingForAutoupdate(payload.isAutoupdate);
+      },
+    );
+    return () => {
+      unsub();
+    };
+  }, [authState.isAuthenticated, authState.user?.role]);
 
   const value: AuthContextValue = {
     authState,
