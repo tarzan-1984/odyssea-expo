@@ -17,7 +17,7 @@ import {
   haversineDistanceMeters,
 } from '@/constants/locationSendThrottle';
 import { toTmsLocationCode } from '@/utils/tmsLocationCode';
-import { resolveCityForApi } from '@/utils/geocoding';
+import { reverseGeocodeNominatimThenExpo } from '@/utils/geocoding';
 import { toBackendStateDisplayName } from '@/utils/stateDisplayName';
 import { isAllowedNorthAmericaLatLng } from '@/utils/geoFence';
 
@@ -244,126 +244,21 @@ try {
           }
         }
 
-        const applyNominatimFirst = (geo: {
-          postalCode?: string;
-          city?: string;
-          subregion?: string;
-          district?: string;
-          region?: string;
-          isoCountryCode?: string;
-        }) => {
-          postalCode = geo.postalCode || '';
-          city = resolveCityForApi(geo);
-          state =
-            toBackendStateDisplayName(geo.region, geo.isoCountryCode) ||
-            (geo.region ? String(geo.region).trim() : '');
-        };
-
         if (!shouldRunReverseGeocode) {
           console.log(
             `[LocationTask] Reverse geocode skipped (distance/status) — omit address fields; coords-only PATCH so DB city/state/zip/location unchanged`,
           );
         } else {
           try {
-            const reverseGeocodeExpoFillGaps = async (): Promise<void> => {
-              const needsPostal = !(postalCode && postalCode.trim());
-              const needsCity = !city.trim();
-              const needsState = !state.trim();
-              if (!needsPostal && !needsCity && !needsState) {
-                return;
-              }
-              try {
-                const expoPromise = Location.reverseGeocodeAsync({
-                  latitude,
-                  longitude,
-                });
-                const expoTimeout = new Promise<never>((_, reject) => {
-                  setTimeout(
-                    () => reject(new Error('Expo reverseGeocode timeout')),
-                    8000,
-                  );
-                });
-                const expoRows = (await Promise.race([
-                  expoPromise,
-                  expoTimeout,
-                ]).catch(() => [])) as Location.LocationGeocodedAddress[];
-                const e = expoRows[0];
-                if (!e) {
-                  return;
-                }
-                if (needsPostal) {
-                  const pc = (e.postalCode || '').trim();
-                  if (pc) {
-                    postalCode = pc;
-                    console.log('[LocationTask] Reverse geocode: Expo filled postalCode');
-                  }
-                }
-                if (needsCity) {
-                  const ct = (
-                    e.city ||
-                    e.subregion ||
-                    e.district ||
-                    e.name ||
-                    ''
-                  ).trim();
-                  if (ct) {
-                    city = ct;
-                    console.log('[LocationTask] Reverse geocode: Expo filled city');
-                  }
-                }
-                if (needsState) {
-                  const st =
-                    toBackendStateDisplayName(e.region, e.isoCountryCode) ||
-                    (e.region ? String(e.region).trim() : '');
-                  if (st) {
-                    state = st;
-                    console.log('[LocationTask] Reverse geocode: Expo filled state');
-                  }
-                }
-              } catch (expoErr) {
-                console.warn(
-                  '[LocationTask] Expo reverseGeocodeAsync failed:',
-                  expoErr,
-                );
-              }
-            };
-
-            const reverseGeocodePromise = (async () => {
-              try {
-                const reverseGeocodeModule = require('@/utils/geocoding');
-                const reverseGeocodeAsync =
-                  reverseGeocodeModule.reverseGeocodeAsync;
-                if (!reverseGeocodeAsync) {
-                  return [];
-                }
-                return await reverseGeocodeAsync({ latitude, longitude });
-              } catch {
-                return [];
-              }
-            })();
-
-            const nominatimTimeout = new Promise<never>((_, reject) => {
-              setTimeout(
-                () => reject(new Error('Nominatim geocoding timeout')),
-                10000,
-              );
+            const resolved = await reverseGeocodeNominatimThenExpo({
+              latitude,
+              longitude,
+              logTag: '[LocationTask]',
+              allowExpoCityState: true,
             });
-
-            const nominatimRows = await Promise.race([
-              reverseGeocodePromise,
-              nominatimTimeout,
-            ]).catch(() => [] as Awaited<typeof reverseGeocodePromise>);
-
-            if (nominatimRows && nominatimRows.length > 0) {
-              applyNominatimFirst(nominatimRows[0]!);
-              console.log(`[LocationTask] Reverse geocode: Nominatim OK (English labels)`);
-            } else {
-              console.log(
-                `[LocationTask] Reverse geocode: Nominatim empty or timed out — Expo may fill gaps`,
-              );
-            }
-
-            await reverseGeocodeExpoFillGaps();
+            postalCode = resolved.postalCode;
+            city = resolved.city;
+            state = resolved.state;
 
             const hasAnyResolvedAddressPart = !!(
               (postalCode && postalCode.trim()) ||
@@ -373,10 +268,6 @@ try {
             if (hasAnyResolvedAddressPart) {
               await saveGeocodeAnchor(latitude, longitude);
               await saveLastSuccessfulReverseGeocodeTimestamp();
-            } else {
-              console.log(
-                `[LocationTask] Reverse geocode: no postal/city/state from Nominatim or Expo (coordinates still sent)`,
-              );
             }
           } catch (geoError) {
             fileLogger.error('LocationTask', 'GEOCODING_ERROR', {

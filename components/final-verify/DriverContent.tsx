@@ -721,7 +721,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
     }
   }, [authState.userLocation, authState.userZipCode, automaticLocationSharing, startBackgroundLocationTracking, formatAddressLabel, setZip, status]); // Run when location data is available
 
-  // Check for location updates from AsyncStorage (when app opens or returns from background)
+  // Poll @user_location for map pin + cached ZIP only (no Nominatim — geocode stays in background task / Share).
   const checkForLocationUpdates = useCallback(async () => {
     try {
       // Sync lastLocationUpdate from AsyncStorage to AuthContext
@@ -752,31 +752,16 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
             setZip(zipCode);
           }
           
-          // Update map
+          // Update map only — city/state/ZIP for server come from background task geocode, not Nominatim here
           if (coordsChanged) {
-          const updateRegion: Region = {
-            latitude: nextLat,
-            longitude: nextLng,
-            latitudeDelta: 0.005,
-            longitudeDelta: 0.005,
-          };
+            const updateRegion: Region = {
+              latitude: nextLat,
+              longitude: nextLng,
+              latitudeDelta: 0.005,
+              longitudeDelta: 0.005,
+            };
             mapRef.current?.animateToRegion(updateRegion, 1000);
           }
-          
-          // Update address label and form fields
-          try {
-            const reverseGeocode = await reverseGeocodeAsync({ latitude: nextLat, longitude: nextLng });
-            const geo = reverseGeocode && reverseGeocode.length > 0 ? reverseGeocode[0] : null;
-            if (geo) {
-              setLocationLabel(formatAddressLabel(geo));
-              const c = resolveCityForApi(geo);
-              const s =
-                toBackendStateDisplayName(geo.region, geo.isoCountryCode) || '';
-              if (c) setFormCity(c);
-              if (s) setFormState(s);
-              if (c && s && zipCode) setFormLocation(`${c}, ${s} ${zipCode}`.trim());
-            }
-          } catch {}
         }
       }
     } catch (error) {
@@ -786,7 +771,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         stack: error instanceof Error ? error.stack : undefined,
       });
     }
-  }, [syncLocationFromAsyncStorage, setZip, formatAddressLabel, status]);
+  }, [syncLocationFromAsyncStorage, setZip, status]);
 
   useEffect(() => {
     // Always sync once on mount
@@ -799,8 +784,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
 
     const syncInterval = setInterval(() => {
       checkForLocationUpdates();
-      console.log('===========update location============');
-    }, 20000); // Check every 20 seconds
+    }, 20000); // Poll @user_location for map coords only (no Nominatim)
     
     return () => clearInterval(syncInterval);
   }, [automaticLocationSharing, checkForLocationUpdates]);

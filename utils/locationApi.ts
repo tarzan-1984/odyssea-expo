@@ -407,7 +407,16 @@ export async function sendLocationUpdateToBackendUser(params: {
     }
 
     try {
-      console.log('[locationApi] Sending location update to backend...');
+      const isImmediateBackground =
+        params.isBackgroundTaskLocationUpdate === true &&
+        params.isManualDriverLocationAction !== true;
+      if (isImmediateBackground) {
+        console.log(
+          `[locationApi] PUT ${url} (background/automatic${params.isAutoupdate ? ', autoupdate on' : ''})`,
+        );
+      } else {
+        console.log('[locationApi] Sending location update to backend...');
+      }
 
       const response = await fetch(url, {
         method: 'PUT',

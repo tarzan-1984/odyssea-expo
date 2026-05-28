@@ -9,7 +9,7 @@ import { fileLogger } from '@/utils/fileLogger';
 import { sendLocationUpdateToBackendUser, getLocalIsoString } from '@/utils/locationApi';
 import { recordSuccessfulLocationApiSend } from '@/constants/locationSendThrottle';
 import { isAllowedNorthAmericaLatLng } from '@/utils/geoFence';
-import { reverseGeocodeAsync, resolveCityForApi } from '@/utils/geocoding';
+import { reverseGeocodeNominatimThenExpo } from '@/utils/geocoding';
 import { toTmsLocationCode } from '@/utils/tmsLocationCode';
 import { toBackendStateDisplayName } from '@/utils/stateDisplayName';
 
@@ -30,12 +30,25 @@ export async function isBackgroundLocationTrackingRunning(): Promise<boolean> {
  */
 export async function sendImmediateBackgroundLocationPing(): Promise<void> {
   try {
+    console.log(
+      '───────────────────────────────────────────────────────────',
+    );
+    console.log(
+      '📤 [AppActive] IMMEDIATE location update — forced first PUT after (re)start (skips 60s / 3km throttle)',
+    );
+
     const settingsStr = await AsyncStorage.getItem('@odyssea_app_settings');
     if (!settingsStr) {
+      console.log(
+        '⏸️ [AppActive] Immediate PUT skipped — @odyssea_app_settings not found',
+      );
       return;
     }
     const settings = JSON.parse(settingsStr) as { automaticLocationSharing?: boolean };
     if (!settings.automaticLocationSharing) {
+      console.log(
+        '⏸️ [AppActive] Immediate PUT skipped — automaticLocationSharing is false in local settings',
+      );
       return;
     }
 
@@ -47,9 +60,15 @@ export async function sendImmediateBackgroundLocationPing(): Promise<void> {
       !!appLoc.locationTestDriverExternalId &&
       currentExternalId === String(appLoc.locationTestDriverExternalId).trim();
     if (appLoc.locationEnvironmentMode === 'test' && !isTestDriver) {
+      console.log(
+        '⏸️ [AppActive] Immediate PUT skipped — location test mode (driver not allowed)',
+      );
       return;
     }
 
+    console.log(
+      '📍 [AppActive] Requesting fresh GPS fix via getCurrentPositionAsync (not cached coords)...',
+    );
     let pos: Location.LocationObject;
     try {
       pos = await Location.getCurrentPositionAsync({
@@ -57,6 +76,10 @@ export async function sendImmediateBackgroundLocationPing(): Promise<void> {
           Platform.OS === 'ios' ? Location.Accuracy.Balanced : Location.Accuracy.Balanced,
       });
     } catch (gpsError) {
+      console.error(
+        '❌ [AppActive] Immediate PUT aborted — getCurrentPositionAsync failed:',
+        gpsError instanceof Error ? gpsError.message : String(gpsError),
+      );
       fileLogger.error('BackgroundTracking', 'IMMEDIATE_PING_GPS_FAILED', {
         error: gpsError instanceof Error ? gpsError.message : String(gpsError),
       });
@@ -64,6 +87,9 @@ export async function sendImmediateBackgroundLocationPing(): Promise<void> {
     }
 
     const { latitude, longitude } = pos.coords;
+    console.log(
+      `📍 [AppActive] Fresh GPS: lat=${latitude.toFixed(6)} lng=${longitude.toFixed(6)}`,
+    );
     if (!isTestDriver && !isAllowedNorthAmericaLatLng({ latitude, longitude })) {
       console.warn(
         `⛔️ [BackgroundTracking] Immediate ping blocked by geo-fence (lat=${latitude}, lng=${longitude})`,
@@ -92,16 +118,15 @@ export async function sendImmediateBackgroundLocationPing(): Promise<void> {
     }
 
     try {
-      const reverse = await reverseGeocodeAsync({ latitude, longitude });
-      const geo = reverse?.[0];
-      if (geo) {
-        const c = resolveCityForApi(geo);
-        const regionRaw = geo.region ? String(geo.region).trim() : '';
-        const s = toBackendStateDisplayName(regionRaw, geo.isoCountryCode) || regionRaw;
-        if (c) city = c;
-        if (s) state = s;
-        if (geo.postalCode?.trim()) zip = geo.postalCode.trim();
-      }
+      const resolved = await reverseGeocodeNominatimThenExpo({
+        latitude,
+        longitude,
+        logTag: '[AppActive][ImmediatePUT]',
+        allowExpoCityState: true,
+      });
+      if (resolved.city) city = resolved.city;
+      if (resolved.state) state = resolved.state;
+      if (resolved.postalCode) zip = resolved.postalCode;
     } catch {
       // coords-only is fine
     }
@@ -109,8 +134,26 @@ export async function sendImmediateBackgroundLocationPing(): Promise<void> {
     const locationStr = state ? toTmsLocationCode(state) || undefined : undefined;
     const timestamp = getLocalIsoString();
 
+    const userId = await AsyncStorage.getItem('@user_id');
     console.log(
-      '📤 [BackgroundTracking] Immediate location ping after (re)start of background task',
+      `🌐 [AppActive] Sending IMMEDIATE PUT /v1/users/${userId ?? '?'}/location`,
+    );
+    console.log(
+      '[AppActive] Request body summary:',
+      JSON.stringify(
+        {
+          latitude,
+          longitude,
+          city: city || null,
+          state: state || null,
+          zip: zip || null,
+          isAutoupdate: true,
+          isBackgroundTaskLocationUpdate: true,
+          lastLocationUpdateAt: timestamp,
+        },
+        null,
+        2,
+      ),
     );
 
     const result = await sendLocationUpdateToBackendUser({
@@ -145,14 +188,27 @@ export async function sendImmediateBackgroundLocationPing(): Promise<void> {
       } catch {
         // ignore
       }
-      console.log('✅ [BackgroundTracking] Immediate location ping sent successfully');
+      console.log(
+        `✅ [AppActive] IMMEDIATE PUT succeeded (HTTP ${result.status}, tmsSyncFailed=${result.tmsSyncFailed})`,
+      );
+      console.log(
+        '───────────────────────────────────────────────────────────',
+      );
     } else {
+      console.error(
+        `❌ [AppActive] IMMEDIATE PUT failed — HTTP ${result.status}`,
+        result.tmsError ?? '',
+      );
       fileLogger.error('BackgroundTracking', 'IMMEDIATE_PING_BACKEND_FAILED', {
         status: result.status,
         tmsError: result.tmsError,
       });
     }
   } catch (error) {
+    console.error(
+      '❌ [AppActive] IMMEDIATE PUT exception:',
+      error instanceof Error ? error.message : String(error),
+    );
     fileLogger.error('BackgroundTracking', 'IMMEDIATE_PING_EXCEPTION', {
       error: error instanceof Error ? error.message : String(error),
     });
@@ -588,6 +644,9 @@ export async function startBackgroundLocationTracking(
     if (verification) {
       console.log('📍 [BackgroundTracking] ✅✅✅ TASK STARTED SUCCESSFULLY! ✅✅✅');
       console.log('📍 [BackgroundTracking] Foreground service notification should appear in notification tray');
+      console.log(
+        '📱 [AppActive] Background task is up — starting IMMEDIATE location PUT (autoupdate flow)...',
+      );
       void sendImmediateBackgroundLocationPing();
     } else {
       console.error('❌ [BackgroundTracking] ❌❌❌ TASK FAILED TO START ❌❌❌');
@@ -687,26 +746,29 @@ export async function ensureBackgroundLocationTrackingForAutoupdate(
 
   if (isAutoupdate === false) {
     console.log(
-      '📍 [BackgroundTracking] Server isAutoupdate=false — stopping background location task',
+      '📱 [AppActive] isAutoupdate=false from server — stopping background location task (no immediate PUT)',
     );
     await stopBackgroundLocationTracking();
     return;
   }
 
   if (isAutoupdate !== true) {
+    console.log(
+      `📱 [AppActive] isAutoupdate=${String(isAutoupdate)} — skip background task heal`,
+    );
     return;
   }
 
   const isRunning = await isBackgroundLocationTrackingRunning();
   if (isRunning) {
     console.log(
-      '📍 [BackgroundTracking] Foreground ensure: background task already running, no action',
+      '📱 [AppActive] isAutoupdate=true, background GPS task already running — no restart, no immediate PUT',
     );
     return;
   }
 
   console.log(
-    '📍 [BackgroundTracking] Foreground ensure: isAutoupdate=true but task not running — starting',
+    '📱 [AppActive] isAutoupdate=true but background GPS task NOT running — starting task (then immediate PUT)',
   );
   await startBackgroundLocationTracking({ onlyStartIfNotRunning: true });
 }

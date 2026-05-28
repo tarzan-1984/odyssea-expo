@@ -87,6 +87,9 @@ export async function reverseGeocodeAsync(params: {
             const data = JSON.parse(xhr.responseText);
             
             if (!data || !data.address) {
+              console.warn(
+                '[geocoding][Nominatim] HTTP OK but no address in response — treating as no result',
+              );
               resolve([]);
               return;
             }
@@ -115,11 +118,16 @@ export async function reverseGeocodeAsync(params: {
 
             resolve([result]);
           } else {
-            console.warn(`[geocoding] Geocoding failed: ${xhr.status}`);
+            console.warn(
+              `[geocoding][Nominatim] Request failed — HTTP ${xhr.status} (no address data; Expo fallback may run)`,
+            );
             resolve([]);
           }
         } catch (parseError) {
-          console.warn('[geocoding] Failed to parse geocoding response:', parseError);
+          console.warn(
+            '[geocoding][Nominatim] Failed to parse response:',
+            parseError,
+          );
           resolve([]);
         }
       };
@@ -127,14 +135,18 @@ export async function reverseGeocodeAsync(params: {
       xhr.onerror = () => {
         if (resolved) return;
         resolved = true;
-        console.warn('[geocoding] Geocoding request failed: Network error');
+        console.warn(
+          '[geocoding][Nominatim] Network error (no address data; Expo fallback may run)',
+        );
         resolve([]);
       };
       
       xhr.ontimeout = () => {
         if (resolved) return;
         resolved = true;
-        console.warn('[geocoding] Geocoding request timed out');
+        console.warn(
+          '[geocoding][Nominatim] Request timed out after 10s (Expo fallback may run)',
+        );
         resolve([]);
       };
       
@@ -143,14 +155,246 @@ export async function reverseGeocodeAsync(params: {
       } catch (sendError) {
         if (resolved) return;
         resolved = true;
-        console.warn('[geocoding] Failed to send geocoding request:', sendError);
+        console.warn(
+          '[geocoding][Nominatim] Failed to send request:',
+          sendError,
+        );
         resolve([]);
       }
     });
   } catch (error) {
-    console.warn('[geocoding] Reverse geocoding failed:', error);
+    console.warn('[geocoding][Nominatim] Reverse geocode exception:', error);
     return [];
   }
+}
+
+export type ResolvedAddressFields = {
+  postalCode: string;
+  city: string;
+  state: string;
+  nominatimOk: boolean;
+  expoFilledFields: string[];
+};
+
+const NOMINATIM_REVERSE_TIMEOUT_MS = 10_000;
+const EXPO_REVERSE_TIMEOUT_MS = 8_000;
+
+function geocodeLogTag(logTag?: string): string {
+  return logTag?.trim() || '[geocoding]';
+}
+
+function applyNominatimGeoToFields(geo: GeocodedAddress): ResolvedAddressFields {
+  const regionRaw = geo.region ? String(geo.region).trim() : '';
+  return {
+    postalCode: (geo.postalCode || '').trim(),
+    city: resolveCityForApi(geo),
+    state:
+      toBackendStateDisplayName(regionRaw, geo.isoCountryCode) || regionRaw,
+    nominatimOk: true,
+    expoFilledFields: [],
+  };
+}
+
+function hasAnyAddressField(fields: Pick<ResolvedAddressFields, 'postalCode' | 'city' | 'state'>): boolean {
+  return !!(
+    (fields.postalCode && fields.postalCode.trim()) ||
+    fields.city.trim() ||
+    fields.state.trim()
+  );
+}
+
+/**
+ * Fill missing postal/city/state via Expo Location.reverseGeocodeAsync (device geocoder).
+ */
+export async function fillAddressGapsFromExpo(params: {
+  latitude: number;
+  longitude: number;
+  postalCode: string;
+  city: string;
+  state: string;
+  logTag?: string;
+  /** Background auto-update: allow Expo to fill city/state. Share flow: ZIP (+ region) only. */
+  allowExpoCityState?: boolean;
+}): Promise<ResolvedAddressFields> {
+  const tag = geocodeLogTag(params.logTag);
+  let { postalCode, city, state } = params;
+  const expoFilledFields: string[] = [];
+
+  const needsPostal = !(postalCode && postalCode.trim());
+  const needsCity = !city.trim();
+  const needsState = !state.trim();
+
+  if (!needsPostal && !needsCity && !needsState) {
+    console.log(`${tag}[Expo] Skipped — Nominatim already provided postal/city/state`);
+    return { postalCode, city, state, nominatimOk: false, expoFilledFields };
+  }
+
+  console.log(
+    `${tag}[Expo] Requesting device reverse geocode to fill gaps: ${[
+      needsPostal && 'postalCode',
+      needsCity && params.allowExpoCityState !== false && 'city',
+      needsState && params.allowExpoCityState !== false && 'state',
+    ]
+      .filter(Boolean)
+      .join(', ') || 'none'}`,
+  );
+
+  try {
+    const expoPromise = Location.reverseGeocodeAsync({
+      latitude: params.latitude,
+      longitude: params.longitude,
+    });
+    const expoTimeout = new Promise<never>((_, reject) => {
+      setTimeout(
+        () => reject(new Error('Expo reverseGeocode timeout')),
+        EXPO_REVERSE_TIMEOUT_MS,
+      );
+    });
+    const expoRows = (await Promise.race([expoPromise, expoTimeout]).catch(
+      () => [],
+    )) as Location.LocationGeocodedAddress[];
+    const e = expoRows[0];
+
+    if (!e) {
+      console.warn(
+        `${tag}[Expo] No result (empty response or timeout) — gaps may remain unfilled`,
+      );
+      return { postalCode, city, state, nominatimOk: false, expoFilledFields };
+    }
+
+    if (needsPostal) {
+      const pc = (e.postalCode || '').trim();
+      if (pc) {
+        postalCode = pc;
+        expoFilledFields.push('postalCode');
+      }
+    }
+    if (params.allowExpoCityState !== false) {
+      if (needsCity) {
+        const ct = (
+          e.city ||
+          e.subregion ||
+          e.district ||
+          e.name ||
+          ''
+        ).trim();
+        if (ct) {
+          city = ct;
+          expoFilledFields.push('city');
+        }
+      }
+      if (needsState) {
+        const st =
+          toBackendStateDisplayName(e.region, e.isoCountryCode) ||
+          (e.region ? String(e.region).trim() : '');
+        if (st) {
+          state = st;
+          expoFilledFields.push('state');
+        }
+      }
+    }
+
+    if (expoFilledFields.length > 0) {
+      console.log(
+        `${tag}[Expo] OK — filled missing field(s): ${expoFilledFields.join(', ')} (zip="${postalCode || ''}" city="${city || ''}" state="${state || ''}")`,
+      );
+    } else {
+      console.warn(
+        `${tag}[Expo] Response received but could not fill remaining gap(s): postal=${needsPostal && !postalCode} city=${needsCity && !city} state=${needsState && !state}`,
+      );
+    }
+  } catch (expoErr) {
+    console.warn(
+      `${tag}[Expo] reverseGeocodeAsync failed:`,
+      expoErr instanceof Error ? expoErr.message : String(expoErr),
+    );
+  }
+
+  return { postalCode, city, state, nominatimOk: false, expoFilledFields };
+}
+
+/**
+ * Nominatim reverse geocode, then Expo for any missing postal/city/state.
+ * Logs clearly when Nominatim fails, when Expo rescues, and when both fail.
+ */
+export async function reverseGeocodeNominatimThenExpo(params: {
+  latitude: number;
+  longitude: number;
+  logTag?: string;
+  allowExpoCityState?: boolean;
+}): Promise<ResolvedAddressFields> {
+  const tag = geocodeLogTag(params.logTag);
+
+  const nominatimPromise = reverseGeocodeAsync({
+    latitude: params.latitude,
+    longitude: params.longitude,
+  });
+  const nominatimTimeout = new Promise<GeocodedAddress[]>((_, reject) => {
+    setTimeout(
+      () => reject(new Error('Nominatim reverse geocode timeout')),
+      NOMINATIM_REVERSE_TIMEOUT_MS,
+    );
+  });
+
+  let fields: ResolvedAddressFields = {
+    postalCode: '',
+    city: '',
+    state: '',
+    nominatimOk: false,
+    expoFilledFields: [],
+  };
+
+  try {
+    const nominatimRows = await Promise.race([nominatimPromise, nominatimTimeout]);
+    if (nominatimRows.length > 0) {
+      fields = { ...applyNominatimGeoToFields(nominatimRows[0]!), nominatimOk: true };
+      console.log(
+        `${tag}[Nominatim] OK — zip="${fields.postalCode || ''}" city="${fields.city || ''}" state="${fields.state || ''}"`,
+      );
+    } else {
+      console.warn(
+        `${tag}[Nominatim] No usable address (empty or error — see [Nominatim] warnings above); trying Expo`,
+      );
+    }
+  } catch {
+    console.warn(
+      `${tag}[Nominatim] Timed out after ${NOMINATIM_REVERSE_TIMEOUT_MS / 1000}s; trying Expo`,
+    );
+  }
+
+  const afterExpo = await fillAddressGapsFromExpo({
+    latitude: params.latitude,
+    longitude: params.longitude,
+    postalCode: fields.postalCode,
+    city: fields.city,
+    state: fields.state,
+    logTag: params.logTag,
+    allowExpoCityState: params.allowExpoCityState,
+  });
+
+  const merged: ResolvedAddressFields = {
+    postalCode: afterExpo.postalCode,
+    city: afterExpo.city,
+    state: afterExpo.state,
+    nominatimOk: fields.nominatimOk,
+    expoFilledFields: afterExpo.expoFilledFields,
+  };
+
+  if (!hasAnyAddressField(merged)) {
+    console.error(
+      `${tag}[Geocode] FAILED — neither Nominatim nor Expo returned postal/city/state; coordinates-only update may be sent`,
+    );
+  } else if (!fields.nominatimOk && afterExpo.expoFilledFields.length > 0) {
+    console.log(
+      `${tag}[Geocode] Resolved via Expo after Nominatim had no usable address`,
+    );
+  } else if (fields.nominatimOk && afterExpo.expoFilledFields.length > 0) {
+    console.log(
+      `${tag}[Geocode] Nominatim partial — Expo completed: ${afterExpo.expoFilledFields.join(', ')}`,
+    );
+  }
+
+  return merged;
 }
 
 /**
@@ -172,42 +416,62 @@ export async function reverseGeocodeWithDeviceFallback(params: {
     isoCountryCode: '',
   };
 
-  const needPostal = !(base.postalCode && String(base.postalCode).trim());
-  const needCity = !(base.city && String(base.city).trim());
-
-  if (!needPostal && !needCity) {
-    return [base];
+  if (nominatimRows.length > 0) {
+    console.log(
+      `[geocoding][Share][Nominatim] OK — zip="${(base.postalCode || '').trim()}" city="${resolveCityForApi(base)}"`,
+    );
   }
 
-  try {
-    const nativeList = await Location.reverseGeocodeAsync({
-      latitude: params.latitude,
-      longitude: params.longitude,
-    });
-    const n = nativeList[0];
-    if (n) {
-      const merged: GeocodedAddress = { ...base };
-      if (needPostal && n.postalCode) {
-        merged.postalCode = n.postalCode;
-      }
-      // Do not merge native city/region strings: iOS/Android reverse geocode follows the device
-      // locale (e.g. Arabic city names). English labels come from Nominatim only.
-      if ((!merged.region || !String(merged.region).trim()) && n.region) {
-        merged.region = n.region;
-      }
-      if ((!merged.country || !String(merged.country).trim()) && n.country) {
-        merged.country = n.country;
-      }
-      if ((!merged.isoCountryCode || !String(merged.isoCountryCode).trim()) && n.isoCountryCode) {
+  const filled = await fillAddressGapsFromExpo({
+    latitude: params.latitude,
+    longitude: params.longitude,
+    postalCode: (base.postalCode || '').trim(),
+    city: resolveCityForApi(base),
+    state:
+      toBackendStateDisplayName(base.region, base.isoCountryCode) ||
+      (base.region ? String(base.region).trim() : ''),
+    logTag: '[geocoding][Share]',
+    allowExpoCityState: false,
+  });
+
+  const merged: GeocodedAddress = {
+    ...base,
+    postalCode: filled.postalCode || base.postalCode,
+    city: base.city || filled.city,
+    region: filled.state || base.region,
+  };
+
+  if (
+    (!merged.region || !String(merged.region).trim()) &&
+    filled.expoFilledFields.length > 0
+  ) {
+    try {
+      const nativeList = await Location.reverseGeocodeAsync(params);
+      const n = nativeList[0];
+      if (n?.region && !merged.region) merged.region = n.region;
+      if (n?.country && !merged.country) merged.country = n.country;
+      if (n?.isoCountryCode && !merged.isoCountryCode) {
         merged.isoCountryCode = n.isoCountryCode;
       }
-      return [merged];
+    } catch {
+      // ignore
     }
-  } catch (e) {
-    console.warn('[geocoding] Device reverseGeocodeAsync failed:', e);
   }
 
-  return [base];
+  const hasUseful =
+    !!(merged.postalCode && String(merged.postalCode).trim()) ||
+    !!(merged.city && String(merged.city).trim());
+  if (!hasUseful) {
+    console.error(
+      '[geocoding][Share][Geocode] FAILED — neither Nominatim nor Expo returned postal/city',
+    );
+  } else if (nominatimRows.length === 0 && filled.expoFilledFields.length > 0) {
+    console.log(
+      '[geocoding][Share][Geocode] Resolved via Expo after Nominatim had no usable address',
+    );
+  }
+
+  return [merged];
 }
 
 export interface GeocodeResult {
