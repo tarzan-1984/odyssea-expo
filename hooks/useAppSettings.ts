@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { pushNotificationPreferenceToBackend } from '@/utils/userNotificationPreferences';
+import { eventBus } from '@/services/EventBus';
 
 const SETTINGS_STORAGE_KEY = '@odyssea_app_settings';
 
@@ -75,6 +77,17 @@ export const useAppSettings = () => {
   const setNotificationsEnabled = useCallback(
     async (enabled: boolean) => {
       await saveSettings({ notificationsEnabled: enabled });
+      try {
+        const userId = await AsyncStorage.getItem('@user_id');
+        if (userId) {
+          await pushNotificationPreferenceToBackend(userId, enabled);
+        }
+      } catch (error) {
+        console.error(
+          '❌ [useAppSettings] Failed to sync notification preference to server:',
+          error,
+        );
+      }
     },
     [saveSettings]
   );
@@ -83,6 +96,21 @@ export const useAppSettings = () => {
   useEffect(() => {
     loadSettings();
   }, [loadSettings]);
+
+  useEffect(() => {
+    const unsub = eventBus.on(
+      'NOTIFICATION_PREFERENCES_SYNCED',
+      (payload: { notificationsEnabled: boolean }) => {
+        setSettings((prev) => ({
+          ...prev,
+          notificationsEnabled: payload.notificationsEnabled,
+        }));
+      },
+    );
+    return () => {
+      unsub();
+    };
+  }, []);
 
   return {
     settings,
