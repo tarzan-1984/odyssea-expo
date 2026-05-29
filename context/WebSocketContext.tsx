@@ -702,6 +702,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
             location: null,
             statusDate: null,
             isAutoupdate,
+            notificationsEnabled: null,
             ...(typeof data.deactivateAccount === 'boolean'
               ? { deactivateAccount: data.deactivateAccount }
               : {}),
@@ -746,6 +747,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
             statusDate: data.statusDate ?? null,
             isAutoupdate:
               typeof data.isAutoupdate === 'boolean' ? data.isAutoupdate : null,
+            notificationsEnabled: null,
             ...(typeof data.deactivateAccount === 'boolean'
               ? { deactivateAccount: data.deactivateAccount }
               : {}),

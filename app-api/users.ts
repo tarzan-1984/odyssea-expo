@@ -136,7 +136,16 @@ export type DriverProfileFromApi = {
   statusDate: string | null;
   isAutoupdate: boolean | null;
   deactivateAccount: boolean;
+  notificationsEnabled: boolean | null;
 };
+
+async function getAccessTokenOrThrow(): Promise<string> {
+  const accessToken = await secureStorage.getItemAsync('accessToken');
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
+  return accessToken;
+}
 
 /**
  * Get driver profile fields from backend (DRIVER role only).
@@ -146,10 +155,7 @@ export async function getDriverStatus(userId: string): Promise<DriverProfileFrom
     throw new Error('API_BASE_URL is not configured');
   }
 
-  const accessToken = await secureStorage.getItemAsync('accessToken');
-  if (!accessToken) {
-    throw new Error('No access token available');
-  }
+  const accessToken = await getAccessTokenOrThrow();
 
   const response = await fetch(`${API_BASE_URL}/v1/users/${userId}/driver-status`, {
     method: 'GET',
@@ -181,7 +187,70 @@ export async function getDriverStatus(userId: string): Promise<DriverProfileFrom
       typeof raw.deactivateAccount === 'boolean'
         ? raw.deactivateAccount
         : false,
+    notificationsEnabled:
+      typeof raw.notificationsEnabled === 'boolean'
+        ? raw.notificationsEnabled
+        : null,
   };
+}
+
+export async function getNotificationPreferences(
+  userId: string,
+): Promise<{ notificationsEnabled: boolean }> {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is not configured');
+  }
+  const accessToken = await getAccessTokenOrThrow();
+  const response = await fetch(
+    `${API_BASE_URL}/v1/users/${userId}/notification-preferences`,
+    {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+    },
+  );
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      errorData.message ||
+        `Failed to fetch notification preferences. Status: ${response.status}`,
+    );
+  }
+  const data = await response.json();
+  const raw = data.data ?? data;
+  return {
+    notificationsEnabled: raw.notificationsEnabled !== false,
+  };
+}
+
+export async function updateNotificationPreferences(
+  userId: string,
+  notificationsEnabled: boolean,
+): Promise<void> {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is not configured');
+  }
+  const accessToken = await getAccessTokenOrThrow();
+  const response = await fetch(
+    `${API_BASE_URL}/v1/users/${userId}/notification-preferences`,
+    {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ notificationsEnabled }),
+    },
+  );
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(
+      errorData.message ||
+        `Failed to update notification preferences. Status: ${response.status}`,
+    );
+  }
 }
 
 /**

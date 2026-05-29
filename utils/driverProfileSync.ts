@@ -14,6 +14,7 @@ export type DriverProfileSyncPayload = {
   isAutoupdate: boolean | null;
   /** When set, persisted to @user_deactivate_account (TMS soft-remove / restore). */
   deactivateAccount?: boolean;
+  notificationsEnabled: boolean | null;
 };
 
 /** Same rule as TMS driver webhook on the backend — keep in sync. */
@@ -60,6 +61,10 @@ export async function fetchDriverProfileFromBackend(
         typeof body.deactivateAccount === 'boolean'
           ? body.deactivateAccount
           : false,
+      notificationsEnabled:
+        typeof body.notificationsEnabled === 'boolean'
+          ? body.notificationsEnabled
+          : null,
     };
   } catch (e) {
     fileLogger.error('driverProfileSync', 'FETCH_FAILED', {
@@ -94,21 +99,24 @@ export async function persistDriverProfileLocally(
       );
     }
 
-    if (payload.isAutoupdate !== null) {
-      try {
-        const settingsStr = await AsyncStorage.getItem('@odyssea_app_settings');
-        const settings = settingsStr ? JSON.parse(settingsStr) : {};
-        const next = {
-          ...settings,
-          automaticLocationSharing: payload.isAutoupdate,
-        };
-        await AsyncStorage.setItem(
-          '@odyssea_app_settings',
-          JSON.stringify(next),
-        );
-      } catch {
-        // ignore
+    try {
+      const settingsStr = await AsyncStorage.getItem('@odyssea_app_settings');
+      const settings = settingsStr ? JSON.parse(settingsStr) : {};
+      const next = { ...settings };
+      if (payload.isAutoupdate !== null) {
+        next.automaticLocationSharing = payload.isAutoupdate;
       }
+      if (payload.notificationsEnabled !== null) {
+        next.notificationsEnabled = payload.notificationsEnabled;
+      }
+      await AsyncStorage.setItem('@odyssea_app_settings', JSON.stringify(next));
+      if (payload.notificationsEnabled !== null) {
+        eventBus.emit('NOTIFICATION_PREFERENCES_SYNCED', {
+          notificationsEnabled: payload.notificationsEnabled,
+        });
+      }
+    } catch {
+      // ignore
     }
 
     try {
@@ -138,6 +146,9 @@ export async function persistDriverProfileLocally(
           if (payload.location !== null) next.location = payload.location || '';
           if (payload.statusDate !== null) next.statusDate = payload.statusDate || '';
           if (payload.isAutoupdate !== null) next.isAutoupdate = payload.isAutoupdate;
+          if (payload.notificationsEnabled !== null) {
+            next.notificationsEnabled = payload.notificationsEnabled;
+          }
           if (typeof payload.deactivateAccount === 'boolean') {
             next.deactivateAccount = payload.deactivateAccount;
           }
