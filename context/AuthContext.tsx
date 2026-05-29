@@ -231,6 +231,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         // not only after explicit logout (reinstall / restored AsyncStorage can keep the old flag).
         try {
           await AsyncStorage.removeItem('@permissions_onboarding_completed');
+          await AsyncStorage.removeItem('@odyssea_battery_unrestricted_confirmed');
         } catch (permFlagError) {
           console.warn(
             '⚠️ [AuthContext] Failed to clear permissions onboarding flag before session start:',

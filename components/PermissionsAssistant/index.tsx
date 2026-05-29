@@ -8,9 +8,10 @@ import {
 	openBatterySettings, 
 	openAutoStartSettings, 
 	checkBatteryOptimizationStatus,
+	confirmBatterySettingsAfterSettingsVisit,
 	isBatteryOptimizationAvailable,
 	isAutoStartAvailable,
-	requiresAutostartWarning
+	requiresAutostartWarning,
 } from "./utils";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLocationPermission } from "@/hooks/useLocationPermission";
@@ -34,6 +35,7 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
 	const [autoStartAvailable, setAutoStartAvailable] = useState(false);
 	const [requiresAutostartWarningState, setRequiresAutostartWarningState] = useState(false);
 	const appState = useRef(AppState.currentState);
+	const batterySettingsVisitRef = useRef(false);
 	
 	const checkPermissions = useCallback(async () => {
 		// Check user role
@@ -182,10 +184,8 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
 	
 	const handleBattery = async () => {
 		try {
+			batterySettingsVisitRef.current = true;
 			await openBatterySettings();
-			// Don't automatically set to enabled - let user actually enable it in settings
-			// We'll check again when app returns to foreground
-			// The check will happen in the AppState listener below
 		} catch (error) {
 			console.error("[PermissionsAssistant] Failed to open battery settings:", error);
 		}
@@ -233,9 +233,18 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
 			// Wait a bit for system settings to apply
 			// iOS usually updates permission status quickly, so reduced delay
 			// For Android battery settings, may need more time
-			const delay = Platform.OS === 'ios' ? 300 : 1500;
-			setTimeout(() => {
+			const delay = Platform.OS === "ios" ? 300 : 1500;
+			setTimeout(async () => {
 				console.log("[PermissionsAssistant] App returned to foreground, rechecking permissions...");
+				if (Platform.OS === "android" && batterySettingsVisitRef.current) {
+					const confirmed = await confirmBatterySettingsAfterSettingsVisit();
+					if (confirmed) {
+						batterySettingsVisitRef.current = false;
+						console.log(
+							"[PermissionsAssistant] Battery step confirmed after settings visit",
+						);
+					}
+				}
 				checkPermissions();
 			}, delay);
 			}
@@ -310,7 +319,11 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
                 onPress={handleBattery}
               >
                 <Text style={styles.label}>Remove battery limitation</Text>
-                <Text style={styles.status}>Necessary for stable operation</Text>
+                <Text style={styles.status}>
+                  {batterySettings
+                    ? "✓ Allowed"
+                    : "Open settings → Always allow or Allow background usage, then return here"}
+                </Text>
               </TouchableOpacity>
             )}
             
