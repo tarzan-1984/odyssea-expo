@@ -76,6 +76,7 @@ export default function ProfileScreen() {
       // Clear permissions onboarding flag so assistant shows again for next login
       try {
         await AsyncStorage.removeItem('@permissions_onboarding_completed');
+        await AsyncStorage.removeItem('@odyssea_battery_unrestricted_confirmed');
       } catch (e) {
         console.warn('[Profile] Failed to clear permissions onboarding flag on logout', e);
       }

@@ -1,28 +1,92 @@
 import { Linking, Platform } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Application from "expo-application";
+import * as IntentLauncher from "expo-intent-launcher";
 import DeviceInfo from "react-native-device-info";
 import { BatteryOptEnabled, OpenOptimizationSettings } from "react-native-battery-optimization-check";
 
-export async function checkBatteryOptimizationStatus(): Promise<boolean> {
+const BATTERY_UNRESTRICTED_CONFIRMED_KEY = "@odyssea_battery_unrestricted_confirmed";
+
+/** Android 14+ / OEM "App battery usage" often does not update PowerManager whitelist APIs. */
+export async function isAndroidBatteryCheckUnreliable(): Promise<boolean> {
 	if (Platform.OS !== "android") {
-		// iOS doesn't have battery optimization settings
+		return false;
+	}
+	if (typeof Platform.Version === "number" && Platform.Version >= 34) {
+		return true;
+	}
+	try {
+		const brand = (await DeviceInfo.getBrand()).toLowerCase();
+		return brand === "motorola";
+	} catch {
+		return false;
+	}
+}
+
+export async function markBatterySettingsManuallyConfirmed(): Promise<void> {
+	await AsyncStorage.setItem(BATTERY_UNRESTRICTED_CONFIRMED_KEY, "true");
+}
+
+export async function clearBatterySettingsManualConfirmation(): Promise<void> {
+	await AsyncStorage.removeItem(BATTERY_UNRESTRICTED_CONFIRMED_KEY);
+}
+
+async function isBatterySettingsManuallyConfirmed(): Promise<boolean> {
+	const value = await AsyncStorage.getItem(BATTERY_UNRESTRICTED_CONFIRMED_KEY);
+	return value === "true";
+}
+
+/** Raw PowerManager check — true when app is on the ignore-battery-optimizations whitelist. */
+export async function isPowerManagerIgnoringBatteryOptimizations(): Promise<boolean> {
+	if (Platform.OS !== "android") {
 		return true;
 	}
 
 	try {
-		// BatteryOptEnabled() returns true if optimization is ENABLED (bad for us)
-		// We need to return true if optimization is DISABLED (good for us)
-		// So we invert the result
 		const isOptimized = await BatteryOptEnabled();
-		const isIgnoring = !isOptimized; // If optimization is disabled, we're ignoring it (good)
-		console.log(`[checkBatteryOptimizationStatus] isOptimized: ${isOptimized}, isIgnoring: ${isIgnoring}`);
-		return isIgnoring;
+		return !isOptimized;
 	} catch (error) {
-		// If check fails, assume it's not optimized (user needs to enable it)
-		console.warn(`[checkBatteryOptimizationStatus] Error checking status:`, error);
-		// On some devices, if the check fails, it might mean optimization is not available
-		// or the app is already optimized. Return false to show the option.
+		console.warn(`[isPowerManagerIgnoringBatteryOptimizations] Error:`, error);
 		return false;
 	}
+}
+
+export async function checkBatteryOptimizationStatus(): Promise<boolean> {
+	if (Platform.OS !== "android") {
+		return true;
+	}
+
+	if (await isPowerManagerIgnoringBatteryOptimizations()) {
+		return true;
+	}
+
+	if (await isBatterySettingsManuallyConfirmed()) {
+		return true;
+	}
+
+	return false;
+}
+
+/**
+ * After the user opened battery settings on devices where PowerManager is unreliable,
+ * treat the step as complete when they return to the app.
+ */
+export async function confirmBatterySettingsAfterSettingsVisit(): Promise<boolean> {
+	if (Platform.OS !== "android") {
+		return false;
+	}
+
+	if (await isPowerManagerIgnoringBatteryOptimizations()) {
+		await clearBatterySettingsManualConfirmation();
+		return true;
+	}
+
+	if (!(await isAndroidBatteryCheckUnreliable())) {
+		return false;
+	}
+
+	await markBatterySettingsManuallyConfirmed();
+	return true;
 }
 
 /**
@@ -32,14 +96,11 @@ export async function isBatteryOptimizationAvailable(): Promise<boolean> {
 	if (Platform.OS !== "android") {
 		return false;
 	}
-	
+
 	try {
-		// Try to check if the battery optimization check function works
-		// If it throws an error, the feature is likely not available
 		await BatteryOptEnabled();
 		return true;
-	} catch (error) {
-		// If check fails, battery optimization is likely not available on this device
+	} catch {
 		return false;
 	}
 }
@@ -52,43 +113,37 @@ export async function isAutoStartAvailable(): Promise<boolean> {
 	if (Platform.OS !== "android") {
 		return false;
 	}
-	
+
 	try {
 		const brand = (await DeviceInfo.getBrand()).toLowerCase();
-		
-		// Try all possible autostart intents for this brand
+
 		const intentsToCheck: string[] = [];
-		
-		// Xiaomi / Redmi / POCO (MIUI) specific intents
+
 		if (brand === "xiaomi" || brand === "redmi" || brand === "poco") {
 			intentsToCheck.push(
 				"miui.intent.action.OP_AUTO_START",
 				"miui.intent.action.APP_PERM_EDITOR",
 				"miui.intent.action.privacycenter",
 				"package:com.miui.securitycenter",
-				"package:com.miui.powerkeeper"
+				"package:com.miui.powerkeeper",
 			);
 		}
-		
-		// Samsung specific intents
+
 		if (brand === "samsung") {
 			intentsToCheck.push(
 				"package:com.samsung.android.lool",
 				"package:com.samsung.android.sm",
 				"package:com.samsung.android.app.boostmanager",
-				"package:com.samsung.android.settings"
+				"package:com.samsung.android.settings",
 			);
 		}
-		
-		// Huawei specific intents
+
 		if (brand === "huawei") {
 			intentsToCheck.push("package:com.huawei.systemmanager");
 		}
-		
-		// Generic Android intents (try for all devices)
+
 		intentsToCheck.push("android.settings.APPLICATION_DETAILS_SETTINGS");
-		
-		// Check if any of the intents are available
+
 		for (const url of intentsToCheck) {
 			try {
 				const supported = await Linking.canOpenURL(url);
@@ -96,51 +151,36 @@ export async function isAutoStartAvailable(): Promise<boolean> {
 					console.log(`[isAutoStartAvailable] Autostart available via: ${url}`);
 					return true;
 				}
-			} catch (e) {
+			} catch {
 				// Continue checking other intents
 			}
 		}
-		
-		// If no intents are available, autostart is not available
+
 		console.log(`[isAutoStartAvailable] Autostart not available on ${brand}`);
 		return false;
 	} catch (error) {
-		// If detection fails, assume autostart is not available
 		console.warn(`[isAutoStartAvailable] Error checking availability:`, error);
 		return false;
 	}
 }
 
-/**
- * Check if device requires autostart warning based on brand and firmware
- * Returns true for devices that need manual autostart configuration
- * Based on table: Xiaomi (MIUI/HyperOS), Huawei (EMUI), Oppo (ColorOS),
- * Vivo (Funtouch), Realme (Realme UI), Honor (Magic UI)
- */
 export async function requiresAutostartWarning(): Promise<boolean> {
 	if (Platform.OS !== "android") {
 		return false;
 	}
-	
+
 	try {
 		const brand = (await DeviceInfo.getBrand()).toLowerCase();
-		
-		// Brands that require autostart warning:
-		// Xiaomi / Redmi / POCO (MIUI/HyperOS)
-		// Huawei (EMUI)
-		// Oppo (ColorOS)
-		// Vivo (Funtouch)
-		// Realme (Realme UI)
-		// Honor (Magic UI)
 		const brandsRequiringWarning = [
-			"xiaomi", "redmi", "poco", // Xiaomi group (MIUI/HyperOS)
-			"huawei", // Huawei (EMUI)
-			"oppo", // Oppo (ColorOS)
-			"vivo", // Vivo (Funtouch)
-			"realme", // Realme (Realme UI)
-			"honor", // Honor (Magic UI)
+			"xiaomi",
+			"redmi",
+			"poco",
+			"huawei",
+			"oppo",
+			"vivo",
+			"realme",
+			"honor",
 		];
-		
 		return brandsRequiringWarning.includes(brand);
 	} catch (error) {
 		console.warn(`[requiresAutostartWarning] Error checking brand:`, error);
@@ -148,17 +188,55 @@ export async function requiresAutostartWarning(): Promise<boolean> {
 	}
 }
 
+async function openIntentWithPackage(action: string): Promise<boolean> {
+	const packageName = Application.applicationId;
+	if (!packageName) {
+		return false;
+	}
+	try {
+		await IntentLauncher.startActivityAsync(action, {
+			data: `package:${packageName}`,
+		});
+		return true;
+	} catch (error) {
+		console.warn(`[openBatterySettings] Failed intent ${action}:`, error);
+		return false;
+	}
+}
+
 export async function openBatterySettings() {
 	if (Platform.OS !== "android") return;
-	
+
+	// Per-app battery screen (Motorola / Android 14+ "App battery usage", "Always allow")
+	if (typeof Platform.Version === "number" && Platform.Version >= 31) {
+		if (await openIntentWithPackage("android.settings.APP_BATTERY_SETTINGS")) {
+			return;
+		}
+	}
+
+	// System dialog to whitelist app from Doze / classic battery optimization list
+	if (
+		await openIntentWithPackage(
+			IntentLauncher.ActivityAction.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+		)
+	) {
+		return;
+	}
+
+	if (
+		await openIntentWithPackage(
+			IntentLauncher.ActivityAction.APPLICATION_DETAILS_SETTINGS,
+		)
+	) {
+		return;
+	}
+
 	try {
-		// Use the library's function to open battery optimization settings
 		OpenOptimizationSettings();
-	} catch (error) {
-		// Fallback to app settings
+	} catch {
 		try {
 			await Linking.openSettings();
-		} catch (e) {
+		} catch {
 			// Silent fail
 		}
 	}
@@ -166,22 +244,20 @@ export async function openBatterySettings() {
 
 export async function openAutoStartSettings() {
 	if (Platform.OS !== "android") return;
-	
+
 	const brand = (await DeviceInfo.getBrand()).toLowerCase();
-	
+
 	console.log("Device brand:", brand);
- 	
- 	// Xiaomi / Redmi / POCO (MIUI) specific intents for auto-start/battery settings
+
 	if (brand === "xiaomi" || brand === "redmi" || brand === "poco") {
 		const intents = [
 			"miui.intent.action.OP_AUTO_START",
 			"miui.intent.action.APP_PERM_EDITOR",
 			"miui.intent.action.privacycenter",
 			"package:com.miui.securitycenter",
- 			// Direct intents to auto-start or security settings where auto-start is often located
 			"package:com.miui.powerkeeper",
 		];
-		
+
 		for (const url of intents) {
 			try {
 				const supported = await Linking.canOpenURL(url);
@@ -192,23 +268,21 @@ export async function openAutoStartSettings() {
 			} catch {}
 		}
 	}
-	
-	// Huawei fallback
+
 	if (brand === "huawei") {
 		try {
 			return Linking.openURL("package:com.huawei.systemmanager");
 		} catch {}
 	}
-	
-	// Samsung specific intents for auto-start/battery optimization
+
 	if (brand === "samsung") {
 		const samsungIntents = [
-			"package:com.samsung.android.lool", // Device Care / Battery optimization
-			"package:com.samsung.android.sm", // Smart Manager
-			"package:com.samsung.android.app.boostmanager", // Boost Manager
-			"package:com.samsung.android.settings", // Samsung Settings
+			"package:com.samsung.android.lool",
+			"package:com.samsung.android.sm",
+			"package:com.samsung.android.app.boostmanager",
+			"package:com.samsung.android.settings",
 		];
-		
+
 		for (const url of samsungIntents) {
 			try {
 				const supported = await Linking.canOpenURL(url);
@@ -221,8 +295,7 @@ export async function openAutoStartSettings() {
 				console.warn(`[PermissionsAssistant] Failed to open Samsung intent ${url}:`, e);
 			}
 		}
-		
-		// Try direct settings intents
+
 		try {
 			await Linking.openURL("android.settings.APPLICATION_DETAILS_SETTINGS");
 			return;
@@ -230,7 +303,7 @@ export async function openAutoStartSettings() {
 			console.warn("[PermissionsAssistant] Failed to open application details:", e);
 		}
 	}
-	
+
 	console.log("Fallback: opening general app settings");
 	try {
 		await Linking.openSettings();

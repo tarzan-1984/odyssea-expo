@@ -48,12 +48,11 @@ import {
   formatGpsAccuracyLog,
 } from '@/utils/locationAccuracy';
 
-/** Matches BASIC_STATUS_OPTIONS — driver can change these in-app. */
+/** Statuses the driver can set in-app; loaded_enroute is TMS-only (read-only in UI). */
 const DRIVER_SELF_SERVICE_STATUSES: StatusValue[] = [
   'available',
   'available_on',
   'available_off',
-  'loaded_enroute',
   'on_vocation',
   'banned',
 ];
@@ -1275,8 +1274,8 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       setFormState('');
       setFormLocation('');
       setLocationLabel(null);
-    } else if (newStatus === 'available' || newStatus === 'loaded_enroute') {
-      // When "Available" or "Loaded & Enroute" is selected, clear ZIP - coords will come from GPS
+    } else if (newStatus === 'available') {
+      // When "Available" is selected, clear ZIP - coords will come from GPS (loaded_enroute is TMS-only, not in picker)
       zipClearedByStatusSelectRef.current = true;
       setZipState('');
       setFormCity('');
