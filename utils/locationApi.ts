@@ -276,6 +276,14 @@ export async function sendLocationUpdateToTMS(
   }
 }
 
+/** Address fields resolved on the server (PostGIS → cache → HERE). */
+export type ResolvedBackendUserLocation = {
+  city?: string;
+  state?: string;
+  zip?: string;
+  location?: string;
+};
+
 /** Result of PUT /users/:id/location (DB save + server-side TMS for drivers). */
 export type SendLocationToBackendResult = {
   ok: boolean;
@@ -283,7 +291,103 @@ export type SendLocationToBackendResult = {
   /** True when DB saved but TMS failed (HTTP 503). */
   tmsSyncFailed: boolean;
   tmsError?: string;
+  /** Saved user location fields returned by backend after server-side geocode. */
+  resolved?: ResolvedBackendUserLocation;
 };
+
+const USER_LOCATION_KEY = '@user_location';
+
+function extractUserFromBackendResponse(
+  responseData: unknown,
+): Record<string, unknown> | undefined {
+  const raw = responseData as Record<string, unknown> | null | undefined;
+  if (!raw) {
+    return undefined;
+  }
+  const data = raw.data;
+  if (data && typeof data === 'object') {
+    const envelope = data as Record<string, unknown>;
+    if (envelope.user && typeof envelope.user === 'object') {
+      return envelope.user as Record<string, unknown>;
+    }
+    if ('city' in envelope || 'zip' in envelope || 'latitude' in envelope) {
+      return envelope;
+    }
+  }
+  if (raw.user && typeof raw.user === 'object') {
+    return raw.user as Record<string, unknown>;
+  }
+  return undefined;
+}
+
+function extractResolvedUserFromBackendResponse(
+  responseData: unknown,
+): ResolvedBackendUserLocation | undefined {
+  const user = extractUserFromBackendResponse(responseData);
+  if (!user) {
+    return undefined;
+  }
+  const trim = (v: unknown): string | undefined => {
+    if (typeof v !== 'string') {
+      return undefined;
+    }
+    const t = v.trim();
+    return t || undefined;
+  };
+  return {
+    city: trim(user.city),
+    state: trim(user.state),
+    zip: trim(user.zip),
+    location: trim(user.location),
+  };
+}
+
+/** Map banner / form line from server-resolved address (zip optional). */
+export function buildLocationDisplayLabel(parts: {
+  city?: string;
+  state?: string;
+  zip?: string;
+  country?: string;
+}): string | undefined {
+  const city = parts.city?.trim();
+  const state = parts.state?.trim();
+  const zip = parts.zip?.trim();
+  const country = parts.country?.trim();
+  // Avoid misleading zip-only badges when city/state failed to resolve.
+  if (!city && !state && !country) {
+    return undefined;
+  }
+  const tokens = [city, state, zip, country].filter(Boolean);
+  return tokens.length > 0 ? tokens.join(' ') : undefined;
+}
+
+/** Cache server-resolved city/state/zip for map UI and next background ping. */
+export async function persistResolvedUserLocationToCache(params: {
+  latitude: number;
+  longitude: number;
+  resolved?: ResolvedBackendUserLocation;
+}): Promise<void> {
+  const zip = params.resolved?.zip;
+  const city = params.resolved?.city;
+  const state = params.resolved?.state;
+  await AsyncStorage.setItem(
+    USER_LOCATION_KEY,
+    JSON.stringify({
+      latitude: params.latitude,
+      longitude: params.longitude,
+      zipCode: zip,
+      city,
+      state,
+      lastUpdate: new Date().toISOString(),
+    }),
+  );
+  if (zip) {
+    await AsyncStorage.setItem('@user_zip', zip);
+  } else if (city || state) {
+    // Drop stale ZIP from another region when server sent a new city/state without zip.
+    await AsyncStorage.removeItem('@user_zip');
+  }
+}
 
 /**
  * Send location update to our own backend (DB + TMS sync on server for drivers).
@@ -422,6 +526,7 @@ export async function sendLocationUpdateToBackendUser(params: {
       }
 
       const wrappedOk = responseData?.data ?? responseData;
+      const resolved = extractResolvedUserFromBackendResponse(responseData);
 
       if (response.status === 503) {
         const errBody = responseData as { tmsError?: string; message?: string; databaseUpdated?: boolean };
@@ -435,12 +540,18 @@ export async function sendLocationUpdateToBackendUser(params: {
           tmsError,
           databaseUpdated: errBody?.databaseUpdated === true,
         });
-        return { ok: true, status: 503, tmsSyncFailed: true, tmsError: String(tmsError) };
+        return {
+          ok: true,
+          status: 503,
+          tmsSyncFailed: true,
+          tmsError: String(tmsError),
+          resolved,
+        };
       }
 
       if (response.ok) {
         console.log('[locationApi] ✅ Backend: Location update sent successfully');
-        return { ok: true, status: response.status, tmsSyncFailed: false };
+        return { ok: true, status: response.status, tmsSyncFailed: false, resolved };
       }
 
       fileLogger.error('locationApi', 'Backend location update returned non-2xx status', {

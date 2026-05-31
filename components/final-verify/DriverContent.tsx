@@ -6,7 +6,6 @@ import { BlurView } from 'expo-blur';
 import * as Location from 'expo-location';
 import {
   reverseGeocodeAsync,
-  reverseGeocodeWithDeviceFallback,
   GeocodedAddress,
   geocodeZipToAddress,
   geocodeWithPostalAsync,
@@ -27,21 +26,27 @@ import {
   sendLocationUpdateToBackendUser,
   getLocalIsoString,
   formatStatusDate,
+  persistResolvedUserLocationToCache,
+  buildLocationDisplayLabel,
 } from '@/utils/locationApi';
 import { fileLogger } from '@/utils/fileLogger';
 import { eventBus } from '@/services/EventBus';
 import type { DriverProfileSyncPayload } from '@/utils/driverProfileSync';
-import { saveLastSuccessfulReverseGeocodeTimestamp } from '@/constants/reverseGeocodeThrottle';
+import { saveLastSuccessfulReverseGeocodeTimestamp, saveGeocodeAnchor } from '@/constants/reverseGeocodeThrottle';
 import { recordSuccessfulLocationApiSend } from '@/constants/locationSendThrottle';
 import { getResolvedAppLocationSettings } from '@/utils/appLocationSettings';
 import { toTmsLocationCode } from '@/utils/tmsLocationCode';
 import { englishCountryLabel } from '@/utils/geocodeLocale';
 import { toBackendStateDisplayName } from '@/utils/stateDisplayName';
-import { isAllowedNorthAmericaLatLng } from '@/utils/geoFence';
 import {
   startBackgroundLocationTracking,
   stopBackgroundLocationTracking,
 } from '@/utils/backgroundLocationTracking';
+import {
+  getBestCurrentPositionAsync,
+  bestLocationAccuracy,
+  formatGpsAccuracyLog,
+} from '@/utils/locationAccuracy';
 
 /** Matches BASIC_STATUS_OPTIONS — driver can change these in-app. */
 const DRIVER_SELF_SERVICE_STATUSES: StatusValue[] = [
@@ -650,22 +655,35 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       // Don't auto-start tracking here - tracking should only start when user clicks "Share my location"
       // with automatic sharing enabled
 
-      // Prepare address label and form fields for saved location
+      // Address label from cached server geocode (@user_location), not client Nominatim.
       (async () => {
         try {
-          const reverseGeocode = await reverseGeocodeAsync({ latitude, longitude });
-          const geo = reverseGeocode && reverseGeocode.length > 0 ? reverseGeocode[0] : null;
-          if (geo) {
-            setLocationLabel(formatAddressLabel(geo));
-            const c = resolveCityForApi(geo);
-            const s =
-              toBackendStateDisplayName(geo.region, geo.isoCountryCode) || '';
-            const zipVal = authState.userZipCode || zip;
-            if (c) setFormCity(c);
-            if (s) setFormState(s);
-            if (c && s && zipVal) setFormLocation(`${c}, ${s} ${zipVal}`.trim());
+          const locationJson = await AsyncStorage.getItem('@user_location');
+          if (locationJson) {
+            const cached = JSON.parse(locationJson) as {
+              city?: string;
+              state?: string;
+              zipCode?: string;
+            };
+            const label = buildLocationDisplayLabel({
+              city: cached.city,
+              state: cached.state,
+              zip: cached.zipCode,
+            });
+            if (label) {
+              setLocationLabel(label);
+            }
+            if (cached.city) setFormCity(cached.city);
+            if (cached.state) setFormState(cached.state);
+            if (cached.city && cached.state && cached.zipCode) {
+              setFormLocation(
+                `${cached.city}, ${cached.state} ${cached.zipCode}`.trim(),
+              );
+            }
           }
-        } catch {}
+        } catch {
+          // ignore
+        }
       })();
     }
   }, [authState.userLocation, authState.userZipCode, automaticLocationSharing, startBackgroundLocationTracking, formatAddressLabel, setZip, status]); // Run when location data is available
@@ -680,7 +698,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       const locationJson = await AsyncStorage.getItem('@user_location');
       if (locationJson) {
         const locationData = JSON.parse(locationJson);
-        const { latitude, longitude, zipCode } = locationData;
+        const { latitude, longitude, zipCode, city, state } = locationData;
         
         // Update local state and map if coordinates exist
         if (latitude && longitude) {
@@ -700,8 +718,23 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           if (zipCode && !skipZipRestore && !skipDueToShare && !skipDueToStatusSelectClear) {
             setZip(zipCode);
           }
+
+          const label = buildLocationDisplayLabel({
+            city: typeof city === 'string' ? city : undefined,
+            state: typeof state === 'string' ? state : undefined,
+            zip: typeof zipCode === 'string' ? zipCode : undefined,
+          });
+          if (label) {
+            setLocationLabel(label);
+          }
+          if (typeof city === 'string' && city.trim()) {
+            setFormCity(city.trim());
+          }
+          if (typeof state === 'string' && state.trim()) {
+            setFormState(state.trim());
+          }
           
-          // Update map only — city/state/ZIP for server come from background task geocode, not Nominatim here
+          // Update map — city/state/zip come from background server geocode in @user_location
           if (coordsChanged) {
             const updateRegion: Region = {
               latitude: nextLat,
@@ -824,7 +857,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       // Check if we can get current location
       try {
         const pos = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
+          accuracy: bestLocationAccuracy(),
         });
         console.log('🔍 [Debug] Can get current location:', !!pos, pos ? { lat: pos.coords.latitude, lng: pos.coords.longitude } : null);
       } catch (error) {
@@ -908,29 +941,10 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           await updateUserLocation(geoResult.latitude, geoResult.longitude, zipToSend);
           setUserLocation({ latitude: geoResult.latitude, longitude: geoResult.longitude });
 
-          const rev = await reverseGeocodeAsync({
-            latitude: geoResult.latitude,
-            longitude: geoResult.longitude,
-          });
-          const g = rev[0];
-          if (g) {
-            const c = resolveCityForApi(g);
-            const regionRaw = g.region ? String(g.region).trim() : '';
-            const displayState =
-              toBackendStateDisplayName(regionRaw, g.isoCountryCode) ||
-              undefined;
-            cityForApi = c.trim() || undefined;
-            stateForApi = displayState;
-            locationLineForApi =
-              c && displayState
-                ? `${c}, ${displayState}${zipToSend ? ` ${zipToSend}` : ''}`.trim()
-                : locationLineForApi;
-            setFormCity(c);
-            if (displayState) setFormState(displayState);
-            if (locationLineForApi) {
-              setFormLocation(locationLineForApi);
-            }
-          }
+          // City/state resolved on server from coordinates (PostGIS → cache → HERE).
+          cityForApi = undefined;
+          stateForApi = undefined;
+          locationLineForApi = undefined;
         } catch {
           postDriverBanner('Failed to determine location from ZIP code');
           setTimeout(() => postDriverBanner(null), 3000);
@@ -946,16 +960,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
 
       const previousStatus = previousStatusRef.current;
 
-      const locationForApi =
-        toTmsLocationCode(stateForApi, locationLineForApi) || undefined;
-
-      const stateForBackend =
-        toBackendStateDisplayName(stateForApi, undefined) || stateForApi;
-
       const statusUpdatePayload = {
-        location: locationForApi,
-        city: cityForApi,
-        state: stateForBackend,
         zip: zipToSend,
         latitude: currentLocation.latitude,
         longitude: currentLocation.longitude,
@@ -967,10 +972,27 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       };
       logLocationApiPayload('Status update (save status)', statusUpdatePayload);
 
-      // Single request: backend persists + TMS for drivers
+      // Single request: backend persists + TMS for drivers; server fills city/state/location.
       const syncResult = await sendLocationUpdateToBackendUser(statusUpdatePayload);
 
       if (syncResult.ok) {
+        const resolved = syncResult.resolved;
+        if (resolved?.city) {
+          setFormCity(resolved.city);
+          cityForApi = resolved.city;
+        }
+        if (resolved?.state) {
+          setFormState(resolved.state);
+          stateForApi = resolved.state;
+        }
+        if (resolved?.zip && status === 'available_on') {
+          setZip(resolved.zip);
+        }
+        const zipForLine = resolved?.zip || zipToSend;
+        if (resolved?.city && resolved?.state) {
+          locationLineForApi = `${resolved.city}, ${resolved.state}${zipForLine ? ` ${zipForLine}` : ''}`.trim();
+          setFormLocation(locationLineForApi);
+        }
         if (syncResult.tmsSyncFailed) {
           console.warn('[DriverContent] Location/status saved; TMS sync failed:', syncResult.tmsError);
           fileLogger.error('DriverContent', 'TMS_SYNC_FAILED_AFTER_SAVE', {
@@ -1053,18 +1075,14 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         return;
       }
 
-      console.warn('[DriverContent] Getting current location');
-      let pos;
-      const tryGetLocation = async (accuracy: Location.Accuracy) => {
-        return Location.getCurrentPositionAsync({ accuracy });
-      };
+      console.warn('[DriverContent] Getting current location (best accuracy)');
+      let pos: Location.LocationObject;
       try {
-        try {
-          pos = await tryGetLocation(Location.Accuracy.Lowest);
-        } catch {
-          pos = await tryGetLocation(Location.Accuracy.Balanced);
-        }
-      } catch (locationError: any) {
+        pos = await getBestCurrentPositionAsync();
+        console.warn(
+          `[DriverContent] GPS fix: ${formatGpsAccuracyLog(pos.coords)}`,
+        );
+      } catch (locationError: unknown) {
         const errCode = locationError?.code;
         const errMsg = locationError instanceof Error ? locationError.message : String(locationError);
         fileLogger.error('DriverContent', 'Failed to get current location', {
@@ -1103,26 +1121,6 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         return;
       }
       const { latitude, longitude } = pos.coords;
-      // Geo-fence: prevent obviously wrong fixes for non-test drivers.
-      try {
-        const appLocEnv = await getResolvedAppLocationSettings();
-        const currentExternalId =
-          (await AsyncStorage.getItem('@user_external_id').catch(() => null))?.trim() || '';
-        const isTestDriver =
-          !!currentExternalId &&
-          !!appLocEnv.locationTestDriverExternalId &&
-          currentExternalId === String(appLocEnv.locationTestDriverExternalId).trim();
-        if (!isTestDriver) {
-          const ok = isAllowedNorthAmericaLatLng({ latitude, longitude });
-          if (!ok) {
-            postDriverBanner('Location looks invalid. Please try again.');
-            setTimeout(() => postDriverBanner(null), 4000);
-            return;
-          }
-        }
-      } catch {
-        // If check fails, do not block manual send.
-      }
       const nextRegion: Region = {
         latitude,
         longitude,
@@ -1130,92 +1128,94 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         longitudeDelta: 0.008,
       };
 
-      // Reverse geocode to get ZIP code and human-readable address
+      mapRef.current?.animateToRegion(nextRegion, 1000);
+      setUserLocation({ latitude, longitude });
+      setIsLocationReady(true);
+
+      console.log(
+        '[DriverContent] Share location — backend resolves address (PostGIS → cache → HERE)...',
+      );
+      const sharePayload = {
+        latitude,
+        longitude,
+        lastUpdateIso: getLocalIsoString(),
+        isAutoupdate: automaticLocationSharing,
+        isManualDriverLocationAction: true as const,
+      };
+      logLocationApiPayload('Manual share location', sharePayload);
+      const shareSync = await sendLocationUpdateToBackendUser(sharePayload);
+
       let postalCode = '';
       let city: string | undefined;
-      let locationString: string | undefined;
       let stateDisplayForApi: string | undefined;
-      try {
-        const reverseGeocode = await reverseGeocodeWithDeviceFallback({ latitude, longitude });
-        if (reverseGeocode && reverseGeocode.length > 0) {
-          const geo = reverseGeocode[0];
-          await saveLastSuccessfulReverseGeocodeTimestamp();
-          postalCode = (geo.postalCode || '').trim();
-          city = resolveCityForApi(geo) || undefined;
-          const regionRaw = geo.region ? String(geo.region).trim() : '';
-          stateDisplayForApi = toBackendStateDisplayName(
-            regionRaw,
-            geo.isoCountryCode
-          );
-          if (postalCode) {
-            zipJustSetFromShareRef.current = true;
-            setZip(postalCode);
-            setTimeout(() => {
-              zipJustSetFromShareRef.current = false;
-            }, 6000);
-          }
-          if (city) setFormCity(city);
-          if (stateDisplayForApi) setFormState(stateDisplayForApi);
-          const locStr = city && stateDisplayForApi && postalCode
-            ? `${city}, ${stateDisplayForApi} ${postalCode}`.trim()
-            : formatAddressLabel(geo);
-          setFormLocation(locStr);
-          locationString =
-            toTmsLocationCode(regionRaw, locStr) || undefined;
-          setLocationLabel(formatAddressLabel(geo));
-        }
-      } catch (geoError) {
-        fileLogger.error('DriverContent', 'Reverse geocoding failed', { error: geoError instanceof Error ? geoError.message : String(geoError) });
-        console.warn('Failed to get ZIP code from geocoding:', geoError);
-      }
 
-      const finalZipCode = (postalCode || zip || '').trim();
-      await updateUserLocation(latitude, longitude, finalZipCode);
+      if (shareSync.ok) {
+        const resolved = shareSync.resolved;
+        postalCode = resolved?.zip?.trim() || '';
+        city = resolved?.city?.trim() || undefined;
+        stateDisplayForApi = resolved?.state?.trim() || undefined;
 
-      if (automaticLocationSharing) {
-        console.log('[DriverContent] Sync location to backend after Share (location only; driverStatus unchanged on server)...');
-        const sharePayload = {
-          location: locationString,
-          city,
-          state: stateDisplayForApi,
-          zip: finalZipCode,
+        await saveGeocodeAnchor(latitude, longitude);
+        await saveLastSuccessfulReverseGeocodeTimestamp();
+        await persistResolvedUserLocationToCache({
           latitude,
           longitude,
-          lastUpdateIso: getLocalIsoString(),
-          isAutoupdate: automaticLocationSharing,
-          isManualDriverLocationAction: true as const,
-        };
-        logLocationApiPayload('Manual share location', sharePayload);
-        const shareSync = await sendLocationUpdateToBackendUser(sharePayload);
+          resolved,
+        });
 
-        if (shareSync.ok) {
-          if (shareSync.tmsSyncFailed) {
-            console.warn('[DriverContent] Share: saved; TMS failed:', shareSync.tmsError);
-            fileLogger.error('DriverContent', 'TMS_SYNC_FAILED_AFTER_SHARE', {
-              tmsError: shareSync.tmsError,
-            });
-          }
-          await recordSuccessfulLocationApiSend();
-        } else {
-          fileLogger.error('DriverContent', 'BACKEND_SYNC_FAILED_AFTER_SHARE', {
-            status: shareSync.status,
+        if (city) setFormCity(city);
+        if (stateDisplayForApi) setFormState(stateDisplayForApi);
+        const locStr = buildLocationDisplayLabel({
+          city,
+          state: stateDisplayForApi,
+          zip: postalCode || undefined,
+        });
+        if (locStr) {
+          setFormLocation(locStr);
+          setLocationLabel(locStr);
+        } else if (city || stateDisplayForApi) {
+          const partial = buildLocationDisplayLabel({
+            city,
+            state: stateDisplayForApi,
           });
+          if (partial) {
+            setLocationLabel(partial);
+          }
         }
 
-        await startBackgroundLocationTracking();
-      } else {
         if (postalCode) {
           zipJustSetFromShareRef.current = true;
           setZip(postalCode);
           setTimeout(() => {
             zipJustSetFromShareRef.current = false;
           }, 6000);
+        } else if (city || stateDisplayForApi) {
+          // Drop stale ZIP from another country (e.g. Peru) when server sent new city/state only.
+          zipJustSetFromShareRef.current = true;
+          await setZip('');
+          setTimeout(() => {
+            zipJustSetFromShareRef.current = false;
+          }, 6000);
         }
-      }
 
-      mapRef.current?.animateToRegion(nextRegion, 1000);
-      setUserLocation({ latitude, longitude });
-      setIsLocationReady(true);
+        await updateUserLocation(latitude, longitude, postalCode || '');
+
+        if (shareSync.tmsSyncFailed) {
+          console.warn('[DriverContent] Share: saved; TMS failed:', shareSync.tmsError);
+          fileLogger.error('DriverContent', 'TMS_SYNC_FAILED_AFTER_SHARE', {
+            tmsError: shareSync.tmsError,
+          });
+        }
+        await recordSuccessfulLocationApiSend();
+
+        if (automaticLocationSharing) {
+          await startBackgroundLocationTracking();
+        }
+      } else {
+        fileLogger.error('DriverContent', 'BACKEND_SYNC_FAILED_AFTER_SHARE', {
+          status: shareSync.status,
+        });
+      }
 
       if (postalCode) {
         postDriverBanner('Location obtained successfully');
@@ -1361,42 +1361,13 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
             }
           }
 
-          const pos = await Location.getCurrentPositionAsync({
-            accuracy: Location.Accuracy.Balanced,
-          });
+          const pos = await getBestCurrentPositionAsync();
+          console.log(
+            `[DriverContent] Enable auto-sharing GPS: ${formatGpsAccuracyLog(pos.coords)}`,
+          );
           currentLatitude = pos.coords.latitude;
           currentLongitude = pos.coords.longitude;
 
-          // Reverse geocode to get ZIP code
-          try {
-            const reverseGeocode = await reverseGeocodeAsync({ latitude: currentLatitude, longitude: currentLongitude });
-            if (reverseGeocode && reverseGeocode.length > 0) {
-              const geo = reverseGeocode[0];
-              const postalCode = geo.postalCode || '';
-              geoCity = resolveCityForApi(geo) || undefined;
-              const regionRaw = geo.region ? String(geo.region).trim() : '';
-              geoState = regionRaw
-                ? toBackendStateDisplayName(regionRaw, geo.isoCountryCode) ||
-                  undefined
-                : undefined;
-              if (postalCode) {
-                currentZipCode = postalCode;
-                if (status !== 'available_on') {
-                  await setZip(postalCode);
-                }
-              }
-              if (geoCity) setFormCity(geoCity);
-              if (geoState) setFormState(geoState);
-              if (geoCity && geoState && currentZipCode) {
-                setFormLocation(`${geoCity}, ${geoState} ${currentZipCode}`.trim());
-              }
-              setLocationLabel(formatAddressLabel(geo));
-            }
-          } catch (geoError) {
-            console.warn('Failed to get ZIP code from geocoding:', geoError);
-          }
-          
-          // Update map
           const nextRegion: Region = {
             latitude: currentLatitude,
             longitude: currentLongitude,
@@ -1415,19 +1386,11 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         currentLongitude = userLocation.longitude;
       }
       
-      if (status && currentZipCode) {
-        console.log('[DriverContent] Sync location to backend after enabling auto-sharing...');
-        const cityToSend = geoCity ?? (formCity || undefined);
-        const stateToSend = geoState ?? (formState || undefined);
-        const locStr = cityToSend && stateToSend ? `${cityToSend}, ${stateToSend} ${currentZipCode}`.trim() : undefined;
-        const locationCode = toTmsLocationCode(stateToSend, locStr) || undefined;
-        const stateForBackend =
-          toBackendStateDisplayName(stateToSend) || stateToSend;
+      if (status) {
+        console.log(
+          '[DriverContent] Sync location to backend after enabling auto-sharing (server geocode)...',
+        );
         const togglePayload = {
-          location: locationCode,
-          city: cityToSend,
-          state: stateForBackend,
-          zip: currentZipCode,
           latitude: currentLatitude,
           longitude: currentLongitude,
           lastUpdateIso: getLocalIsoString(),
@@ -1442,6 +1405,49 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         const toggleSync = await sendLocationUpdateToBackendUser(togglePayload);
 
         if (toggleSync.ok) {
+          const resolved = toggleSync.resolved;
+          if (resolved?.zip) {
+            currentZipCode = resolved.zip;
+            if (status !== 'available_on') {
+              await setZip(resolved.zip);
+            }
+          }
+          if (resolved?.city) {
+            geoCity = resolved.city;
+            setFormCity(resolved.city);
+          }
+          if (resolved?.state) {
+            geoState = resolved.state;
+            setFormState(resolved.state);
+          }
+          if (resolved?.city && resolved?.state && currentZipCode) {
+            const label = buildLocationDisplayLabel({
+              city: resolved.city,
+              state: resolved.state,
+              zip: currentZipCode,
+            });
+            if (label) {
+              setFormLocation(label);
+              setLocationLabel(label);
+            }
+          } else if (resolved?.city || resolved?.state) {
+            const label = buildLocationDisplayLabel({
+              city: resolved?.city,
+              state: resolved?.state,
+              zip: resolved?.zip,
+            });
+            if (label) {
+              setLocationLabel(label);
+            }
+          }
+          await saveGeocodeAnchor(currentLatitude, currentLongitude);
+          await saveLastSuccessfulReverseGeocodeTimestamp();
+          await persistResolvedUserLocationToCache({
+            latitude: currentLatitude,
+            longitude: currentLongitude,
+            resolved,
+          });
+
           if (toggleSync.tmsSyncFailed) {
             console.warn('[DriverContent] Auto-sharing: saved; TMS failed:', toggleSync.tmsError);
             fileLogger.error('DriverContent', 'TMS_SYNC_FAILED_AUTO_SHARING', {

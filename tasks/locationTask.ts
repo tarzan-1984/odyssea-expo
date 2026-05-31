@@ -17,7 +17,6 @@ import {
   haversineDistanceMeters,
 } from '@/constants/locationSendThrottle';
 import { toTmsLocationCode } from '@/utils/tmsLocationCode';
-import { reverseGeocodeNominatimThenExpo } from '@/utils/geocoding';
 import { toBackendStateDisplayName } from '@/utils/stateDisplayName';
 import { isAllowedNorthAmericaLatLng } from '@/utils/geoFence';
 
@@ -197,11 +196,11 @@ try {
         }
 
         // Reverse geocode only for loaded_enroute & available, when moved ≥ threshold from
-        // last anchor. Nominatim first (Accept-Language: en — city/state for DB/TMS in English).
-        // Expo may fill postal code only (never city/state — device locale). No AsyncStorage merge.
+        // Server resolves address via PostGIS → geo_reverse_cache → HERE when fields are omitted.
         let postalCode = '';
         let city = '';
         let state = '';
+        let omitAddressFieldsForServerGeocode = false;
 
         const savedStatusForGeocode = await AsyncStorage.getItem('@user_status');
         const statusLabel =
@@ -221,8 +220,9 @@ try {
           const anchor = await loadGeocodeAnchor();
           if (!anchor) {
             shouldRunReverseGeocode = true;
+            omitAddressFieldsForServerGeocode = true;
             console.log(
-              `[LocationTask] Geocode: no anchor yet — will run (Nominatim → Expo for gaps)`
+              `[LocationTask] Geocode: no anchor yet — server will resolve address (PostGIS → cache → HERE)`,
             );
           } else {
             const movedM = haversineDistanceMeters(
@@ -233,12 +233,13 @@ try {
             );
             if (movedM >= geocodeThresholdM) {
               shouldRunReverseGeocode = true;
+              omitAddressFieldsForServerGeocode = true;
               console.log(
-                `[LocationTask] Geocode: moved ${Math.round(movedM)}m >= ${geocodeThresholdM}m — will run`
+                `[LocationTask] Geocode: moved ${Math.round(movedM)}m >= ${geocodeThresholdM}m — server will resolve address`,
               );
             } else {
               console.log(
-                `[LocationTask] Geocode: moved ${Math.round(movedM)}m < ${geocodeThresholdM}m — skipping reverse geocode (coords-only update)`
+                `[LocationTask] Geocode: moved ${Math.round(movedM)}m < ${geocodeThresholdM}m — skipping reverse geocode (coords-only update)`,
               );
             }
           }
@@ -248,32 +249,13 @@ try {
           console.log(
             `[LocationTask] Reverse geocode skipped (distance/status) — omit address fields; coords-only PATCH so DB city/state/zip/location unchanged`,
           );
-        } else {
-          try {
-            const resolved = await reverseGeocodeNominatimThenExpo({
-              latitude,
-              longitude,
-              logTag: '[LocationTask]',
-            });
-            postalCode = resolved.postalCode;
-            city = resolved.city;
-            state = resolved.state;
-
-            const hasAnyResolvedAddressPart = !!(
-              (postalCode && postalCode.trim()) ||
-              city.trim() ||
-              state.trim()
-            );
-            if (hasAnyResolvedAddressPart) {
-              await saveGeocodeAnchor(latitude, longitude);
-              await saveLastSuccessfulReverseGeocodeTimestamp();
-            }
-          } catch (geoError) {
-            fileLogger.error('LocationTask', 'GEOCODING_ERROR', {
-              error:
-                geoError instanceof Error ? geoError.message : String(geoError),
-            });
-          }
+        } else if (omitAddressFieldsForServerGeocode) {
+          postalCode = '';
+          city = '';
+          state = '';
+          console.log(
+            `[LocationTask] Omitting city/state/zip — backend resolves via PostGIS → geo_reverse_cache → HERE`,
+          );
         }
 
         // Double-check if automatic location sharing is still enabled (user might have disabled it during geocoding)
@@ -435,6 +417,7 @@ try {
                   console.log(`📤 [LocationTask] Lat/Lng: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
 
                   let backendUpdateSuccess = false;
+                  let resolvedFromServer: { city?: string; state?: string; zip?: string } | undefined;
                   try {
                     if (sendLocationUpdateToBackendUser) {
                       const locationStr = state ? toTmsLocationCode(state) || undefined : undefined;
@@ -452,6 +435,7 @@ try {
                         isBackgroundTaskLocationUpdate: true,
                       });
                       backendUpdateSuccess = locResult.ok;
+                      resolvedFromServer = locResult.resolved;
                       if (locResult.tmsSyncFailed) {
                         console.warn(
                           `[LocationTask] Backend saved location; TMS sync failed:`,
@@ -495,20 +479,29 @@ try {
                   // Save coordinates and time only after successful backend update
                   if (backendUpdateSuccess) {
                     try {
+                      if (omitAddressFieldsForServerGeocode) {
+                        await saveGeocodeAnchor(latitude, longitude);
+                        await saveLastSuccessfulReverseGeocodeTimestamp();
+                      }
                       await recordSuccessfulLocationApiSend();
+                      const resolvedZip = resolvedFromServer?.zip?.trim() || '';
+                      const resolvedCity = resolvedFromServer?.city?.trim() || '';
+                      const resolvedState = resolvedFromServer?.state?.trim() || '';
                       const locationData = {
                         latitude,
                         longitude,
-                        zipCode: finalPostalCode ? finalPostalCode : undefined,
-                        city: city.trim() ? city.trim() : undefined,
-                        state: state.trim() ? state.trim() : undefined,
+                        zipCode: resolvedZip || (finalPostalCode ? finalPostalCode : undefined),
+                        city: resolvedCity || (city.trim() ? city.trim() : undefined),
+                        state: resolvedState || (state.trim() ? state.trim() : undefined),
                         lastUpdate: new Date().toISOString()
                       };
                       // Save to AsyncStorage (unified storage for both foreground and background)
                       await AsyncStorage.setItem(USER_LOCATION_KEY, JSON.stringify(locationData));
                       
                       // Also save zip code separately to @user_zip for easier access
-                      if (finalPostalCode) {
+                      if (resolvedZip) {
+                        await AsyncStorage.setItem('@user_zip', resolvedZip);
+                      } else if (finalPostalCode) {
                         await AsyncStorage.setItem('@user_zip', finalPostalCode);
                       }
                     } catch (storageError) {

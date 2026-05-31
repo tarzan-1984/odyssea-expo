@@ -6,14 +6,22 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LOCATION_TASK_NAME } from '@/tasks/locationTask';
 import { getResolvedAppLocationSettings } from '@/utils/appLocationSettings';
 import { fileLogger } from '@/utils/fileLogger';
-import { sendLocationUpdateToBackendUser, getLocalIsoString } from '@/utils/locationApi';
+import {
+  sendLocationUpdateToBackendUser,
+  getLocalIsoString,
+  persistResolvedUserLocationToCache,
+} from '@/utils/locationApi';
 import { recordSuccessfulLocationApiSend } from '@/constants/locationSendThrottle';
 import { isAllowedNorthAmericaLatLng } from '@/utils/geoFence';
-import { reverseGeocodeNominatimThenExpo } from '@/utils/geocoding';
-import { toTmsLocationCode } from '@/utils/tmsLocationCode';
-import { toBackendStateDisplayName } from '@/utils/stateDisplayName';
-
-const USER_LOCATION_KEY = '@user_location';
+import {
+  saveGeocodeAnchor,
+  saveLastSuccessfulReverseGeocodeTimestamp,
+} from '@/constants/reverseGeocodeThrottle';
+import {
+  bestLocationAccuracy,
+  CURRENT_POSITION_ACCURACY_CHAIN,
+  formatGpsAccuracyLog,
+} from '@/utils/locationAccuracy';
 
 export type StartBackgroundTrackingOptions = {
   /** When true, skip stop/restart if updates are already running (foreground heal). */
@@ -22,6 +30,118 @@ export type StartBackgroundTrackingOptions = {
 
 export async function isBackgroundLocationTrackingRunning(): Promise<boolean> {
   return Location.hasStartedLocationUpdatesAsync(LOCATION_TASK_NAME).catch(() => false);
+}
+
+type ImmediatePingCoords = {
+  latitude: number;
+  longitude: number;
+  source: 'fresh' | 'lastKnown' | 'cache';
+};
+
+/** kCLErrorLocationUnknown — GPS warming up; retry/fallback is expected on iOS. */
+function isTransientGpsFailure(message: string): boolean {
+  const m = message.toLowerCase();
+  return (
+    m.includes('kcleerrordomain error 0') ||
+    m.includes('cannot obtain current location') ||
+    m.includes('location is unavailable') ||
+    m.includes('location request timed out')
+  );
+}
+
+async function loadCachedUserCoordinates(): Promise<ImmediatePingCoords | null> {
+  try {
+    const json = await AsyncStorage.getItem('@user_location');
+    if (!json) return null;
+    const data = JSON.parse(json) as { latitude?: number; longitude?: number };
+    if (
+      typeof data.latitude === 'number' &&
+      typeof data.longitude === 'number' &&
+      Number.isFinite(data.latitude) &&
+      Number.isFinite(data.longitude)
+    ) {
+      return {
+        latitude: data.latitude,
+        longitude: data.longitude,
+        source: 'cache',
+      };
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+/**
+ * Fresh GPS first; on kCLError 0 / timeout fall back to last-known or @user_location cache.
+ */
+async function resolveCoordinatesForImmediatePing(): Promise<ImmediatePingCoords | null> {
+  const servicesOn = await Location.hasServicesEnabledAsync().catch(() => false);
+  if (!servicesOn) {
+    console.warn('[AppActive] Location services disabled — skipping fresh GPS');
+    return loadCachedUserCoordinates();
+  }
+
+  const accuracies = CURRENT_POSITION_ACCURACY_CHAIN;
+
+  let lastGpsError: unknown;
+  for (const accuracy of accuracies) {
+    try {
+      const pos = await Location.getCurrentPositionAsync({ accuracy });
+      console.log(
+        `[AppActive] GPS fix accuracy=${accuracy}: ${formatGpsAccuracyLog(pos.coords)}`,
+      );
+      return {
+        latitude: pos.coords.latitude,
+        longitude: pos.coords.longitude,
+        source: 'fresh',
+      };
+    } catch (gpsError) {
+      lastGpsError = gpsError;
+      const msg = gpsError instanceof Error ? gpsError.message : String(gpsError);
+      console.warn(
+        `[AppActive] getCurrentPositionAsync (${accuracy}) failed: ${msg}`,
+      );
+    }
+  }
+
+  try {
+    const last = await Location.getLastKnownPositionAsync();
+    if (
+      last &&
+      Number.isFinite(last.coords.latitude) &&
+      Number.isFinite(last.coords.longitude)
+    ) {
+      console.log('[AppActive] Using getLastKnownPositionAsync after GPS miss');
+      return {
+        latitude: last.coords.latitude,
+        longitude: last.coords.longitude,
+        source: 'lastKnown',
+      };
+    }
+  } catch {
+    // ignore
+  }
+
+  const cached = await loadCachedUserCoordinates();
+  if (cached) {
+    console.log('[AppActive] Using @user_location cache after GPS miss');
+    return cached;
+  }
+
+  const errMsg =
+    lastGpsError instanceof Error ? lastGpsError.message : String(lastGpsError ?? 'unknown');
+  if (isTransientGpsFailure(errMsg)) {
+    fileLogger.warn('BackgroundTracking', 'IMMEDIATE_PING_GPS_DEFERRED', {
+      error: errMsg,
+      note: 'Background LocationTask will send when GPS is ready',
+    });
+  } else {
+    fileLogger.error('BackgroundTracking', 'IMMEDIATE_PING_GPS_FAILED', {
+      error: errMsg,
+    });
+  }
+  return null;
 }
 
 /**
@@ -67,28 +187,19 @@ export async function sendImmediateBackgroundLocationPing(): Promise<void> {
     }
 
     console.log(
-      '📍 [AppActive] Requesting fresh GPS fix via getCurrentPositionAsync (not cached coords)...',
+      '📍 [AppActive] Requesting GPS fix (fresh → lastKnown → cache fallback)...',
     );
-    let pos: Location.LocationObject;
-    try {
-      pos = await Location.getCurrentPositionAsync({
-        accuracy:
-          Platform.OS === 'ios' ? Location.Accuracy.Balanced : Location.Accuracy.Balanced,
-      });
-    } catch (gpsError) {
-      console.error(
-        '❌ [AppActive] Immediate PUT aborted — getCurrentPositionAsync failed:',
-        gpsError instanceof Error ? gpsError.message : String(gpsError),
+    const resolvedCoords = await resolveCoordinatesForImmediatePing();
+    if (!resolvedCoords) {
+      console.warn(
+        '⏸️ [AppActive] Immediate PUT skipped — no coordinates yet (GPS still warming up; LocationTask will send later)',
       );
-      fileLogger.error('BackgroundTracking', 'IMMEDIATE_PING_GPS_FAILED', {
-        error: gpsError instanceof Error ? gpsError.message : String(gpsError),
-      });
       return;
     }
 
-    const { latitude, longitude } = pos.coords;
+    const { latitude, longitude, source: coordSource } = resolvedCoords;
     console.log(
-      `📍 [AppActive] Fresh GPS: lat=${latitude.toFixed(6)} lng=${longitude.toFixed(6)}`,
+      `📍 [AppActive] Coords source=${coordSource}: lat=${latitude.toFixed(6)} lng=${longitude.toFixed(6)}`,
     );
     if (!isTestDriver && !isAllowedNorthAmericaLatLng({ latitude, longitude })) {
       console.warn(
@@ -97,40 +208,6 @@ export async function sendImmediateBackgroundLocationPing(): Promise<void> {
       return;
     }
 
-    let zip =
-      (await AsyncStorage.getItem('@user_zip').catch(() => null))?.trim() || '';
-    let city = '';
-    let state = '';
-    try {
-      const locJson = await AsyncStorage.getItem(USER_LOCATION_KEY);
-      if (locJson) {
-        const loc = JSON.parse(locJson) as {
-          zipCode?: string;
-          city?: string;
-          state?: string;
-        };
-        if (!zip && loc.zipCode) zip = String(loc.zipCode).trim();
-        if (loc.city) city = String(loc.city).trim();
-        if (loc.state) state = String(loc.state).trim();
-      }
-    } catch {
-      // ignore
-    }
-
-    try {
-      const resolved = await reverseGeocodeNominatimThenExpo({
-        latitude,
-        longitude,
-        logTag: '[AppActive][ImmediatePUT]',
-      });
-      if (resolved.city) city = resolved.city;
-      if (resolved.state) state = resolved.state;
-      if (resolved.postalCode) zip = resolved.postalCode;
-    } catch {
-      // coords-only is fine
-    }
-
-    const locationStr = state ? toTmsLocationCode(state) || undefined : undefined;
     const timestamp = getLocalIsoString();
 
     const userId = await AsyncStorage.getItem('@user_id');
@@ -143,12 +220,13 @@ export async function sendImmediateBackgroundLocationPing(): Promise<void> {
         {
           latitude,
           longitude,
-          city: city || null,
-          state: state || null,
-          zip: zip || null,
+          city: null,
+          state: null,
+          zip: null,
           isAutoupdate: true,
           isBackgroundTaskLocationUpdate: true,
           lastLocationUpdateAt: timestamp,
+          note: 'server resolves address via PostGIS → geo_reverse_cache → HERE',
         },
         null,
         2,
@@ -156,10 +234,6 @@ export async function sendImmediateBackgroundLocationPing(): Promise<void> {
     );
 
     const result = await sendLocationUpdateToBackendUser({
-      location: locationStr,
-      city: city || undefined,
-      state: state ? toBackendStateDisplayName(state) || state : undefined,
-      zip: zip || undefined,
       latitude,
       longitude,
       lastUpdateIso: timestamp,
@@ -168,22 +242,15 @@ export async function sendImmediateBackgroundLocationPing(): Promise<void> {
     });
 
     if (result.ok) {
+      await saveGeocodeAnchor(latitude, longitude);
+      await saveLastSuccessfulReverseGeocodeTimestamp();
       await recordSuccessfulLocationApiSend();
       try {
-        await AsyncStorage.setItem(
-          USER_LOCATION_KEY,
-          JSON.stringify({
-            latitude,
-            longitude,
-            zipCode: zip || undefined,
-            city: city || undefined,
-            state: state || undefined,
-            lastUpdate: new Date().toISOString(),
-          }),
-        );
-        if (zip) {
-          await AsyncStorage.setItem('@user_zip', zip);
-        }
+        await persistResolvedUserLocationToCache({
+          latitude,
+          longitude,
+          resolved: result.resolved,
+        });
       } catch {
         // ignore
       }
@@ -366,7 +433,7 @@ export async function startBackgroundLocationTracking(
     // iOS requires distanceInterval > 0. If admin sets 0 (no distance gate for API throttle), use 1 m for OS callbacks.
     const nativeDistanceIntervalM = Math.max(1, locationMinDistanceM);
     const locationOptions: Location.LocationTaskOptions = {
-      accuracy: Platform.OS === 'ios' ? Location.Accuracy.Highest : Location.Accuracy.Balanced, // Higher accuracy for iOS to ensure updates
+      accuracy: bestLocationAccuracy(),
       timeInterval: osTimeIntervalMs,
       distanceInterval: nativeDistanceIntervalM,
       ...(Platform.OS === 'android'
