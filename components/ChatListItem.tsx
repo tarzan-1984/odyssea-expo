@@ -18,9 +18,21 @@ export interface User {
   lastName: string;
   avatar?: string;
   profilePhoto?: string;
+  userColor?: string | null;
   role?: string;
   unit?: string;
 }
+
+export type MessageReactionUser = Pick<
+  User,
+  'id' | 'firstName' | 'lastName' | 'avatar' | 'profilePhoto' | 'userColor' | 'role'
+>;
+
+export type MessageReactionGroup = {
+  emoji: string;
+  users: MessageReactionUser[];
+  hasCurrentUser: boolean;
+};
 
 export interface Message {
   id: string;
@@ -44,6 +56,7 @@ export interface Message {
   createdAt: string;
   sender: User;
   receiver?: User;
+  reactions?: MessageReactionGroup[];
 }
 
 export interface ChatRoomParticipant {

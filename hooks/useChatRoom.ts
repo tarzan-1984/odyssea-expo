@@ -15,6 +15,11 @@ const OPENED_CHATS_KEY = '@chat_opened_rooms';
 // Stable empty array to avoid creating a new reference on each render
 const EMPTY_MESSAGES: Message[] = [];
 
+const getReactionsSignature = (message: Message): string =>
+  (message.reactions ?? [])
+    .map((group) => `${group.emoji}:${group.users.map((user) => user.id).join('|')}:${group.hasCurrentUser ? 1 : 0}`)
+    .join(',');
+
 interface UseChatRoomReturn {
   chatRoom: ChatRoom | null;
   messages: Message[];
@@ -98,7 +103,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
     if (!chatRoomId) return;
     if (!storeMessages || storeMessages.length === 0) return;
     setMessages((prev) => {
-      // If different length or any read/isRead differs, replace with store
+      // If different length, read state, or reactions differ, replace with store.
       if (prev.length !== storeMessages.length) return [...storeMessages];
       const changed = storeMessages.some((m) => {
         const p = prev.find((pm) => pm.id === m.id);
@@ -106,7 +111,8 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
         if (p.isRead !== m.isRead) return true;
         const a = (p.readBy || []).join(',');
         const b = (m.readBy || []).join(',');
-        return a !== b;
+        if (a !== b) return true;
+        return getReactionsSignature(p) !== getReactionsSignature(m);
       });
       return changed ? [...storeMessages] : prev;
     });

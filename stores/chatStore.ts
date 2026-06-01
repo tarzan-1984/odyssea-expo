@@ -75,6 +75,13 @@ const storeCreator: StateCreator<ChatState> = (set, get) => ({
     const current = get().messagesByRoom[chatRoomId] || [];
     const next = current.map((m) => (m.id === messageId ? ({ ...m, ...updates } as Message) : m));
     set({ messagesByRoom: { ...get().messagesByRoom, [chatRoomId]: next } });
+
+    const room = get().chatRooms.find((r) => r.id === chatRoomId);
+    if (room?.lastMessage?.id === messageId) {
+      get().updateChatRoom(chatRoomId, {
+        lastMessage: { ...room.lastMessage, ...updates } as Message,
+      });
+    }
   },
 
   removeMessage: (chatRoomId, messageId) => {

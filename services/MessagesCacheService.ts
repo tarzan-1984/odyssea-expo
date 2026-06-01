@@ -187,12 +187,42 @@ class MessagesCacheService {
   /**
    * Update a specific message in cache
    */
-  async updateMessage(messageId: string, updates: Partial<Message>): Promise<void> {
+  async updateMessage(
+    messageId: string,
+    chatRoomIdOrUpdates: string | Partial<Message>,
+    maybeUpdates?: Partial<Message>
+  ): Promise<void> {
     try {
-      // We need to find which chat room this message belongs to
-      // Since we don't have a direct way to find it, we'll need to iterate through all cached chat rooms
-      // For now, this is a simplified version - in production you might want to store a message->chatRoomId mapping
-      // TODO: Implement message update if needed
+      const chatRoomId =
+        typeof chatRoomIdOrUpdates === 'string' ? chatRoomIdOrUpdates : undefined;
+      const updates =
+        typeof chatRoomIdOrUpdates === 'string' ? maybeUpdates : chatRoomIdOrUpdates;
+
+      if (!updates) return;
+
+      const updateInRoom = async (roomId: string) => {
+        const currentMessages = await this.getMessages(roomId);
+        if (!currentMessages.some((message) => message.id === messageId)) return false;
+
+        const updatedMessages = currentMessages.map((message) =>
+          message.id === messageId ? { ...message, ...updates } : message
+        );
+        await this.saveMessages(roomId, updatedMessages);
+        return true;
+      };
+
+      if (chatRoomId) {
+        await updateInRoom(chatRoomId);
+        return;
+      }
+
+      const keys = await AsyncStorage.getAllKeys();
+      const messageKeys = keys.filter((key) => key.startsWith(MESSAGES_KEY_PREFIX));
+      for (const key of messageKeys) {
+        const roomId = key.slice(MESSAGES_KEY_PREFIX.length);
+        const updated = await updateInRoom(roomId);
+        if (updated) break;
+      }
     } catch (error) {
       console.error('❌ [MessagesCache] Failed to update message:', error);
       throw error;

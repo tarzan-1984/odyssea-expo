@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, TextInput } from 'react-nativ
 import { colors, fonts, fp, rem } from '@/lib';
 import SmileIcon from '@/icons/SmileIcon';
 import AttachmentIcon from '@/icons/AttachmentIcon';
+import FileIcon from '@/icons/FileIcon';
 import SendIcon from '@/icons/SendIcon';
 import ReplyPreview from '@/components/ReplyPreview';
 import { Message } from '@/components/ChatListItem';
@@ -13,6 +14,7 @@ interface ChatInputSectionProps {
   onMessageTextChange: (text: string) => void;
   onSendPress: () => void;
   onEmojiPress: () => void;
+  onTemplatesPress?: () => void;
   onAttachmentPress: () => void;
   replyingTo: Message['replyData'] | null;
   onCancelReply: () => void;
@@ -20,6 +22,7 @@ interface ChatInputSectionProps {
   onRemoveUploadItem?: (index: number) => void;
   isSendingMessage: boolean;
   isConnected: boolean;
+  showTemplatesButton?: boolean;
   onLayout?: (height: number) => void;
 }
 
@@ -28,6 +31,7 @@ export default function ChatInputSection({
   onMessageTextChange,
   onSendPress,
   onEmojiPress,
+  onTemplatesPress,
   onAttachmentPress,
   replyingTo,
   onCancelReply,
@@ -35,6 +39,7 @@ export default function ChatInputSection({
   onRemoveUploadItem,
   isSendingMessage,
   isConnected,
+  showTemplatesButton = false,
   onLayout,
 }: ChatInputSectionProps) {
   const canSend = (!!messageText.trim() || uploadQueue.length > 0) && !isSendingMessage && isConnected;
@@ -101,6 +106,16 @@ export default function ChatInputSection({
           <AttachmentIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} />
         </TouchableOpacity>
 
+        {showTemplatesButton ? (
+          <TouchableOpacity
+            style={styles.templateButton}
+            onPress={onTemplatesPress}
+            activeOpacity={0.7}
+          >
+            <FileIcon width={rem(26)} height={rem(26)} color={colors.primary.greyIcon} />
+          </TouchableOpacity>
+        ) : null}
+
         <TextInput
           style={styles.messageInput}
           placeholder="Type a message"
@@ -151,6 +166,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   attachmentButton: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  templateButton: {
     justifyContent: 'center',
     alignItems: 'center',
   },

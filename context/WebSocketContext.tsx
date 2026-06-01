@@ -7,7 +7,7 @@ import { WS_URL } from '@/lib/config';
 import { AppState, AppStateStatus } from 'react-native';
 import { useChatStore, updateLastMessage } from '@/stores/chatStore';
 import { chatApi } from '@/app-api/chatApi';
-import { ChatRoom } from '@/components/ChatListItem';
+import { ChatRoom, Message } from '@/components/ChatListItem';
 import { messagesCacheService } from '@/services/MessagesCacheService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { syncAppLocationSettingsFromBackend } from '@/utils/appLocationSettings';
@@ -502,6 +502,28 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         eventBus.emit(AppEvents.MessageDeleted, payload);
       } catch (error) {
         console.error('❌ [WebSocket] Failed to handle deleted message:', error);
+      }
+    });
+
+    newSocket.on('messageReactionsUpdated', async (data: any) => {
+      const payload = Array.isArray(data) ? data[0] : data;
+      if (!payload?.chatRoomId || !payload?.messageId) return;
+
+      const reactions: Message['reactions'] = Array.isArray(payload.reactions)
+        ? payload.reactions
+        : [];
+
+      try {
+        const { updateMessage } = useChatStore.getState();
+        updateMessage(payload.chatRoomId, payload.messageId, { reactions });
+
+        await messagesCacheService
+          .updateMessage(payload.messageId, payload.chatRoomId, { reactions })
+          .catch((err) => {
+            console.error('❌ [WebSocket] Failed to update message reactions in cache:', err);
+          });
+      } catch (error) {
+        console.error('❌ [WebSocket] Failed to handle message reactions:', error);
       }
     });
 

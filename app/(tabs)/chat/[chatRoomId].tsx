@@ -18,6 +18,7 @@ import FilesModal from '@/components/modals/FilesModal';
 import ChatInputSection from '@/components/chat/ChatInputSection';
 import { getChatAvatarSource as getChatAvatarSourceUtil, getChatInitials } from '@/utils/chatAvatarUtils';
 import ChatInfoModal from '@/components/modals/ChatInfoModal';
+import MessageTemplatesModal from '@/components/modals/MessageTemplatesModal';
 
 /**
  * Chat Room Screen
@@ -42,6 +43,7 @@ export default function ChatRoomScreen() {
   const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
   const [pendingAttachments, setPendingAttachments] = useState<FileData[]>([]);
   const [replyingTo, setReplyingTo] = useState<Message['replyData'] | null>(null);
+  const [isTemplatesModalOpen, setIsTemplatesModalOpen] = useState(false);
   
   // Use useChatRoom hook for loading chat room and messages with caching (same logic as Next.js)
   const {
@@ -181,7 +183,11 @@ export default function ChatRoomScreen() {
     return messages.reduce((acc, m) => {
       const readFlag = m.isRead ? 1 : 0;
       const readByCount = m.readBy ? m.readBy.length : 0;
-      return acc + readFlag + readByCount;
+      const reactionCount = (m.reactions ?? []).reduce(
+        (sum, group) => sum + group.users.length + (group.hasCurrentUser ? 1 : 0),
+        0,
+      );
+      return acc + readFlag + readByCount + reactionCount;
     }, messages.length);
   }, [messages]);
 
@@ -208,6 +214,9 @@ export default function ChatRoomScreen() {
   const dismissKeyboard = useCallback(() => {
     Keyboard.dismiss();
   }, []);
+
+  const canUseMessageTemplates =
+    (authState.user?.role || '').trim().toUpperCase() !== 'DRIVER';
 
   const clearPendingAttachments = useCallback(() => {
     setPendingAttachments([]);
@@ -821,6 +830,7 @@ export default function ChatRoomScreen() {
           }}
           onSendPress={handleSendPress}
           onEmojiPress={() => setShowEmojiPicker(!showEmojiPicker)}
+          onTemplatesPress={() => setIsTemplatesModalOpen(true)}
           onAttachmentPress={() => handleAttachmentPress().catch(() => {})}
           replyingTo={replyingTo}
           onCancelReply={() => setReplyingTo(null)}
@@ -828,6 +838,7 @@ export default function ChatRoomScreen() {
           onRemoveUploadItem={removeUploadItemAt}
           isSendingMessage={isSendingMessage || isUploading}
           isConnected={isConnected}
+          showTemplatesButton={canUseMessageTemplates}
           onLayout={setSendSectionHeight}
         />
         
@@ -863,6 +874,23 @@ export default function ChatRoomScreen() {
           onClose={() => setShowEmojiPicker(false)}
           onEmojiSelect={(emoji) => {
             setMessageText(prev => prev + emoji);
+          }}
+        />
+
+        <MessageTemplatesModal
+          visible={isTemplatesModalOpen}
+          currentUser={authState.user}
+          onClose={() => setIsTemplatesModalOpen(false)}
+          onInsertContent={(content) => {
+            const text = content.trim();
+            if (!text) return;
+            setMessageText(prev => {
+              const current = prev.trim();
+              return current ? `${current}\n${text}` : text;
+            });
+            if (chatRoomId) {
+              sendTyping(chatRoomId as string, true);
+            }
           }}
         />
         

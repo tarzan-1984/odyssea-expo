@@ -1,6 +1,6 @@
 import { API_BASE_URL, COMPANY } from '@/lib/config';
 import { secureStorage } from '@/utils/secureStorage';
-import { ChatRoom, User, Message } from '@/components/ChatListItem';
+import { ChatRoom, User, Message, MessageReactionGroup } from '@/components/ChatListItem';
 
 export interface UsersPagination {
   current_page: number;
@@ -350,6 +350,38 @@ class ChatApiClient {
   async markMessageAsRead(messageId: string): Promise<void> {
     return this.request<void>(`/v1/messages/${messageId}/read`, {
       method: 'PATCH',
+    });
+  }
+
+  async setMessageReaction(
+    messageId: string,
+    emoji: string,
+  ): Promise<{
+    messageId: string;
+    chatRoomId: string;
+    reactions: MessageReactionGroup[];
+  }> {
+    return this.request<{
+      messageId: string;
+      chatRoomId: string;
+      reactions: MessageReactionGroup[];
+    }>(`/v1/messages/${messageId}/reactions`, {
+      method: 'POST',
+      body: JSON.stringify({ emoji }),
+    });
+  }
+
+  async removeMessageReaction(messageId: string): Promise<{
+    messageId: string;
+    chatRoomId: string;
+    reactions: MessageReactionGroup[];
+  }> {
+    return this.request<{
+      messageId: string;
+      chatRoomId: string;
+      reactions: MessageReactionGroup[];
+    }>(`/v1/messages/${messageId}/reactions`, {
+      method: 'DELETE',
     });
   }
 

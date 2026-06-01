@@ -1,11 +1,13 @@
-import React, { useMemo } from 'react';
-import { View, Text, StyleSheet, Image, useWindowDimensions } from 'react-native';
+import React, { useMemo, useRef, useState } from 'react';
+import { View, Text, StyleSheet, Image, useWindowDimensions, Pressable } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { colors, fonts, fp, rem } from '@/lib';
 import FilePreviewCard from '@/components/FilePreviewCard';
 import ReadCheckIcon from '@/icons/ReadCheckIcon';
 import UnreadCheckIcon from '@/icons/UnreadCheckIcon';
 import MessageDropdown from '@/components/MessageDropdown';
 import MessageReply from '@/components/MessageReply';
+import MessageReactions, { MessageReactionAnchor, MessageReactionPicker } from '@/components/MessageReactions';
 import { Message } from '@/components/ChatListItem';
 import { getMessageMultiAttachments } from '@/utils/messageAttachments';
 
@@ -20,6 +22,9 @@ type Props = {
 
 export default function MessageItem({ message, isSender, chatType, currentUserRole, onReplyPress, onDeletePress }: Props) {
 	const { width: windowWidth } = useWindowDimensions();
+	const bubbleRef = useRef<View>(null);
+	const [reactionPickerOpen, setReactionPickerOpen] = useState(false);
+	const [reactionPickerAnchor, setReactionPickerAnchor] = useState<MessageReactionAnchor | null>(null);
 
 	const formatTime = (timestamp: string): string => {
 		const date = new Date(timestamp);
@@ -205,12 +210,21 @@ export default function MessageItem({ message, isSender, chatType, currentUserRo
 			) : null}
 
 			<View style={{ flexDirection: 'row' }}>
-				<View
-					style={[
-						styles.messageBubble,
-						isSender ? styles.messageBubbleSender : styles.messageBubbleOther,
-						multiAttachments ? { width: multiAttachBubbleWidth, maxWidth: '100%' } : null,
-					]}
+				<View ref={bubbleRef} collapsable={false}>
+					<Pressable
+						disabled={isSender}
+						onLongPress={() => {
+							Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+							bubbleRef.current?.measureInWindow((x, y, width, height) => {
+								setReactionPickerAnchor({ x, y, width, height });
+								setReactionPickerOpen(true);
+							});
+						}}
+						style={[
+							styles.messageBubble,
+							isSender ? styles.messageBubbleSender : styles.messageBubbleOther,
+							multiAttachments ? { width: multiAttachBubbleWidth, maxWidth: '100%' } : null,
+						]}
 				>
 					<View
 						style={[
@@ -232,8 +246,22 @@ export default function MessageItem({ message, isSender, chatType, currentUserRo
 							/>
 						</View>
 					) : null}
+					</Pressable>
 				</View>
 			</View>
+			<MessageReactions
+				message={message}
+				canReact={!isSender}
+				align={isSender ? 'right' : 'left'}
+			/>
+			{!isSender ? (
+				<MessageReactionPicker
+					message={message}
+					visible={reactionPickerOpen}
+					anchor={reactionPickerAnchor}
+					onClose={() => setReactionPickerOpen(false)}
+				/>
+			) : null}
 		</View>
 	);
 	
