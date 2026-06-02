@@ -3,7 +3,7 @@ import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { secureStorage } from '@/utils/secureStorage';
-import { uploadFileViaPresign } from '@/app-api/upload';
+import { uploadChatFileViaPresign } from '@/app-api/upload';
 
 export interface FileData {
   uri: string;
@@ -35,7 +35,7 @@ export async function uploadAttachmentFile(file: FileData): Promise<{ fileUrl: s
     throw new Error('Authentication required');
   }
 
-  const fileUrl = await uploadFileViaPresign({
+  const uploaded = await uploadChatFileViaPresign({
     fileUri: file.uri,
     filename: file.name,
     mimeType: file.mimeType,
@@ -43,9 +43,9 @@ export async function uploadAttachmentFile(file: FileData): Promise<{ fileUrl: s
   });
 
   return {
-    fileUrl,
-    fileName: file.name,
-    fileSize: file.size || 0,
+    fileUrl: uploaded.fileUrl,
+    fileName: uploaded.fileName,
+    fileSize: uploaded.fileSize || file.size || 0,
   };
 }
 
@@ -128,7 +128,7 @@ function fileDataFromGalleryAsset(
   asset: ImagePicker.ImagePickerAsset,
   uniqueIndex: number
 ): FileData {
-  const fileName = asset.fileName || asset.filename || '';
+  const fileName = asset.fileName || (asset as any).filename || '';
   const fileExtension = fileName.split('.').pop()?.toLowerCase() || '';
 
   let mimeType = asset.mimeType;
@@ -220,13 +220,17 @@ export async function handleUploadAndSend(params: {
   for (const f of files) {
     setUploadQueue((q) => [...q, { name: f.name, mimeType: f.mimeType, size: f.size, status: 'uploading' }]);
     try {
-      const fileUrl = await uploadFileViaPresign({
+      const uploadedFile = await uploadChatFileViaPresign({
         fileUri: f.uri,
         filename: f.name,
         mimeType: f.mimeType,
         accessToken: token || '',
       });
-      uploaded.push({ fileUrl, fileName: f.name, fileSize: f.size || 0 });
+      uploaded.push({
+        fileUrl: uploadedFile.fileUrl,
+        fileName: uploadedFile.fileName,
+        fileSize: uploadedFile.fileSize || f.size || 0,
+      });
       setUploadQueue((q) => {
         const idx = q.findIndex((x) => x.name === f.name && x.status === 'uploading');
         if (idx === -1) return q;
@@ -321,15 +325,19 @@ async function uploadPhotoAndSend(params: {
     
     try {
       console.log('[chatAttachmentHelpers] Getting presigned URL for:', f.name);
-      const fileUrl = await uploadFileViaPresign({
+      const uploadedFile = await uploadChatFileViaPresign({
         fileUri: f.uri,
         filename: f.name,
         mimeType: f.mimeType,
         accessToken: token,
       });
-      console.log('[chatAttachmentHelpers] File uploaded successfully, URL:', fileUrl?.substring(0, 50) + '...');
+      console.log('[chatAttachmentHelpers] File uploaded successfully, URL:', uploadedFile.fileUrl?.substring(0, 50) + '...');
       
-      uploaded.push({ fileUrl, fileName: f.name, fileSize: f.size || 0 });
+      uploaded.push({
+        fileUrl: uploadedFile.fileUrl,
+        fileName: uploadedFile.fileName,
+        fileSize: uploadedFile.fileSize || f.size || 0,
+      });
       console.log('[chatAttachmentHelpers] File staged for send');
       
       setUploadQueue((q) => {
