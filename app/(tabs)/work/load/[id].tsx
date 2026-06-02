@@ -9,6 +9,8 @@ import {
   ScrollView,
   ActivityIndicator,
   Dimensions,
+  Image,
+  Alert,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,13 +20,23 @@ import { canAccessWorkTab, canAccessDriversAndOffers } from '@/constants/roleAcc
 import BottomNavigation from '@/components/navigation/BottomNavigation';
 import ArrowLeft from '@/icons/ArrowLeft';
 import OSMMapView, { type Region, type OSMMapViewRef } from '@/components/maps/OSMMapView';
-import { useLoadRoute } from '@/hooks/useLoadRoute';
 import { useUserByExternalId } from '@/hooks/useUserByExternalId';
-import type { TmsLoadLocationPoint, YourLoadItem } from '@/app-api/loads';
+import {
+  getLoadMapPayload,
+  type DriverTrackingPoint,
+  type LoadMapDriver,
+  type LoadRouteGeocodeMarker,
+  type TmsLoadLocationPoint,
+  type YourLoadItem,
+} from '@/app-api/loads';
 import { labelForDriverLoadStatus } from '@/constants/driverLoadStatuses';
+import { getStatusLabelForFilter } from '@/constants/driversMapFilters';
 import { CREATE_OFFER_SPECIAL_REQUIREMENTS } from '@/constants/driversListConstants';
 import { useQuery } from '@tanstack/react-query';
 import FilePreviewCard from '@/components/FilePreviewCard';
+import { fetchRouteForPoints, type RoutePoint } from '@/services/offerRouteService';
+import { useWebSocket } from '@/context/WebSocketContext';
+import { chatApi } from '@/app-api/chatApi';
 
 const MAP_MAX_HEIGHT = Dimensions.get('window').height * 0.25;
 const ROUTE_POINT_FOCUS_DELTA = 1.2;
@@ -34,6 +46,8 @@ const ROUTE_POINT_COLORS = {
   finalDelivery: '#15803D',
   intermediateDelivery: '#4ADE80',
 } as const;
+
+const HISTORY_POLYLINE_COLOR = '#DC2626';
 
 const DEFAULT_REGION: Region = {
   latitude: 39.0,
@@ -85,6 +99,119 @@ function normalizeStopType(p: TmsLoadLocationPoint): 'pick_up_location' | 'deliv
   const t = (p.type ?? '').trim();
   if (t === 'pick_up_location' || t === 'delivery_location') return t;
   return '';
+}
+
+function routePointFromGeocode(marker?: LoadRouteGeocodeMarker | null): RoutePoint | null {
+  const latitude = Number(marker?.lat);
+  const longitude = Number(marker?.lng);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return { latitude, longitude };
+}
+
+function routePointFromTrackingPoint(point: DriverTrackingPoint): RoutePoint | null {
+  const latitude = Number(point.latitude);
+  const longitude = Number(point.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return { latitude, longitude };
+}
+
+/** Separate stacked history pins that share the same (or nearly same) coordinates. */
+function spreadOverlappingCoordinates(
+  points: Array<{ latitude: number; longitude: number }>,
+): Array<{ latitude: number; longitude: number }> {
+  const threshold = 0.00004;
+  const result = points.map((point) => ({ ...point }));
+  const clusters: number[][] = [];
+
+  for (let i = 0; i < points.length; i++) {
+    let cluster = clusters.find((indices) =>
+      indices.some((idx) => {
+        const a = points[i];
+        const b = points[idx];
+        return (
+          Math.abs(a.latitude - b.latitude) <= threshold &&
+          Math.abs(a.longitude - b.longitude) <= threshold
+        );
+      }),
+    );
+    if (!cluster) {
+      cluster = [];
+      clusters.push(cluster);
+    }
+    cluster.push(i);
+  }
+
+  for (const cluster of clusters) {
+    if (cluster.length <= 1) continue;
+    const base = points[cluster[0]];
+    const radiusMeters = 16 + cluster.length * 3;
+    cluster.forEach((pointIndex, positionInCluster) => {
+      const angle = (2 * Math.PI * positionInCluster) / cluster.length;
+      const latMeters = radiusMeters * Math.sin(angle);
+      const lngMeters = radiusMeters * Math.cos(angle);
+      const latOffset = latMeters / 111320;
+      const lngOffset =
+        lngMeters / (111320 * Math.max(0.25, Math.cos((base.latitude * Math.PI) / 180)));
+      result[pointIndex] = {
+        latitude: base.latitude + latOffset,
+        longitude: base.longitude + lngOffset,
+      };
+    });
+  }
+
+  return result;
+}
+
+function normalizeTrackingStatus(value: string | null | undefined): string {
+  return String(value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
+function formatDriverLocationLine(driver: LoadMapDriver | null): string {
+  const location = [driver?.city, driver?.state].filter(Boolean).join(', ');
+  const zip = String(driver?.zip ?? '').trim();
+  return [location, zip].filter(Boolean).join(' ') || 'N/A';
+}
+
+function formatDriverCoordinates(latitude: number, longitude: number, hasCoordinates: boolean): string {
+  if (!hasCoordinates) return 'N/A';
+  return `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+}
+
+function formatDriverUpdateTime(value: string | null | undefined): string {
+  if (!value) return 'N/A';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
+function formatHistoryDate(value: string | null | undefined): string {
+  if (!value) return 'N/A';
+  try {
+    return new Date(value).toLocaleString();
+  } catch {
+    return value;
+  }
+}
+
+type LoadHistoryDetailPoint = {
+  id: string | null;
+  latitude: number;
+  longitude: number;
+  createdAt: string | null;
+  updatedAt: string | null;
+  driverName: string | null;
+  placeLabel: string | null;
+};
+
+function getDriverInitials(driver: LoadMapDriver | null): string {
+  const first = String(driver?.firstName ?? '').trim().charAt(0).toUpperCase();
+  const last = String(driver?.lastName ?? '').trim().charAt(0).toUpperCase();
+  return `${first}${last}` || '?';
+}
+
+function getPhoneDialUrl(phone: string | null | undefined): string | null {
+  const normalized = String(phone ?? '').replace(/[^\d+]/g, '');
+  return normalized ? `tel:${normalized}` : null;
 }
 
 function badgeForStatus(status: string): { bg: string; fg: string } {
@@ -330,10 +457,15 @@ export default function LoadDetailScreen() {
   const router = useRouter();
   const mapRef = useRef<OSMMapViewRef | null>(null);
   const { authState } = useAuth();
+  const { socket, isConnected } = useWebSocket();
   const { id, loadJson } = useLocalSearchParams<{ id?: string; loadJson?: string }>();
   const [contentTab, setContentTab] = useState<
     'customer' | 'load' | 'trip' | 'documents' | 'billing' | 'accounting'
   >('customer');
+  const [isDriverInfoOpen, setIsDriverInfoOpen] = useState(false);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [selectedHistoryPointIndex, setSelectedHistoryPointIndex] = useState<number | null>(null);
+  const [isOpeningLoadChat, setIsOpeningLoadChat] = useState(false);
 
   const canAccess = canAccessWorkTab(authState.user?.role);
   const role = (authState.user?.role ?? '').trim().toUpperCase();
@@ -373,38 +505,316 @@ export default function LoadDetailScreen() {
     return points;
   }, [load]);
 
-  const locations = useMemo(() => {
-    const fromStops = routePoints
-      .map((p) => String(p.address ?? p.short_address ?? '').trim())
-      .filter(Boolean);
-    // Backward-compatible fallback: older cached loads may not include stop arrays.
-    const fallback = load
-      ? [load.from_short_address, load.to_short_address]
-          .map((v) => String(v ?? '').trim())
-          .filter(Boolean)
-      : [];
-    return fromStops.length > 0 ? fromStops : fallback;
-  }, [routePoints, load]);
+  const loadIdForMap = load?.tms_load_id?.trim() || id?.trim() || '';
+  const openLoadChat = async () => {
+    if (!loadIdForMap || isOpeningLoadChat) return;
 
-  const { data: routeData, isLoading: routeLoading } = useLoadRoute(
-    locations.length > 0 ? locations : undefined
+    try {
+      setIsOpeningLoadChat(true);
+      const rooms = await chatApi.getChatRooms();
+      const activeLoadChat = rooms.find(
+        (room) => room.type === 'LOAD' && room.loadId?.trim() === loadIdForMap,
+      );
+      if (activeLoadChat?.id) {
+        setIsDriverInfoOpen(false);
+        setIsHistoryOpen(false);
+        router.push(`/chat/${activeLoadChat.id}` as any);
+        return;
+      }
+
+      const archived = await chatApi.getArchivedLoadChatRooms(1, 50);
+      const archivedLoadChat = archived.chatRooms.find(
+        (room) => room.type === 'LOAD' && room.loadId?.trim() === loadIdForMap,
+      );
+      if (archivedLoadChat?.id) {
+        setIsDriverInfoOpen(false);
+        setIsHistoryOpen(false);
+        router.push(`/chat/${archivedLoadChat.id}` as any);
+        return;
+      }
+
+      Alert.alert('Load chat not found', 'You are not a participant of this load chat or it has not been created yet.');
+    } catch (error) {
+      console.error('Failed to open load chat:', error);
+      Alert.alert('Error', 'Failed to open load chat.');
+    } finally {
+      setIsOpeningLoadChat(false);
+    }
+  };
+
+  const loadMapQuery = useQuery({
+    queryKey: ['loadMapPayload', loadIdForMap],
+    enabled: Boolean(loadIdForMap),
+    staleTime: 2 * 60 * 60 * 1000,
+    gcTime: 4 * 60 * 60 * 1000,
+    queryFn: () => getLoadMapPayload(loadIdForMap),
+  });
+  const refetchLoadMap = loadMapQuery.refetch;
+
+  useEffect(() => {
+    if (!socket || !isConnected || !loadIdForMap) return;
+
+    const handleLocationUpdate = (payload: { trackingLoadId?: string | null }) => {
+      if (payload.trackingLoadId?.trim() === loadIdForMap) {
+        refetchLoadMap().catch(() => {});
+      }
+    };
+
+    const handleTrackingPointCreated = (payload: { loadId?: string | null }) => {
+      if (payload.loadId?.trim() === loadIdForMap) {
+        refetchLoadMap().catch(() => {});
+      }
+    };
+
+    socket.on('userLocationUpdate', handleLocationUpdate);
+    socket.on('driverTrackingPointCreated', handleTrackingPointCreated);
+    return () => {
+      socket.off('userLocationUpdate', handleLocationUpdate);
+      socket.off('driverTrackingPointCreated', handleTrackingPointCreated);
+    };
+  }, [isConnected, loadIdForMap, refetchLoadMap, socket]);
+
+  const pickupRoutePoint = useMemo(
+    () => routePointFromGeocode(loadMapQuery.data?.routeGeocode?.pickup),
+    [
+      loadMapQuery.data?.routeGeocode?.pickup?.lat,
+      loadMapQuery.data?.routeGeocode?.pickup?.lng,
+    ],
+  );
+  const deliveryRoutePoint = useMemo(
+    () => routePointFromGeocode(loadMapQuery.data?.routeGeocode?.delivery),
+    [
+      loadMapQuery.data?.routeGeocode?.delivery?.lat,
+      loadMapQuery.data?.routeGeocode?.delivery?.lng,
+    ],
   );
 
-  // Removed debug logging for route data
+  const routeEndpointPoints = useMemo(
+    () => [pickupRoutePoint, deliveryRoutePoint].filter((point): point is RoutePoint => point != null),
+    [pickupRoutePoint, deliveryRoutePoint],
+  );
 
-  const markers = (routeData?.markers ?? []).map((p, i) => ({
-    coordinate: { latitude: p.latitude, longitude: p.longitude },
-    markerColor: getRoutePointColor(routePoints, i),
-    tooltipType:
-      routePoints[i]?.type === 'pick_up_location'
-        ? 'Pick up'
-        : routePoints[i]?.type === 'delivery_location'
-          ? 'Delivery'
-          : '',
-    tooltipAddress: String(routePoints[i]?.address ?? routePoints[i]?.short_address ?? '').trim(),
-    tooltipTime: formatStopTime(routePoints[i] as TmsLoadLocationPoint),
-  }));
-  const polylineCoordinates = routeData?.polyline ?? undefined;
+  const routeDataQuery = useQuery({
+    queryKey: [
+      'loadRouteByGeocode',
+      loadIdForMap,
+      routeEndpointPoints.map((p) => `${p.latitude},${p.longitude}`).join('|'),
+    ],
+    enabled: routeEndpointPoints.length >= 2,
+    staleTime: 2 * 60 * 60 * 1000,
+    gcTime: 4 * 60 * 60 * 1000,
+    queryFn: () => fetchRouteForPoints(routeEndpointPoints),
+  });
+
+  const sortedTrackingPoints = useMemo(() => {
+    const points = loadMapQuery.data?.trackingPoints ?? [];
+    return [...points].sort((a, b) => {
+      const aTime = new Date(a.createdAt ?? a.updatedAt ?? 0).getTime();
+      const bTime = new Date(b.createdAt ?? b.updatedAt ?? 0).getTime();
+      return aTime - bTime;
+    });
+  }, [loadMapQuery.data?.trackingPoints]);
+
+  const loadHistoryDetails = useMemo<LoadHistoryDetailPoint[]>(() => {
+    const drivers = loadMapQuery.data?.drivers ?? [];
+    return sortedTrackingPoints
+      .map((point) => {
+        const latitude = Number(point.latitude);
+        const longitude = Number(point.longitude);
+        if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+          return null;
+        }
+        const externalDriverId = point.externalDriverId?.trim() || null;
+        const driver = externalDriverId
+          ? drivers.find((item) => item.externalId?.trim() === externalDriverId)
+          : null;
+        const driverName = [driver?.firstName, driver?.lastName].filter(Boolean).join(' ').trim();
+        return {
+          id: point.id ?? null,
+          latitude,
+          longitude,
+          createdAt: point.createdAt ?? null,
+          updatedAt: point.updatedAt ?? null,
+          driverName: driverName || null,
+          placeLabel: point.placeLabel?.trim() || null,
+        };
+      })
+      .filter((point): point is LoadHistoryDetailPoint => point != null);
+  }, [loadMapQuery.data?.drivers, sortedTrackingPoints]);
+
+  const historyPoints = useMemo(
+    () =>
+      sortedTrackingPoints
+        .map((point) => ({
+          raw: point,
+          coordinate: routePointFromTrackingPoint(point),
+        }))
+        .filter((point): point is { raw: DriverTrackingPoint; coordinate: RoutePoint } => point.coordinate != null),
+    [sortedTrackingPoints],
+  );
+
+  const currentTrackingDriver = useMemo<LoadMapDriver | null>(() => {
+    const drivers = loadMapQuery.data?.drivers ?? [];
+    if (sortedTrackingPoints.length > 0) {
+      for (let i = sortedTrackingPoints.length - 1; i >= 0; i--) {
+        const externalId = sortedTrackingPoints[i]?.externalDriverId?.trim();
+        if (!externalId) continue;
+        const fromHistory = drivers.find((driver) => driver.externalId?.trim() === externalId);
+        if (fromHistory) return fromHistory;
+      }
+    }
+    return drivers[0] ?? null;
+  }, [loadMapQuery.data?.drivers, sortedTrackingPoints]);
+
+  const currentDriverLatitude = Number(currentTrackingDriver?.latitude);
+  const currentDriverLongitude = Number(currentTrackingDriver?.longitude);
+  const hasCurrentDriverCoordinates =
+    Number.isFinite(currentDriverLatitude) && Number.isFinite(currentDriverLongitude);
+  const isDeliveredLoad = normalizeTrackingStatus(load?.load_status) === 'delivered';
+  const isLoadLoadedEnroute = normalizeTrackingStatus(load?.load_status) === 'loaded_enroute';
+  const isDriverLoadedEnroute =
+    normalizeTrackingStatus(currentTrackingDriver?.driverStatus ?? null) === 'loaded_enroute';
+  const showDriverLiveMarker =
+    !isDeliveredLoad &&
+    isLoadLoadedEnroute &&
+    isDriverLoadedEnroute &&
+    hasCurrentDriverCoordinates;
+  const currentDriverFullName =
+    [currentTrackingDriver?.firstName, currentTrackingDriver?.lastName]
+      .filter(Boolean)
+      .join(' ')
+      .trim() || 'Driver';
+  const currentDriverDisplayName = currentTrackingDriver?.externalId
+    ? `(${currentTrackingDriver.externalId}) ${currentDriverFullName}`
+    : currentDriverFullName;
+  const currentDriverLocationLine = formatDriverLocationLine(currentTrackingDriver);
+  const currentDriverCoordinates = formatDriverCoordinates(
+    currentDriverLatitude,
+    currentDriverLongitude,
+    hasCurrentDriverCoordinates,
+  );
+  const currentDriverStatusLabel = getStatusLabelForFilter(currentTrackingDriver?.driverStatus);
+  const currentDriverLastUpdate = formatDriverUpdateTime(currentTrackingDriver?.lastLocationUpdateAt);
+  const currentDriverPhoneDialUrl = getPhoneDialUrl(currentTrackingDriver?.phone);
+
+  const endpointMarkers = useMemo(() => {
+    const pickupStop = routePoints.find((point) => point.type === 'pick_up_location');
+    const deliveryStop = [...routePoints].reverse().find((point) => point.type === 'delivery_location');
+    const pickupLabel = loadMapQuery.data?.routeGeocode?.pickup?.addressLabel;
+    const deliveryLabel = loadMapQuery.data?.routeGeocode?.delivery?.addressLabel;
+    const items = [];
+
+    if (pickupRoutePoint) {
+      items.push({
+        kind: 'pickup' as const,
+        coordinate: pickupRoutePoint,
+        markerColor: '#2563EB',
+        tooltipType: 'Pick up',
+        tooltipAddress:
+          String(pickupStop?.address ?? pickupStop?.short_address ?? pickupLabel ?? '').trim(),
+        tooltipTime: pickupStop ? formatStopTime(pickupStop as TmsLoadLocationPoint) : '',
+      });
+    }
+
+    if (deliveryRoutePoint) {
+      items.push({
+        kind: 'delivery' as const,
+        coordinate: deliveryRoutePoint,
+        markerColor: '#16A34A',
+        tooltipType: 'Delivery',
+        tooltipAddress:
+          String(deliveryStop?.address ?? deliveryStop?.short_address ?? deliveryLabel ?? '').trim(),
+        tooltipTime: deliveryStop ? formatStopTime(deliveryStop as TmsLoadLocationPoint) : '',
+      });
+    }
+
+    return items;
+  }, [
+    deliveryRoutePoint,
+    loadMapQuery.data?.routeGeocode?.delivery?.addressLabel,
+    loadMapQuery.data?.routeGeocode?.pickup?.addressLabel,
+    pickupRoutePoint,
+    routePoints,
+  ]);
+
+  const historyMarkerCoordinates = useMemo(
+    () => spreadOverlappingCoordinates(historyPoints.map((point) => point.coordinate)),
+    [historyPoints],
+  );
+
+  const historyMarkers = useMemo(
+    () =>
+      historyPoints.map((point, index) => ({
+        kind: 'history' as const,
+        coordinate: historyMarkerCoordinates[index] ?? point.coordinate,
+        label: String(index + 1),
+        historyIndex: index,
+        isLastHistoryPoint: index === historyPoints.length - 1,
+        tooltipType: `History point ${index + 1}`,
+        tooltipAddress: point.raw.placeLabel ?? '',
+        tooltipTime: String(point.raw.createdAt ?? point.raw.updatedAt ?? ''),
+      })),
+    [historyMarkerCoordinates, historyPoints],
+  );
+
+  const driverLiveMarker = useMemo(
+    () =>
+      showDriverLiveMarker
+        ? [
+            {
+              kind: 'liveDriver' as const,
+              coordinate: {
+                latitude: currentDriverLatitude,
+                longitude: currentDriverLongitude,
+              },
+              tooltipType:
+                [currentTrackingDriver?.firstName, currentTrackingDriver?.lastName]
+                  .filter(Boolean)
+                  .join(' ')
+                  .trim() || 'Driver',
+              tooltipAddress: [currentTrackingDriver?.city, currentTrackingDriver?.state]
+                .filter(Boolean)
+                .join(', '),
+              tooltipTime: currentTrackingDriver?.lastLocationUpdateAt ?? '',
+            },
+          ]
+        : [],
+    [
+      currentDriverLatitude,
+      currentDriverLongitude,
+      currentTrackingDriver?.city,
+      currentTrackingDriver?.firstName,
+      currentTrackingDriver?.lastLocationUpdateAt,
+      currentTrackingDriver?.lastName,
+      currentTrackingDriver?.state,
+      showDriverLiveMarker,
+    ],
+  );
+
+  const markers = useMemo(
+    () => [...endpointMarkers, ...historyMarkers, ...driverLiveMarker],
+    [driverLiveMarker, endpointMarkers, historyMarkers],
+  );
+  const polylineCoordinates = routeDataQuery.data?.polyline ?? undefined;
+  const historyPolyline = useMemo(
+    () => historyPoints.map((point) => point.coordinate),
+    [historyPoints],
+  );
+  const mapPolylines = useMemo(
+    () =>
+      historyPolyline.length > 1
+        ? [
+            {
+              coordinates: historyPolyline,
+              color: HISTORY_POLYLINE_COLOR,
+              weight: 4,
+              opacity: 0.85,
+            },
+          ]
+        : [],
+    [historyPolyline],
+  );
+  const routeLoading = loadMapQuery.isLoading || routeDataQuery.isLoading;
   const loadStatusRaw = (load?.load_status ?? '').trim();
   const loadStatusLabel = loadStatusRaw ? labelForDriverLoadStatus(loadStatusRaw) : '';
   const statusBadge = badgeForStatus(loadStatusRaw);
@@ -562,7 +972,7 @@ export default function LoadDetailScreen() {
   const dispatchMessage = useWpMediaFile(cleanText(meta.screen_picture), 'screen_picture');
 
   const focusRoutePointOnMap = (pointIndex: number) => {
-    const marker = routeData?.markers?.[pointIndex];
+    const marker = routeEndpointPoints[pointIndex];
     if (!marker || !mapRef.current) return;
 
     mapRef.current.animateToRegion({
@@ -573,9 +983,23 @@ export default function LoadDetailScreen() {
     });
   };
 
+  const focusHistoryPointOnMap = (index: number) => {
+    const point = historyMarkerCoordinates[index] ?? loadHistoryDetails[index];
+    if (!point || !mapRef.current) return;
+    setSelectedHistoryPointIndex(index);
+    setIsHistoryOpen(false);
+    mapRef.current.animateToRegion({
+      latitude: point.latitude,
+      longitude: point.longitude,
+      latitudeDelta: ROUTE_POINT_FOCUS_DELTA,
+      longitudeDelta: ROUTE_POINT_FOCUS_DELTA,
+    });
+  };
+
   useEffect(() => {
-    if (!routeData?.bounds || !mapRef.current) return;
-    const b = routeData.bounds;
+    const bounds = routeDataQuery.data?.bounds;
+    if (!bounds || !mapRef.current) return;
+    const b = bounds;
     const pad = 0.15;
     mapRef.current.animateToRegion({
       latitude: (b.minLat + b.maxLat) / 2,
@@ -583,7 +1007,7 @@ export default function LoadDetailScreen() {
       latitudeDelta: b.maxLat - b.minLat + pad,
       longitudeDelta: b.maxLng - b.minLng + pad,
     });
-  }, [routeData?.bounds]);
+  }, [routeDataQuery.data?.bounds]);
 
   return (
     <View
@@ -660,11 +1084,206 @@ export default function LoadDetailScreen() {
                   </View>
                 </View>
               ) : null}
+              <View style={styles.historyOverlay} pointerEvents="box-none">
+                <TouchableOpacity
+                  style={styles.historyButton}
+                  activeOpacity={0.85}
+                  onPress={() => setIsHistoryOpen((prev) => !prev)}
+                >
+                  <Text style={styles.historyButtonText}>
+                    {isHistoryOpen ? 'Hide history' : 'History'}
+                  </Text>
+                  {!isHistoryOpen && loadHistoryDetails.length > 0 ? (
+                    <View style={styles.historyCountBadge}>
+                      <Text style={styles.historyCountBadgeText}>{loadHistoryDetails.length}</Text>
+                    </View>
+                  ) : null}
+                </TouchableOpacity>
+                {isHistoryOpen ? (
+                  <View style={styles.historyPanel}>
+                    <TouchableOpacity
+                      style={styles.historyCloseButton}
+                      activeOpacity={0.8}
+                      onPress={() => setIsHistoryOpen(false)}
+                    >
+                      <Text style={styles.historyCloseText}>×</Text>
+                    </TouchableOpacity>
+                    <View style={styles.historyPanelHeader}>
+                      <Text style={styles.historyPanelTitle}>Load history</Text>
+                      <View style={styles.historyPanelCountBadge}>
+                        <Text style={styles.historyPanelCountText}>{loadHistoryDetails.length}</Text>
+                      </View>
+                    </View>
+                    <ScrollView
+                      style={styles.historyList}
+                      contentContainerStyle={styles.historyListContent}
+                      nestedScrollEnabled
+                      showsVerticalScrollIndicator
+                    >
+                      {loadHistoryDetails.length > 0 ? (
+                        loadHistoryDetails.map((point, index) => {
+                          const isSelected = selectedHistoryPointIndex === index;
+                          return (
+                            <TouchableOpacity
+                              key={
+                                point.id ??
+                                `${point.latitude}-${point.longitude}-${point.createdAt ?? index}`
+                              }
+                              style={[
+                                styles.historyItemCard,
+                                isSelected && styles.historyItemCardSelected,
+                              ]}
+                              activeOpacity={0.85}
+                              onPress={() => focusHistoryPointOnMap(index)}
+                            >
+                              <Text style={styles.historyItemStep}>Step {index + 1}</Text>
+                              <Text style={styles.historyItemLine}>
+                                <Text style={styles.historyItemLabel}>Coordinates: </Text>
+                                {point.latitude.toFixed(6)}, {point.longitude.toFixed(6)}
+                              </Text>
+                              {point.placeLabel ? (
+                                <Text style={styles.historyItemLine}>
+                                  <Text style={styles.historyItemLabel}>Place: </Text>
+                                  {point.placeLabel}
+                                </Text>
+                              ) : null}
+                              {point.driverName ? (
+                                <Text style={styles.historyItemLine}>
+                                  <Text style={styles.historyItemLabel}>Driver: </Text>
+                                  {point.driverName}
+                                </Text>
+                              ) : null}
+                              <Text style={styles.historyItemLine}>
+                                <Text style={styles.historyItemLabel}>Tracked: </Text>
+                                {formatHistoryDate(point.createdAt)}
+                              </Text>
+                              <Text style={styles.historyItemLine}>
+                                <Text style={styles.historyItemLabel}>Updated: </Text>
+                                {formatHistoryDate(point.updatedAt)}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })
+                      ) : (
+                        <Text style={styles.historyEmptyText}>No history points yet.</Text>
+                      )}
+                    </ScrollView>
+                  </View>
+                ) : null}
+              </View>
+              {currentTrackingDriver ? (
+                <View style={styles.driverInfoOverlay} pointerEvents="box-none">
+                  <TouchableOpacity
+                    style={styles.driverInfoButton}
+                    activeOpacity={0.85}
+                    onPress={() => setIsDriverInfoOpen((prev) => !prev)}
+                  >
+                    <Text style={styles.driverInfoButtonText}>
+                      {isDriverInfoOpen ? 'Hide driver' : 'Driver info'}
+                    </Text>
+                  </TouchableOpacity>
+                  {isDriverInfoOpen ? (
+                    <View style={styles.driverInfoCard}>
+                      <TouchableOpacity
+                        style={styles.driverInfoCloseButton}
+                        activeOpacity={0.8}
+                        onPress={() => setIsDriverInfoOpen(false)}
+                      >
+                        <Text style={styles.driverInfoCloseText}>×</Text>
+                      </TouchableOpacity>
+                      <View style={styles.driverInfoHeader}>
+                        <View style={styles.driverAvatar}>
+                          {currentTrackingDriver.profilePhoto ? (
+                            <Image
+                              source={{ uri: currentTrackingDriver.profilePhoto }}
+                              style={styles.driverAvatarImage}
+                            />
+                          ) : (
+                            <Text style={styles.driverAvatarText}>
+                              {getDriverInitials(currentTrackingDriver)}
+                            </Text>
+                          )}
+                        </View>
+                        <View style={styles.driverHeaderTextWrap}>
+                          <Text style={styles.driverNameText} numberOfLines={2}>
+                            {currentDriverDisplayName}
+                          </Text>
+                          <Text style={styles.driverSubText} numberOfLines={1}>
+                            {currentDriverLocationLine}
+                          </Text>
+                        </View>
+                      </View>
+                      <View style={styles.driverInfoGrid}>
+                        <View style={styles.driverInfoCell}>
+                          <Text style={styles.driverInfoLabel}>Phone</Text>
+                          {currentDriverPhoneDialUrl ? (
+                            <TouchableOpacity
+                              activeOpacity={0.7}
+                              onPress={() => Linking.openURL(currentDriverPhoneDialUrl)}
+                            >
+                              <Text
+                                style={[styles.driverInfoValue, styles.driverInfoLinkValue]}
+                                numberOfLines={1}
+                              >
+                                {currentTrackingDriver.phone}
+                              </Text>
+                            </TouchableOpacity>
+                          ) : (
+                            <Text style={styles.driverInfoValue} numberOfLines={1}>
+                              N/A
+                            </Text>
+                          )}
+                        </View>
+                        <View style={styles.driverInfoCell}>
+                          <Text style={styles.driverInfoLabel}>Driver Status</Text>
+                          <Text style={styles.driverInfoValue} numberOfLines={1}>
+                            {currentDriverStatusLabel}
+                          </Text>
+                        </View>
+                        <View style={styles.driverInfoCell}>
+                          <Text style={styles.driverInfoLabel}>Coordinates</Text>
+                          <Text style={styles.driverInfoValue} numberOfLines={2}>
+                            {currentDriverCoordinates}
+                          </Text>
+                        </View>
+                        <View style={styles.driverInfoCell}>
+                          <Text style={styles.driverInfoLabel}>Load Status</Text>
+                          <Text style={styles.driverInfoValue} numberOfLines={1}>
+                            {loadStatusLabel || 'N/A'}
+                          </Text>
+                        </View>
+                        <View style={styles.driverInfoCell}>
+                          <Text style={styles.driverInfoLabel}>Last Driver Update</Text>
+                          <Text style={styles.driverInfoValue} numberOfLines={1}>
+                            {currentDriverLastUpdate}
+                          </Text>
+                        </View>
+                        <TouchableOpacity
+                          style={[
+                            styles.openLoadChatButton,
+                            (!loadIdForMap || isOpeningLoadChat) && styles.openLoadChatButtonDisabled,
+                          ]}
+                          activeOpacity={0.85}
+                          disabled={!loadIdForMap || isOpeningLoadChat}
+                          onPress={openLoadChat}
+                        >
+                          {isOpeningLoadChat ? (
+                            <ActivityIndicator size="small" color={colors.neutral.white} />
+                          ) : (
+                            <Text style={styles.openLoadChatButtonText}>Open chat</Text>
+                          )}
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ) : null}
+                </View>
+              ) : null}
               <OSMMapView
                 ref={mapRef}
                 initialRegion={DEFAULT_REGION}
                 markers={markers as any}
                 polylineCoordinates={polylineCoordinates}
+                polylines={mapPolylines}
                 style={StyleSheet.absoluteFill}
               />
             </View>
@@ -708,8 +1327,8 @@ export default function LoadDetailScreen() {
                         <View style={styles.routeStopRow}>
                           <TouchableOpacity
                             style={styles.routeStopAddressWrap}
-                            activeOpacity={routeData?.markers?.[idx] ? 0.7 : 1}
-                            disabled={!routeData?.markers?.[idx]}
+                            activeOpacity={routeEndpointPoints[idx] ? 0.7 : 1}
+                            disabled={!routeEndpointPoints[idx]}
                             onPress={() => focusRoutePointOnMap(idx)}
                           >
                             <Text style={styles.routeStopAddress}>
@@ -1350,6 +1969,286 @@ const styles = StyleSheet.create({
     right: rem(12),
     zIndex: 5,
     maxWidth: '75%',
+  },
+  historyOverlay: {
+    position: 'absolute',
+    left: rem(12),
+    top: rem(10),
+    zIndex: 9,
+    alignItems: 'flex-start',
+  },
+  historyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rem(6),
+    backgroundColor: colors.primary.blue,
+    borderRadius: rem(8),
+    paddingHorizontal: rem(12),
+    paddingVertical: rem(8),
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: rem(6),
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
+  },
+  historyButtonText: {
+    fontSize: fp(12),
+    fontFamily: fonts['700'],
+    color: colors.neutral.white,
+  },
+  historyCountBadge: {
+    minWidth: rem(18),
+    height: rem(18),
+    borderRadius: rem(9),
+    paddingHorizontal: rem(5),
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  historyCountBadgeText: {
+    fontSize: fp(10),
+    fontFamily: fonts['700'],
+    color: colors.neutral.white,
+  },
+  historyPanel: {
+    position: 'absolute',
+    left: rem(104),
+    top: 0,
+    width: rem(268),
+    maxHeight: MAP_MAX_HEIGHT * 0.82,
+    backgroundColor: colors.neutral.white,
+    borderRadius: rem(12),
+    paddingTop: rem(12),
+    paddingHorizontal: rem(10),
+    paddingBottom: rem(8),
+    borderWidth: 1,
+    borderColor: colors.neutral.lightGrey,
+    shadowColor: '#000',
+    shadowOpacity: 0.16,
+    shadowRadius: rem(10),
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 6,
+  },
+  historyCloseButton: {
+    position: 'absolute',
+    top: rem(5),
+    right: rem(6),
+    width: rem(24),
+    height: rem(24),
+    borderRadius: rem(12),
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+  },
+  historyCloseText: {
+    fontSize: fp(20),
+    lineHeight: fp(22),
+    fontFamily: fonts['700'],
+    color: colors.neutral.darkGrey,
+  },
+  historyPanelHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rem(8),
+    marginBottom: rem(8),
+    paddingRight: rem(20),
+  },
+  historyPanelTitle: {
+    fontSize: fp(12),
+    fontFamily: fonts['700'],
+    color: colors.neutral.black,
+  },
+  historyPanelCountBadge: {
+    borderRadius: rem(999),
+    paddingHorizontal: rem(8),
+    paddingVertical: rem(2),
+    backgroundColor: '#F3F4F6',
+  },
+  historyPanelCountText: {
+    fontSize: fp(10),
+    fontFamily: fonts['700'],
+    color: colors.neutral.darkGrey,
+  },
+  historyList: {
+    maxHeight: MAP_MAX_HEIGHT * 0.68,
+  },
+  historyListContent: {
+    paddingBottom: rem(4),
+    gap: rem(8),
+  },
+  historyItemCard: {
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+    borderRadius: rem(8),
+    backgroundColor: '#F9FAFB',
+    padding: rem(10),
+  },
+  historyItemCardSelected: {
+    borderColor: colors.primary.blue,
+    backgroundColor: '#EFF6FF',
+  },
+  historyItemStep: {
+    fontSize: fp(11),
+    fontFamily: fonts['700'],
+    color: colors.neutral.black,
+    marginBottom: rem(4),
+  },
+  historyItemLine: {
+    fontSize: fp(10),
+    fontFamily: fonts['500'],
+    color: colors.neutral.black,
+    marginTop: rem(2),
+  },
+  historyItemLabel: {
+    fontFamily: fonts['700'],
+    color: colors.neutral.darkGrey,
+  },
+  historyEmptyText: {
+    fontSize: fp(11),
+    fontFamily: fonts['500'],
+    color: colors.neutral.darkGrey,
+    paddingVertical: rem(8),
+  },
+  driverInfoOverlay: {
+    position: 'absolute',
+    left: rem(12),
+    bottom: rem(10),
+    zIndex: 8,
+    alignItems: 'flex-start',
+  },
+  driverInfoButton: {
+    backgroundColor: colors.primary.blue,
+    borderRadius: rem(8),
+    paddingHorizontal: rem(12),
+    paddingVertical: rem(8),
+    shadowColor: '#000',
+    shadowOpacity: 0.18,
+    shadowRadius: rem(6),
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
+  },
+  driverInfoButtonText: {
+    fontSize: fp(12),
+    fontFamily: fonts['700'],
+    color: colors.neutral.white,
+  },
+  driverInfoCard: {
+    position: 'absolute',
+    left: rem(104),
+    bottom: 0,
+    width: rem(250),
+    backgroundColor: colors.neutral.white,
+    borderRadius: rem(12),
+    padding: rem(12),
+    paddingTop: rem(14),
+    borderWidth: 1,
+    borderColor: colors.neutral.lightGrey,
+    shadowColor: '#000',
+    shadowOpacity: 0.16,
+    shadowRadius: rem(10),
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 5,
+  },
+  driverInfoCloseButton: {
+    position: 'absolute',
+    top: rem(5),
+    right: rem(7),
+    width: rem(24),
+    height: rem(24),
+    borderRadius: rem(12),
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+  },
+  driverInfoCloseText: {
+    fontSize: fp(20),
+    lineHeight: fp(22),
+    fontFamily: fonts['700'],
+    color: colors.neutral.darkGrey,
+  },
+  driverInfoHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rem(10),
+    marginBottom: rem(10),
+  },
+  driverAvatar: {
+    width: rem(42),
+    height: rem(42),
+    borderRadius: rem(21),
+    backgroundColor: '#E5E7EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  driverAvatarImage: {
+    width: '100%',
+    height: '100%',
+  },
+  driverAvatarText: {
+    fontSize: fp(14),
+    fontFamily: fonts['700'],
+    color: colors.neutral.darkGrey,
+  },
+  driverHeaderTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  driverNameText: {
+    fontSize: fp(12),
+    fontFamily: fonts['700'],
+    color: colors.neutral.black,
+  },
+  driverSubText: {
+    marginTop: rem(2),
+    fontSize: fp(10),
+    fontFamily: fonts['500'],
+    color: colors.neutral.darkGrey,
+  },
+  driverInfoGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: rem(8),
+  },
+  driverInfoCell: {
+    width: '48%',
+    minWidth: 0,
+  },
+  driverInfoCellWide: {
+    width: '100%',
+  },
+  driverInfoLabel: {
+    fontSize: fp(9),
+    fontFamily: fonts['500'],
+    color: colors.neutral.darkGrey,
+  },
+  driverInfoValue: {
+    marginTop: rem(1),
+    fontSize: fp(11),
+    fontFamily: fonts['700'],
+    color: colors.neutral.black,
+  },
+  driverInfoLinkValue: {
+    color: colors.primary.blue,
+    textDecorationLine: 'underline',
+  },
+  openLoadChatButton: {
+    width: '48%',
+    marginTop: rem(1),
+    borderRadius: rem(8),
+    backgroundColor: colors.primary.blue,
+    paddingHorizontal: rem(10),
+    paddingVertical: rem(7),
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  openLoadChatButtonDisabled: {
+    opacity: 0.65,
+  },
+  openLoadChatButtonText: {
+    fontSize: fp(10),
+    fontFamily: fonts['700'],
+    color: colors.neutral.white,
   },
   loadId: {
     fontSize: fp(14),

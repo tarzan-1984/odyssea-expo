@@ -1,7 +1,7 @@
 /**
  * Raster basemap for Leaflet in WebView.
  * Prefer MapTiler (streets-v4) when EXPO_PUBLIC_MAPTILER_API_KEY is set;
- * otherwise CARTO Voyager (no key, avoids OSMF tile server blocks).
+ * otherwise CARTO Voyager (same fallback as Next.js).
  */
 
 const MAPTILER_STYLE = 'streets-v4';
@@ -15,20 +15,21 @@ export type LeafletRasterTileConfig = {
 };
 
 export function getLeafletRasterTileConfig(): LeafletRasterTileConfig {
-	const key = process.env.EXPO_PUBLIC_MAPTILER_API_KEY?.trim() ?? '';
+	const key =
+		process.env.EXPO_PUBLIC_MAPTILER_API_KEY?.trim() ??
+		process.env.NEXT_PUBLIC_MAPTILER_API_KEY?.trim() ??
+		'';
 	if (key) {
 		return {
-			url: `https://api.maptiler.com/maps/${MAPTILER_STYLE}/{z}/{x}/{y}.png?key=${encodeURIComponent(key)}&language=en&region=US`,
+			url: `https://api.maptiler.com/maps/${MAPTILER_STYLE}/{z}/{x}/{y}.png?key=${encodeURIComponent(key)}`,
 			attribution:
 				'&copy; <a href="https://www.maptiler.com/copyright/">MapTiler</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
 			subdomains: null,
 			maxZoom: 22,
 		};
 	}
-	// No street labels — avoids Cyrillic/localized OSM names when MapTiler key is unset.
-	// Address text comes from Nominatim (accept-language=en) in the app UI.
 	return {
-		url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager_nolabels/{z}/{x}/{y}{r}.png',
+		url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
 		attribution:
 			'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
 		subdomains: 'abcd',

@@ -1,7 +1,15 @@
 import React, { useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
-import { View, StyleSheet, StyleProp, ViewStyle, Linking } from 'react-native';
+import { View, StyleSheet, StyleProp, ViewStyle, Linking, Image } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { getLeafletRasterTileConfig } from '@/utils/mapTileLayer';
+
+const TRACKING_DRIVER_MARKER_URI = Image.resolveAssetSource(
+  require('@/assets/images/tracking-driver-marker.png'),
+).uri;
+const PICKUP_MARKER_URI = Image.resolveAssetSource(require('@/assets/images/pickUp.png')).uri;
+const DELIVERY_MARKER_URI = Image.resolveAssetSource(
+  require('@/assets/images/deliveryMarcer.png'),
+).uri;
 
 export interface Region {
   latitude: number;
@@ -16,16 +24,33 @@ export interface MarkerData {
     longitude: number;
   };
   anchor?: { x: number; y: number };
+  kind?: 'driver' | 'pickup' | 'delivery' | 'history' | 'liveDriver';
+  label?: string;
+  historyIndex?: number;
+  markerColor?: string;
+  isLastHistoryPoint?: boolean;
+  tooltipType?: string;
+  tooltipAddress?: string;
+  tooltipTime?: string;
   driverStatus?: string | null;
   driverId?: string;
   driverExternalId?: string | null;
   status?: string | null;
 }
 
+export interface MapPolylineData {
+  coordinates: Array<{ latitude: number; longitude: number }>;
+  color?: string;
+  weight?: number;
+  opacity?: number;
+}
+
 export interface OSMMapViewProps {
   initialRegion: Region;
   style?: StyleProp<ViewStyle>;
   markers?: MarkerData[];
+  polylineCoordinates?: Array<{ latitude: number; longitude: number }>;
+  polylines?: MapPolylineData[];
   showsUserLocation?: boolean;
   showsMyLocationButton?: boolean;
   scrollEnabled?: boolean;
@@ -49,7 +74,17 @@ export interface OSMMapViewRef {
 }
 
 const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
-  ({ initialRegion, style, markers = [], onMapPress, onMarkerPress, scrollEnabled = true, zoomEnabled = true }, ref) => {
+  ({
+    initialRegion,
+    style,
+    markers = [],
+    polylineCoordinates,
+    polylines = [],
+    onMapPress,
+    onMarkerPress,
+    scrollEnabled = true,
+    zoomEnabled = true,
+  }, ref) => {
     const webViewRef = useRef<WebView>(null);
     const mapReadyRef = useRef(false);
     const currentZoomRef = useRef<number | null>(null);
@@ -72,6 +107,35 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
       const height = Math.round(MIN_MARKER_HEIGHT + (MAX_MARKER_HEIGHT - MIN_MARKER_HEIGHT) * zoomRatio);
       
       return { width, height };
+    };
+
+    const calculateHistoryMarkerSize = (zoom: number) => {
+      const minZoom = 10;
+      const maxZoom = 16;
+      const maxDiameter = 20;
+      const minDiameter = 12;
+      const normalized = Math.max(0, Math.min(1, (zoom - minZoom) / (maxZoom - minZoom)));
+      return Math.round(maxDiameter - (maxDiameter - minDiameter) * normalized);
+    };
+
+    const calculateStopMarkerSize = (zoom: number) => {
+      const minZoom = 4;
+      const maxZoom = 12;
+      const minWidth = 24;
+      const maxWidth = 36;
+      const normalized = Math.max(0, Math.min(1, (zoom - minZoom) / (maxZoom - minZoom)));
+      const width = Math.round(minWidth + (maxWidth - minWidth) * normalized);
+      return { width, height: Math.round(width * 1.48) };
+    };
+
+    const calculateLiveDriverMarkerSize = (zoom: number) => {
+      const minZoom = 4;
+      const maxZoom = 14;
+      const minWidth = 30;
+      const maxWidth = 44;
+      const normalized = Math.max(0, Math.min(1, (zoom - minZoom) / (maxZoom - minZoom)));
+      const width = Math.round(minWidth + (maxWidth - minWidth) * normalized);
+      return { width, height: Math.round(width * 1.48) };
     };
 
     // Driver status color mapping
@@ -110,6 +174,14 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
         lat: marker.coordinate.latitude,
         lng: marker.coordinate.longitude,
         anchor: marker.anchor || { x: 0.5, y: 0.5 },
+        kind: marker.kind || 'driver',
+        label: marker.label || '',
+        historyIndex: typeof marker.historyIndex === 'number' ? marker.historyIndex : null,
+        markerColor: marker.markerColor || null,
+        isLastHistoryPoint: marker.isLastHistoryPoint === true,
+        tooltipType: marker.tooltipType || '',
+        tooltipAddress: marker.tooltipAddress || '',
+        tooltipTime: marker.tooltipTime || '',
         status: marker.driverStatus || null,
         statusColor: getStatusColor(marker.driverStatus),
         driverId: marker.driverId,
@@ -119,6 +191,9 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
 
       const scaleX = width / MAX_MARKER_WIDTH;
       const scaleY = height / MAX_MARKER_HEIGHT;
+      const historyDiameter = calculateHistoryMarkerSize(currentZoom);
+      const stopSize = calculateStopMarkerSize(currentZoom);
+      const liveDriverSize = calculateLiveDriverMarkerSize(currentZoom);
 
       const script = `
         (function() {
@@ -136,18 +211,89 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
             var scaleY = ${scaleY};
             var markerWidth = ${width};
             var markerHeight = ${height};
+            var historyDiameter = ${historyDiameter};
+            var stopWidth = ${stopSize.width};
+            var stopHeight = ${stopSize.height};
+            var liveDriverWidth = ${liveDriverSize.width};
+            var liveDriverHeight = ${liveDriverSize.height};
+            var driverMarkerUri = ${JSON.stringify(TRACKING_DRIVER_MARKER_URI)};
+            var pickupMarkerUri = ${JSON.stringify(PICKUP_MARKER_URI)};
+            var deliveryMarkerUri = ${JSON.stringify(DELIVERY_MARKER_URI)};
+
+            function escapeHtml(value) {
+              return String(value || '').replace(/[&<>"']/g, function(ch) {
+                return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+              });
+            }
+
+            function createStopMarkerHtml(markerData) {
+              var isDelivery = markerData.kind === 'delivery';
+              var imageUri = isDelivery ? deliveryMarkerUri : pickupMarkerUri;
+              return '<div style="width:' + stopWidth + 'px;height:' + stopHeight + 'px;display:flex;align-items:center;justify-content:center;">'
+                + '<img src="' + imageUri + '" style="width:' + stopWidth + 'px;height:' + stopHeight + 'px;object-fit:contain;display:block;" />'
+                + '</div>';
+            }
+
+            function createHistoryMarkerHtml(markerData) {
+              var diameter = historyDiameter;
+              var color = markerData.isLastHistoryPoint ? '#16A34A' : '#2563EB';
+              var border = markerData.isLastHistoryPoint ? '#15803D' : '#1D4ED8';
+              var fontSize = Math.max(8, Math.min(11, Math.round(diameter * 0.45)));
+              return '<div style="width:' + Math.ceil(diameter * 1.55) + 'px;height:' + Math.ceil(diameter * 1.55) + 'px;display:flex;align-items:center;justify-content:center;overflow:visible;">'
+                + '<div style="width:' + diameter + 'px;height:' + diameter + 'px;background:' + color + ';border:2px solid ' + border + ';border-radius:50% 50% 50% 0;transform:rotate(-45deg);box-shadow:0 0 0 1px rgba(37,99,235,.25),0 1px 4px rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center;overflow:visible;">'
+                + '<span style="display:block;transform:rotate(45deg);color:#fff;font-size:' + fontSize + 'px;font-family:Arial,sans-serif;font-weight:800;line-height:1;text-shadow:0 1px 1px rgba(0,0,0,.35);">' + escapeHtml(markerData.label) + '</span>'
+                + '</div></div>';
+            }
+
+            function createLiveDriverMarkerHtml() {
+              return '<div style="width:' + liveDriverWidth + 'px;height:' + liveDriverHeight + 'px;display:flex;align-items:center;justify-content:center;">'
+                + '<img src="' + driverMarkerUri + '" style="width:' + liveDriverWidth + 'px;height:' + liveDriverHeight + 'px;object-fit:contain;display:block;" />'
+                + '</div>';
+            }
             
             markersData.forEach(function(markerData) {
-              // Create marker SVG with status color
-              var statusColor = markerData.statusColor || '#808080';
-              var locationMarkerHtml = '<div style="position:relative;"><svg width="34" height="46" viewBox="0 0 92.25 122.88"><path d="' + markerSvgPath + '" fill="' + statusColor + '" stroke="#1E3A5F" stroke-width="2" fill-rule="evenodd"/><circle cx="46.13" cy="46.76" r="12" fill="#F5D5D5" stroke="#1E3A5F" stroke-width="1.5"/></svg></div>';
+              var markerHtml;
+              var iconWidth = markerWidth;
+              var iconHeight = markerHeight;
+              var anchorX = markerData.anchor.x;
+              var anchorY = markerData.anchor.y;
+
+              if (markerData.kind === 'liveDriver') {
+                markerHtml = createLiveDriverMarkerHtml();
+                iconWidth = liveDriverWidth;
+                iconHeight = liveDriverHeight;
+                anchorX = 0.5;
+                anchorY = 0.96;
+              } else if (markerData.kind === 'pickup' || markerData.kind === 'delivery') {
+                markerHtml = createStopMarkerHtml(markerData);
+                iconWidth = stopWidth;
+                iconHeight = stopHeight;
+                anchorX = 0.5;
+                anchorY = 0.96;
+              } else if (markerData.kind === 'history') {
+                markerHtml = createHistoryMarkerHtml(markerData);
+                iconWidth = Math.ceil(historyDiameter * 1.55);
+                iconHeight = Math.ceil(historyDiameter * 1.55);
+                anchorX = 0.5;
+                anchorY = 0.78;
+              } else {
+                // Create marker SVG with status color
+                var statusColor = markerData.statusColor || '#808080';
+                var locationMarkerHtml = '<div style="position:relative;"><svg width="34" height="46" viewBox="0 0 92.25 122.88"><path d="' + markerSvgPath + '" fill="' + statusColor + '" stroke="#1E3A5F" stroke-width="2" fill-rule="evenodd"/><circle cx="46.13" cy="46.76" r="12" fill="#F5D5D5" stroke="#1E3A5F" stroke-width="1.5"/></svg></div>';
+                markerHtml = '<div style="transform: scale(' + scaleX + ', ' + scaleY + '); transform-origin: top left; width: 34px; height: 46px;">' + locationMarkerHtml + '</div>';
+              }
               
+              var historyZIndex = markerData.kind === 'history'
+                ? 500 + (typeof markerData.historyIndex === 'number' ? markerData.historyIndex : 0)
+                : 500;
               var marker = L.marker([markerData.lat, markerData.lng], {
+                zIndexOffset: markerData.kind === 'liveDriver' ? 1000 : (markerData.kind === 'history' ? historyZIndex : 500),
+                riseOnHover: markerData.kind === 'history',
                 icon: L.divIcon({
                   className: 'custom-marker',
-                  html: '<div style="transform: scale(' + scaleX + ', ' + scaleY + '); transform-origin: top left; width: 34px; height: 46px;">' + locationMarkerHtml + '</div>',
-                  iconSize: [markerWidth, markerHeight],
-                  iconAnchor: [markerData.anchor.x * markerWidth, markerData.anchor.y * markerHeight],
+                  html: markerHtml,
+                  iconSize: [iconWidth, iconHeight],
+                  iconAnchor: [anchorX * iconWidth, anchorY * iconHeight],
                 })
               });
               
@@ -157,6 +303,16 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
               marker._driverExternalId = markerData.driverExternalId;
               marker._driverLat = markerData.lat;
               marker._driverLng = markerData.lng;
+
+              if (markerData.tooltipType || markerData.tooltipAddress || markerData.tooltipTime) {
+                marker.bindPopup(
+                  '<div style="font-family:Arial,sans-serif;font-size:12px;line-height:1.35;max-width:220px;">'
+                  + (markerData.tooltipType ? '<div style="font-weight:700;margin-bottom:2px;">' + escapeHtml(markerData.tooltipType) + '</div>' : '')
+                  + (markerData.tooltipAddress ? '<div>' + escapeHtml(markerData.tooltipAddress) + '</div>' : '')
+                  + (markerData.tooltipTime ? '<div style="color:#6B7280;margin-top:2px;">' + escapeHtml(markerData.tooltipTime) + '</div>' : '')
+                  + '</div>'
+                );
+              }
               
               // Add click handler
               marker.on('click', function() {
@@ -184,6 +340,51 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
       webViewRef.current?.injectJavaScript(script);
     };
 
+    const updatePolylines = (basePolyline?: Array<{ latitude: number; longitude: number }>, extraPolylines: MapPolylineData[] = []) => {
+      if (!mapReadyRef.current) return;
+
+      const lines: MapPolylineData[] = [];
+      if (Array.isArray(basePolyline) && basePolyline.length > 1) {
+        lines.push({
+          coordinates: basePolyline,
+          color: '#2563EB',
+          weight: 4,
+          opacity: 0.75,
+        });
+      }
+      lines.push(
+        ...extraPolylines.filter((line) => Array.isArray(line.coordinates) && line.coordinates.length > 1)
+      );
+
+      const script = `
+        (function() {
+          if (!window.map) return true;
+          if (window.polylines) {
+            window.polylines.forEach(function(line) { line.remove(); });
+          }
+          window.polylines = [];
+          var lines = ${JSON.stringify(lines)};
+          lines.forEach(function(line) {
+            var latLngs = (line.coordinates || []).map(function(point) {
+              return [point.latitude, point.longitude];
+            });
+            if (latLngs.length < 2) return;
+            var polyline = L.polyline(latLngs, {
+              color: line.color || '#2563EB',
+              weight: line.weight || 4,
+              opacity: line.opacity == null ? 0.75 : line.opacity,
+              interactive: false
+            }).addTo(window.map);
+            window.polylines.push(polyline);
+          });
+          return true;
+        })();
+        true;
+      `;
+
+      webViewRef.current?.injectJavaScript(script);
+    };
+
     // Update markers when markers prop changes
     useEffect(() => {
       if (mapReadyRef.current) {
@@ -191,6 +392,12 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
         updateMarkers(markers, currentZoomRef.current ?? undefined);
       }
     }, [markers]);
+
+    useEffect(() => {
+      if (mapReadyRef.current) {
+        updatePolylines(polylineCoordinates, polylines);
+      }
+    }, [polylineCoordinates, polylines]);
 
     const rasterTile = getLeafletRasterTileConfig();
     const tileLayerSubdomainsJs = rasterTile.subdomains
@@ -269,7 +476,7 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
         18
       ),
       attributionControl: false,
-      zoomControl: ${zoomJs},
+      zoomControl: false,
       scrollWheelZoom: ${zoomJs},
       doubleClickZoom: ${zoomJs},
       boxZoom: ${zoomJs},
@@ -293,6 +500,7 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
     // Store map and markers in window for access from React Native
     window.map = map;
     window.markers = [];
+    window.polylines = [];
 
     // Handle map ready
     map.whenReady(function() {
@@ -335,8 +543,8 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
         }));
       }
       
-      // Update marker sizes when zoom changes
-      if (window.markers && window.markers.length > 0) {
+      // Marker sizes are recalculated from React Native via updateMarkers().
+      if (false && window.markers && window.markers.length > 0) {
         var minZoom = ${MIN_ZOOM};
         var maxZoom = ${MAX_ZOOM};
         var minWidth = ${MIN_MARKER_WIDTH};
@@ -447,13 +655,14 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
               const data = JSON.parse(event.nativeEvent.data);
               if (data.type === 'mapReady') {
                 mapReadyRef.current = true;
+                updatePolylines(polylineCoordinates, polylines);
                 if (markers.length > 0) {
                   updateMarkers(markers);
                 }
               } else if (data.type === 'zoomChange') {
                 // Update zoom ref when zoom changes
                 currentZoomRef.current = data.zoom;
-                // Markers are updated automatically in the zoomend handler
+                updateMarkers(markers, data.zoom);
               } else if (data.type === 'mapClick' && onMapPress) {
                 onMapPress(data.lat, data.lng);
               } else if (data.type === 'markerClick' && onMarkerPress) {

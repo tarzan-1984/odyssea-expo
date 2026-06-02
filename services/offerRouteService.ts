@@ -94,6 +94,17 @@ async function fetchOsrmRoute(
   return coordsArray.map(([lng, lat]) => ({ latitude: lat, longitude: lng }));
 }
 
+export async function fetchRouteForPoints(points: RoutePoint[]): Promise<OfferRouteResult | null> {
+  const validPoints = points.filter(
+    (point) => Number.isFinite(point.latitude) && Number.isFinite(point.longitude)
+  );
+  if (validPoints.length === 0) return null;
+
+  const polyline = validPoints.length >= 2 ? await fetchOsrmRoute(validPoints) : [];
+  const bounds = computeBounds(validPoints, polyline);
+  return { markers: validPoints, polyline, bounds };
+}
+
 /**
  * Calculate bounds from markers and polyline
  */
@@ -158,8 +169,5 @@ export async function fetchOfferRoute(
     return null;
   }
 
-  const polyline = markers.length >= 2 ? await fetchOsrmRoute(markers) : [];
-  const bounds = computeBounds(markers, polyline);
-
-  return { markers, polyline, bounds };
+  return fetchRouteForPoints(markers);
 }

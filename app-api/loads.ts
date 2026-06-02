@@ -32,6 +32,49 @@ export type YourLoadItem = {
   raw: TmsLoadRawRow;
 };
 
+export type LoadRouteGeocodeMarker = {
+  lat: number;
+  lng: number;
+  addressLabel?: string | null;
+};
+
+export type DriverTrackingPoint = {
+  id?: string | null;
+  externalDriverId?: string | null;
+  latitude: number | string;
+  longitude: number | string;
+  placeLabel?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type LoadMapDriver = {
+  id?: string | null;
+  email?: string | null;
+  externalId?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  phone?: string | null;
+  profilePhoto?: string | null;
+  driverStatus?: string | null;
+  status?: string | null;
+  city?: string | null;
+  state?: string | null;
+  zip?: string | null;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
+  lastLocationUpdateAt?: string | null;
+};
+
+export type LoadMapPayload = {
+  routeGeocode?: {
+    pickup?: LoadRouteGeocodeMarker | null;
+    delivery?: LoadRouteGeocodeMarker | null;
+  } | null;
+  trackingPoints?: DriverTrackingPoint[];
+  drivers?: LoadMapDriver[];
+};
+
 export type YourLoadsResponse = {
   items: YourLoadItem[];
   tms: {
@@ -206,5 +249,43 @@ export async function getYourLoads(params: {
       total_pages: totalPages,
     },
   };
+}
+
+export async function getLoadMapPayload(loadId: string): Promise<LoadMapPayload | null> {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is not configured');
+  }
+
+  const cleanLoadId = loadId.trim();
+  if (!cleanLoadId) return null;
+
+  const accessToken = await secureStorage.getItemAsync('accessToken');
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
+
+  const response = await fetch(`${API_BASE_URL}/v1/tms/load/${encodeURIComponent(cleanLoadId)}`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const msg =
+      typeof (errorData as { message?: unknown }).message === 'string'
+        ? String((errorData as { message: unknown }).message)
+        : `Failed to load map payload. Status: ${response.status}`;
+    throw new Error(msg);
+  }
+
+  const raw: unknown = await response.json();
+  const wrapped = asRecord(raw) ?? {};
+  const data = asRecord(wrapped.data) ?? wrapped;
+  const nestedData = asRecord(data.data) ?? data;
+
+  return nestedData as LoadMapPayload;
 }
 
