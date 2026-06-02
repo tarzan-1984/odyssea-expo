@@ -25,8 +25,8 @@
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "This app uses location to share your current location and update it automatically.",
         "NSLocationAlwaysAndWhenInUseUsageDescription": "This app uses location to share your current location and update it automatically in the background.",
-        "NSPhotoLibraryUsageDescription": "This app needs access to your photo library to select an avatar.",
-        "NSPhotoLibraryAddUsageDescription": "This app may save selected or edited avatar to your library.",
+        "NSPhotoLibraryUsageDescription": "This app needs access to your photo library to select an avatar and save chat images.",
+        "NSPhotoLibraryAddUsageDescription": "This app saves images from chat to your photo library.",
         "UIBackgroundModes": [
           "location",
           "remote-notification"
@@ -104,7 +104,15 @@
         }
       ],
       "expo-asset",
-      "expo-web-browser"
+      "expo-web-browser",
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow Odyssea to access your photos.",
+          "savePhotosPermission": "Allow Odyssea to save images from chat to your photo library.",
+          "isAccessMediaLocationEnabled": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

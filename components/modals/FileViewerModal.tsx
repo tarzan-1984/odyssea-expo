@@ -6,8 +6,11 @@ import FileViewer from 'react-native-file-viewer';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { colors, fonts, fp, rem } from '@/lib';
+import { saveImageToPhotoLibrary } from '@/utils/saveImageToPhotos';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import CloseIcon from '@/icons/CloseIcon';
+import RotateCcwIcon from '@/icons/RotateCcwIcon';
+import RotateCwIcon from '@/icons/RotateCwIcon';
 
 interface FileViewerModalProps {
   visible: boolean;
@@ -17,9 +20,61 @@ interface FileViewerModalProps {
   onClose: () => void;
 }
 
+const SHARE_CACHE_DIR = `${FileSystem.cacheDirectory}chat-share-cache/`;
+
+function sanitizeFileName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]/g, '_') || 'file';
+}
+
+function stableHash(value: string): string {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash * 31 + value.charCodeAt(i)) >>> 0;
+  }
+  return hash.toString(36);
+}
+
+/** expo-sharing requires a local file:// URI; remote https URLs must be downloaded first. */
+async function resolveLocalFileUriForShare(
+  fileUri: string,
+  fileName: string,
+  originalUrl?: string
+): Promise<string> {
+  if (fileUri.startsWith('file://')) {
+    const info = await FileSystem.getInfoAsync(fileUri);
+    if (info.exists) return fileUri;
+  }
+
+  const remoteUrl =
+    fileUri.startsWith('http://') || fileUri.startsWith('https://')
+      ? fileUri
+      : originalUrl;
+
+  if (!remoteUrl?.startsWith('http')) {
+    throw new Error('File is not available locally and has no remote URL');
+  }
+
+  const dirInfo = await FileSystem.getInfoAsync(SHARE_CACHE_DIR);
+  if (!dirInfo.exists) {
+    await FileSystem.makeDirectoryAsync(SHARE_CACHE_DIR, { intermediates: true });
+  }
+
+  const localPath = `${SHARE_CACHE_DIR}${stableHash(remoteUrl)}-${sanitizeFileName(fileName)}`;
+  const existing = await FileSystem.getInfoAsync(localPath);
+  if (existing.exists) return localPath;
+
+  const downloadResult = await FileSystem.downloadAsync(remoteUrl, localPath);
+  if (downloadResult.status !== 200) {
+    throw new Error(`Download failed with status ${downloadResult.status}`);
+  }
+  return downloadResult.uri;
+}
+
 export default function FileViewerModal({ visible, fileUri, fileName, originalUrl, onClose }: FileViewerModalProps) {
   const insets = useSafeAreaInsets();
   const [isLoading, setIsLoading] = useState(true);
+  const [pendingFileAction, setPendingFileAction] = useState<'share' | 'download' | null>(null);
+  const [imageRotationDeg, setImageRotationDeg] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [fileUrl, setFileUrl] = useState<string | null>(null);
@@ -114,44 +169,94 @@ export default function FileViewerModal({ visible, fileUri, fileName, originalUr
     };
   }, [visible, fileUri, originalUrl, isPdf, isDoc, isImage, isText]);
 
+  useEffect(() => {
+    if (!visible) {
+      setPendingFileAction(null);
+      setImageRotationDeg(0);
+    }
+  }, [visible]);
+
+  useEffect(() => {
+    setImageRotationDeg(0);
+  }, [fileUri, fileName]);
+
+  const shareLocalFile = async (localUri: string, dialogTitle: string) => {
+    const isAvailable = await Sharing.isAvailableAsync();
+    if (!isAvailable) {
+      Alert.alert(
+        'Sharing not available',
+        'Sharing is not available on this device.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
+    // Hide loader before the native sheet opens (shareAsync resolves only after dismiss).
+    setPendingFileAction(null);
+    await Sharing.shareAsync(localUri, {
+      mimeType: getMimeType(ext),
+      dialogTitle,
+    });
+  };
+
+  const openShareSheet = async (dialogTitle: string) => {
+    const localUri = await resolveLocalFileUriForShare(fileUri, fileName, originalUrl);
+    await shareLocalFile(localUri, dialogTitle);
+  };
+
   const handleShare = async () => {
+    if (pendingFileAction) return;
     try {
-      const isAvailable = await Sharing.isAvailableAsync();
-      if (isAvailable) {
-        await Sharing.shareAsync(fileUri, {
-          mimeType: getMimeType(ext),
-          dialogTitle: `Share ${fileName}`,
-        });
-      } else {
-        Alert.alert(
-          'Sharing not available',
-          'Sharing is not available on this device.',
-          [{ text: 'OK' }]
-        );
-      }
-    } catch (error) {
-      console.error('Failed to share file:', error);
+      setPendingFileAction('share');
+      await openShareSheet(`Share ${fileName}`);
+    } catch (shareError) {
+      console.error('Failed to share file:', shareError);
+      Alert.alert('Error', 'Failed to share file. Please try again.');
+      setPendingFileAction(null);
     }
   };
 
+  const saveImageToGallery = async () => {
+    const localUri = await resolveLocalFileUriForShare(fileUri, fileName, originalUrl);
+    const result = await saveImageToPhotoLibrary(localUri, fileName, getMimeType(ext));
+    setPendingFileAction(null);
+
+    if (result === 'saved') {
+      Alert.alert('Saved', 'Image saved to your photo library.');
+      return;
+    }
+    if (result === 'permission_denied') {
+      Alert.alert(
+        'Permission required',
+        'Allow access to your photo library to save images.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    if (result === 'native_unavailable') {
+      Alert.alert(
+        'Native module missing',
+        'Run in project folder: cd ios && pod install — then rebuild in Xcode (Product → Clean Build Folder, then Run).',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+    Alert.alert('Error', 'Failed to save image. Please try again.');
+  };
+
   const handleDownload = async () => {
+    if (pendingFileAction) return;
     try {
-      const isAvailable = await Sharing.isAvailableAsync();
-      if (isAvailable) {
-        await Sharing.shareAsync(fileUri, {
-          mimeType: getMimeType(ext),
-          dialogTitle: `Save ${fileName}`,
-        });
+      setPendingFileAction('download');
+      if (isImage) {
+        await saveImageToGallery();
       } else {
-        Alert.alert(
-          'Download not available',
-          'Download is not available on this device.',
-          [{ text: 'OK' }]
-        );
+        await openShareSheet(`Save ${fileName}`);
       }
-    } catch (error) {
-      console.error('Failed to download file:', error);
-      Alert.alert('Error', 'Failed to download file');
+    } catch (downloadError) {
+      console.error('Failed to download file:', downloadError);
+      Alert.alert('Error', 'Failed to download file. Please try again.');
+      setPendingFileAction(null);
     }
   };
 
@@ -170,13 +275,29 @@ export default function FileViewerModal({ visible, fileUri, fileName, originalUr
           </Text>
           
           <View style={styles.actionsContainer}>
-            <TouchableOpacity onPress={handleDownload} style={styles.downloadButton}>
-              <Text style={styles.downloadButtonText}>Download</Text>
+            <TouchableOpacity
+              onPress={handleDownload}
+              style={styles.downloadButton}
+              disabled={pendingFileAction !== null}
+            >
+              {pendingFileAction === 'download' ? (
+                <ActivityIndicator size="small" color={colors.primary.blue} />
+              ) : (
+                <Text style={styles.downloadButtonText}>Download</Text>
+              )}
             </TouchableOpacity>
             
             {!isText && (
-              <TouchableOpacity onPress={handleShare} style={styles.shareButton}>
-                <Text style={styles.shareButtonText}>Share</Text>
+              <TouchableOpacity
+                onPress={handleShare}
+                style={styles.shareButton}
+                disabled={pendingFileAction !== null}
+              >
+                {pendingFileAction === 'share' ? (
+                  <ActivityIndicator size="small" color={colors.primary.blue} />
+                ) : (
+                  <Text style={styles.shareButtonText}>Share</Text>
+                )}
               </TouchableOpacity>
             )}
           </View>
@@ -185,6 +306,27 @@ export default function FileViewerModal({ visible, fileUri, fileName, originalUr
             <CloseIcon color={colors.primary.blue} width={20} height={20} />
           </TouchableOpacity>
         </View>
+
+        {isImage && fileUrl && !isLoading && !error ? (
+          <View style={styles.imageToolbar}>
+            <TouchableOpacity
+              style={styles.imageToolbarButton}
+              activeOpacity={0.85}
+              accessibilityLabel="Rotate image counter-clockwise"
+              onPress={() => setImageRotationDeg((d) => ((d - 90) % 360 + 360) % 360)}
+            >
+              <RotateCcwIcon width={rem(16)} height={rem(16)} />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.imageToolbarButton}
+              activeOpacity={0.85}
+              accessibilityLabel="Rotate image clockwise"
+              onPress={() => setImageRotationDeg((d) => (d + 90) % 360)}
+            >
+              <RotateCwIcon width={rem(16)} height={rem(16)} />
+            </TouchableOpacity>
+          </View>
+        ) : null}
 
         {/* Content */}
         <View style={styles.content}>
@@ -240,17 +382,24 @@ export default function FileViewerModal({ visible, fileUri, fileName, originalUr
               trustAllCerts={false}
             />
           ) : isImage && fileUrl ? (
-            <ScrollView 
-              style={styles.imageContainer} 
+            <ScrollView
+              style={styles.imageContainer}
               contentContainerStyle={styles.imageContent}
               maximumZoomScale={3}
               minimumZoomScale={1}
             >
-              <Image
-                source={{ uri: fileUrl }}
-                style={styles.imagePreview}
-                resizeMode="contain"
-              />
+              <View
+                style={[
+                  styles.imageRotatedWrap,
+                  { transform: [{ rotate: `${imageRotationDeg}deg` }] },
+                ]}
+              >
+                <Image
+                  source={{ uri: fileUrl }}
+                  style={styles.imagePreview}
+                  resizeMode="contain"
+                />
+              </View>
             </ScrollView>
           ) : null}
         </View>
@@ -317,6 +466,25 @@ const styles = StyleSheet.create({
   placeholder: {
     width: rem(60),
   },
+  imageToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: rem(10),
+    paddingVertical: rem(12),
+    paddingHorizontal: rem(16),
+    backgroundColor: colors.neutral.black,
+  },
+  imageToolbarButton: {
+    width: rem(32),
+    height: rem(32),
+    borderRadius: rem(16),
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+  },
   content: {
     flex: 1,
   },
@@ -362,6 +530,13 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     justifyContent: 'center',
     alignItems: 'center',
+    minHeight: '100%',
+  },
+  imageRotatedWrap: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: '100%',
+    minHeight: 400,
   },
   imagePreview: {
     width: '100%',

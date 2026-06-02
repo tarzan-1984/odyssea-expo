@@ -39,6 +39,20 @@ import { useWebSocket } from '@/context/WebSocketContext';
 import { chatApi } from '@/app-api/chatApi';
 
 const MAP_MAX_HEIGHT = Dimensions.get('window').height * 0.25;
+const SCREEN_WIDTH = Dimensions.get('window').width;
+
+const LOAD_DETAIL_TAB_ROWS = [
+  [
+    { key: 'customer', label: 'Customer' },
+    { key: 'load', label: 'Load' },
+    { key: 'trip', label: 'Trip' },
+  ],
+  [
+    { key: 'documents', label: 'Documents' },
+    { key: 'billing', label: 'Billing' },
+    { key: 'accounting', label: 'Accounting' },
+  ],
+] as const;
 const ROUTE_POINT_FOCUS_DELTA = 1.2;
 const ROUTE_POINT_COLORS = {
   initialPickup: '#1D4ED8',
@@ -470,7 +484,6 @@ export default function LoadDetailScreen() {
   const canAccess = canAccessWorkTab(authState.user?.role);
   const role = (authState.user?.role ?? '').trim().toUpperCase();
   const showDriversTab = canAccessDriversAndOffers(role);
-  const isAdministrator = role === 'ADMINISTRATOR';
 
   useEffect(() => {
     if (authState.isAuthenticated && !canAccess) {
@@ -1030,40 +1043,12 @@ export default function LoadDetailScreen() {
             </View>
           </View>
 
-          {!isAdministrator ? (
-            <View style={styles.tabsGrid}>
-              {(
-                [
-                  { key: 'customer', label: 'Customer' },
-                  { key: 'load', label: 'Load' },
-                  { key: 'trip', label: 'Trip' },
-                  { key: 'documents', label: 'Documents' },
-                  { key: 'billing', label: 'Billing' },
-                  { key: 'accounting', label: 'Accounting' },
-                ] as const
-              ).map((t) => (
-                <TouchableOpacity
-                  key={t.key}
-                  style={[
-                    styles.tabButton2Col,
-                    contentTab === t.key && styles.tabButtonActive2Col,
-                  ]}
-                  onPress={() => setContentTab(t.key)}
-                  activeOpacity={0.85}
-                >
-                  <Text style={[styles.tabText, contentTab === t.key && styles.tabTextActive]}>
-                    {t.label}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
-          ) : null}
-
           <ScrollView
             style={styles.mainScroll}
             contentContainerStyle={styles.mainScrollContent}
             showsVerticalScrollIndicator={false}
             nestedScrollEnabled={Platform.OS === 'android'}
+            stickyHeaderIndices={[1]}
           >
             <View style={styles.mapWrap} collapsable={false}>
               {routeLoading ? (
@@ -1286,6 +1271,33 @@ export default function LoadDetailScreen() {
                 polylines={mapPolylines}
                 style={StyleSheet.absoluteFill}
               />
+            </View>
+
+            <View style={[styles.tabsStickyWrap, { width: SCREEN_WIDTH }]}>
+              <View style={styles.tabsGrid}>
+                {LOAD_DETAIL_TAB_ROWS.map((row, rowIndex) => (
+                  <View key={`load-tab-row-${rowIndex}`} style={styles.tabsRow}>
+                    {row.map((t) => (
+                      <TouchableOpacity
+                        key={t.key}
+                        style={[
+                          styles.tabButton,
+                          contentTab === t.key && styles.tabButtonActive,
+                        ]}
+                        onPress={() => setContentTab(t.key)}
+                        activeOpacity={0.85}
+                      >
+                        <Text
+                          style={[styles.tabText, contentTab === t.key && styles.tabTextActive]}
+                          numberOfLines={1}
+                        >
+                          {t.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                ))}
+              </View>
             </View>
 
             {contentTab === 'trip' ? (
@@ -1905,15 +1917,23 @@ const styles = StyleSheet.create({
   mainScrollContent: {
     paddingBottom: rem(24),
   },
+  tabsStickyWrap: {
+    alignSelf: 'stretch',
+    backgroundColor: '#0d1a2d',
+  },
   tabsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
     width: '100%',
     backgroundColor: '#0d1a2d',
   },
-  tabButton2Col: {
-    width: '33.3333%',
+  tabsRow: {
+    flexDirection: 'row',
+    width: '100%',
+  },
+  tabButton: {
+    flex: 1,
+    minWidth: 0,
     paddingVertical: rem(10),
+    paddingHorizontal: rem(4),
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.primary.blue,
@@ -1931,7 +1951,7 @@ const styles = StyleSheet.create({
       },
     }),
   },
-  tabButtonActive2Col: {
+  tabButtonActive: {
     backgroundColor: '#0d1a2d',
     borderTopWidth: 3,
     borderTopColor: 'rgba(0, 0, 0, 0.6)',
