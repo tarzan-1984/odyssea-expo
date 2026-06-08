@@ -1,4 +1,9 @@
 import { ChatRoom } from '@/components/ChatListItem';
+import {
+  findLoadChatDispatcherParticipant,
+  getLoadChatDispatcherAvatarBg,
+  getLoadChatDispatcherInitials,
+} from '@/utils/loadChatAvatar';
 
 /**
  * Get avatar source for a chat room
@@ -28,11 +33,16 @@ export function getChatAvatarSource(
     return null;
   }
   
-  // For GROUP/LOAD chats, use chat avatar if available
+  // LOAD chats: initials + userColor only (no images)
+  if (chatRoom.type === 'LOAD') {
+    return null;
+  }
+
+  // For GROUP chats, use chat avatar if available
   if (chatRoom.avatar) {
     return chatRoom.avatar;
   }
-  
+
   return null;
 }
 
@@ -91,5 +101,27 @@ export function getChatInitials(name: string): string {
   const firstInitial = parts[0]?.[0] || '';
   const secondInitial = parts[1]?.[0] || parts[0]?.[1] || '';
   return `${firstInitial}${secondInitial}`.toUpperCase();
+}
+
+/** Initials and background for avatar placeholder (LOAD uses dispatcher). */
+export function getChatAvatarPlaceholderMeta(
+  chatRoom: ChatRoom | null,
+  displayName: string,
+): { initials: string; backgroundColor?: string } {
+  if (!chatRoom) {
+    return { initials: getChatInitials(displayName) };
+  }
+  if (chatRoom.type === 'LOAD') {
+    const dispatcher = findLoadChatDispatcherParticipant(chatRoom);
+    const initials = getLoadChatDispatcherInitials(chatRoom) || getChatInitials(displayName);
+    if (dispatcher) {
+      return {
+        initials,
+        backgroundColor: getLoadChatDispatcherAvatarBg(dispatcher.user.userColor),
+      };
+    }
+    return { initials };
+  }
+  return { initials: getChatInitials(displayName) };
 }
 

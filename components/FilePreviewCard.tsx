@@ -10,6 +10,8 @@ import { colors, fonts, fp, rem } from '@/lib';
 import FileIcon from '@/icons/FileIcon';
 import FileViewerModal from '@/components/modals/FileViewerModal';
 import { imageCacheService } from '@/services/ImageCacheService';
+import { secureStorage } from '@/utils/secureStorage';
+import { getHeicConvertApiUrl, toJpegFilename } from '@/utils/heicUpload';
 
 type Props = {
 	fileUrl: string;
@@ -54,7 +56,13 @@ const getCachedHeicFileUri = async (params: {
 	signal?: AbortSignal;
 }): Promise<string> => {
 	const { fileUrl, fileName, signal } = params;
-	const localFileUri = imageCacheService.getHeicCacheUri(fileUrl, fileName);
+	const jpegName = toJpegFilename(fileName);
+	const localFileUri = imageCacheService.getHeicCacheUri(fileUrl, jpegName);
+	const accessToken = await secureStorage.getItemAsync('accessToken').catch(() => null);
+	const downloadUrl = getHeicConvertApiUrl(fileUrl);
+	const downloadHeaders = accessToken
+		? { Authorization: `Bearer ${accessToken}` }
+		: undefined;
 
 	const existingFile = await FileSystem.getInfoAsync(localFileUri);
 	if (existingFile.exists) {
@@ -63,7 +71,11 @@ const getCachedHeicFileUri = async (params: {
 
 	await imageCacheService.ensureHeicCacheDirectory();
 
-	const downloadResumable = FileSystem.createDownloadResumable(fileUrl, localFileUri);
+	const downloadResumable = FileSystem.createDownloadResumable(
+		downloadUrl,
+		localFileUri,
+		downloadHeaders ? { headers: downloadHeaders } : undefined
+	);
 	const abortDownload = () => {
 		downloadResumable.pauseAsync().catch(() => {});
 	};
@@ -107,6 +119,7 @@ export default function FilePreviewCard({
 	const [isDownloading, setIsDownloading] = useState(false);
 	const [viewerVisible, setViewerVisible] = useState(false);
 	const [downloadedFileUri, setDownloadedFileUri] = useState<string | null>(null);
+	const [heicPreviewSource, setHeicPreviewSource] = useState<{ uri: string; headers?: { Authorization: string } } | null>(null);
 	const activeRequestIdRef = useRef<number | null>(null);
 	const heicCacheQueryKey = [...imageCacheService.heicQueryKeyPrefix, fileUrl, name] as const;
 	const heicLocalFileQuery = useQuery({
@@ -125,6 +138,27 @@ export default function FilePreviewCard({
 			}
 		};
 	}, []);
+
+	useEffect(() => {
+		if (!needsLocalImageOpen) {
+			setHeicPreviewSource(null);
+			return;
+		}
+
+		let cancelled = false;
+		(async () => {
+			const accessToken = await secureStorage.getItemAsync('accessToken').catch(() => null);
+			if (cancelled) return;
+			setHeicPreviewSource({
+				uri: getHeicConvertApiUrl(fileUrl),
+				headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+			});
+		})();
+
+		return () => {
+			cancelled = true;
+		};
+	}, [fileUrl, needsLocalImageOpen]);
 
 	const handleOpenFile = async (fileUri: string) => {
 		// For all files (except images and PDF which open in modal), open with system app
@@ -320,7 +354,7 @@ export default function FilePreviewCard({
 					style={[styles.imageCard, isGridCell && styles.imageCardGrid]}
 				>
 					<Image
-						source={{ uri: fileUrl }}
+						source={heicPreviewSource ?? { uri: fileUrl }}
 						style={[styles.previewImage, isGridCell && styles.previewImageGrid]}
 						resizeMode="cover"
 					/>
@@ -334,7 +368,7 @@ export default function FilePreviewCard({
 					<FileViewerModal
 						visible={viewerVisible}
 						fileUri={downloadedFileUri}
-						fileName={name}
+						fileName={needsLocalImageOpen ? toJpegFilename(name) : name}
 						originalUrl={fileUrl}
 						onClose={() => {
 							setViewerVisible(false);

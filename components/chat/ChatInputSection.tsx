@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, TextInput } from 'react-native';
+import React, { useCallback, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { colors, fonts, fp, rem } from '@/lib';
 import SmileIcon from '@/icons/SmileIcon';
 import AttachmentIcon from '@/icons/AttachmentIcon';
@@ -8,10 +8,24 @@ import SendIcon from '@/icons/SendIcon';
 import ReplyPreview from '@/components/ReplyPreview';
 import { Message } from '@/components/ChatListItem';
 import { type UploadQueueItem } from '@/utils/chatAttachmentHelpers';
+import ChatFormatToolbar, { type ChatFormatAction } from '@/components/chat/ChatFormatToolbar';
+import ChatRichComposeInput, {
+  type ChatRichComposeInputRef,
+} from '@/components/chat/ChatRichComposeInput';
+import {
+  EMPTY_EDITOR_FORMAT_STATE,
+  formatActionToCommand,
+  type EditorFormatState,
+} from '@/utils/chatRichEditor';
+
+export type ChatInputSectionRef = {
+  insertText: (text: string) => void;
+};
 
 interface ChatInputSectionProps {
   messageText: string;
   onMessageTextChange: (text: string) => void;
+  onPlainTextChange?: (plainText: string) => void;
   onSendPress: () => void;
   onEmojiPress: () => void;
   onTemplatesPress?: () => void;
@@ -23,126 +37,167 @@ interface ChatInputSectionProps {
   isSendingMessage: boolean;
   isConnected: boolean;
   showTemplatesButton?: boolean;
+  composeResetKey?: number;
   onLayout?: (height: number) => void;
 }
 
-export default function ChatInputSection({
-  messageText,
-  onMessageTextChange,
-  onSendPress,
-  onEmojiPress,
-  onTemplatesPress,
-  onAttachmentPress,
-  replyingTo,
-  onCancelReply,
-  uploadQueue,
-  onRemoveUploadItem,
-  isSendingMessage,
-  isConnected,
-  showTemplatesButton = false,
-  onLayout,
-}: ChatInputSectionProps) {
-  const canSend = (!!messageText.trim() || uploadQueue.length > 0) && !isSendingMessage && isConnected;
+const ChatInputSection = React.forwardRef<ChatInputSectionRef, ChatInputSectionProps>(
+  function ChatInputSection(
+    {
+      messageText,
+      onMessageTextChange,
+      onPlainTextChange,
+      onSendPress,
+      onEmojiPress,
+      onTemplatesPress,
+      onAttachmentPress,
+      replyingTo,
+      onCancelReply,
+      uploadQueue,
+      onRemoveUploadItem,
+      isSendingMessage,
+      isConnected,
+      showTemplatesButton = false,
+      composeResetKey = 0,
+      onLayout,
+    },
+    ref
+  ) {
+    const editorRef = React.useRef<ChatRichComposeInputRef>(null);
+    const [formatState, setFormatState] = useState<EditorFormatState>(EMPTY_EDITOR_FORMAT_STATE);
+    const inputDisabled = isSendingMessage || !isConnected;
 
-  return (
-    <View
-      style={styles.sendSection}
-      onLayout={(e) => onLayout?.(e.nativeEvent.layout.height)}
-    >
-      {/* Reply Preview - above input row */}
-      {replyingTo && (
-        <View style={styles.replyPreviewContainer}>
-          <ReplyPreview
-            replyData={replyingTo}
-            onCancel={onCancelReply}
-          />
-        </View>
-      )}
+    const canSend =
+      (!!messageText.trim() || uploadQueue.length > 0) && !isSendingMessage && isConnected;
 
-      {/* Upload queue preview */}
-      {uploadQueue.length > 0 && (
-        <View style={styles.uploadRow}>
-          {uploadQueue.map((f, idx) => (
-            <View key={`${f.name}-${idx}`} style={styles.uploadChip}>
-              <View style={styles.uploadChipHeader}>
-                <Text style={styles.uploadChipText} numberOfLines={1}>
-                  {f.name}
-                </Text>
-                {onRemoveUploadItem && f.status !== 'uploading' ? (
-                  <TouchableOpacity
-                    onPress={() => onRemoveUploadItem(idx)}
-                    hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
-                    style={styles.removeUploadButton}
-                  >
-                    <Text style={styles.removeUploadButtonText}>×</Text>
-                  </TouchableOpacity>
+    React.useImperativeHandle(
+      ref,
+      () => ({
+        insertText: (text: string) => {
+          editorRef.current?.insertText(text);
+        },
+      }),
+      []
+    );
+
+    const handleContentChange = useCallback(
+      (markdown: string, plainText: string) => {
+        onMessageTextChange(markdown);
+        onPlainTextChange?.(plainText);
+      },
+      [onMessageTextChange, onPlainTextChange]
+    );
+
+    const applyFormatAction = useCallback(
+      (action: ChatFormatAction) => {
+        if (inputDisabled) return;
+        const command = formatActionToCommand(action);
+        if (!command) return;
+        editorRef.current?.applyFormat(command);
+      },
+      [inputDisabled]
+    );
+
+    return (
+      <View
+        style={styles.sendSection}
+        onLayout={(e) => onLayout?.(e.nativeEvent.layout.height)}
+      >
+        {replyingTo && (
+          <View style={styles.replyPreviewContainer}>
+            <ReplyPreview replyData={replyingTo} onCancel={onCancelReply} />
+          </View>
+        )}
+
+        {uploadQueue.length > 0 && (
+          <View style={styles.uploadRow}>
+            {uploadQueue.map((f, idx) => (
+              <View key={`${f.name}-${idx}`} style={styles.uploadChip}>
+                <View style={styles.uploadChipHeader}>
+                  <Text style={styles.uploadChipText} numberOfLines={1}>
+                    {f.name}
+                  </Text>
+                  {onRemoveUploadItem && f.status !== 'uploading' ? (
+                    <TouchableOpacity
+                      onPress={() => onRemoveUploadItem(idx)}
+                      hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+                      style={styles.removeUploadButton}
+                    >
+                      <Text style={styles.removeUploadButtonText}>×</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+                {f.status === 'uploading' || f.status === 'error' ? (
+                  <Text style={styles.uploadChipStatus}>
+                    {f.status === 'uploading' ? 'Uploading...' : 'Error'}
+                  </Text>
                 ) : null}
               </View>
-              {f.status === 'uploading' || f.status === 'error' ? (
-                <Text style={styles.uploadChipStatus}>
-                  {f.status === 'uploading' ? 'Uploading...' : 'Error'}
-                </Text>
-              ) : null}
-            </View>
-          ))}
-        </View>
-      )}
+            ))}
+          </View>
+        )}
 
-      {/* Input row - buttons and text input */}
-      <View style={styles.inputRow}>
-        <TouchableOpacity
-          style={styles.smileButton}
-          onPress={onEmojiPress}
-          activeOpacity={0.7}
-        >
-          <SmileIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.attachmentButton}
-          onPress={onAttachmentPress}
-          activeOpacity={0.7}
-        >
-          <AttachmentIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} />
-        </TouchableOpacity>
-
-        {showTemplatesButton ? (
-          <TouchableOpacity
-            style={styles.templateButton}
-            onPress={onTemplatesPress}
-            activeOpacity={0.7}
-          >
-            <FileIcon width={rem(26)} height={rem(26)} color={colors.primary.greyIcon} />
-          </TouchableOpacity>
-        ) : null}
-
-        <TextInput
-          style={styles.messageInput}
-          placeholder="Type a message"
-          placeholderTextColor={colors.neutral.darkGrey}
-          value={messageText}
-          onChangeText={onMessageTextChange}
-          multiline
-          editable={!isSendingMessage}
+        <ChatFormatToolbar
+          disabled={inputDisabled}
+          activeFormats={formatState}
+          onAction={applyFormatAction}
         />
 
-        <TouchableOpacity
-          style={styles.sendButton}
-          onPress={onSendPress}
-          activeOpacity={0.7}
-          disabled={!canSend}
-        >
-          <SendIcon
-            width={rem(28)}
-            height={rem(28)}
-            color={colors.primary.greyIcon}
-            opacity={canSend ? 1 : 0.5}
+        <View style={styles.inputRow}>
+          <TouchableOpacity
+            style={styles.smileButton}
+            onPress={onEmojiPress}
+            activeOpacity={0.7}
+          >
+            <SmileIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.attachmentButton}
+            onPress={onAttachmentPress}
+            activeOpacity={0.7}
+          >
+            <AttachmentIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} />
+          </TouchableOpacity>
+
+          {showTemplatesButton ? (
+            <TouchableOpacity
+              style={styles.templateButton}
+              onPress={onTemplatesPress}
+              activeOpacity={0.7}
+            >
+              <FileIcon width={rem(26)} height={rem(26)} color={colors.primary.greyIcon} />
+            </TouchableOpacity>
+          ) : null}
+
+          <ChatRichComposeInput
+            ref={editorRef}
+            disabled={inputDisabled}
+            resetKey={composeResetKey}
+            onContentChange={handleContentChange}
+            onFormatStateChange={setFormatState}
           />
-        </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.sendButton}
+            onPress={onSendPress}
+            activeOpacity={0.7}
+            disabled={!canSend}
+          >
+            <SendIcon
+              width={rem(28)}
+              height={rem(28)}
+              color={colors.primary.greyIcon}
+              opacity={canSend ? 1 : 0.5}
+            />
+          </TouchableOpacity>
+        </View>
       </View>
-    </View>
-  );
-}
+    );
+  }
+);
+
+export default ChatInputSection;
 
 const styles = StyleSheet.create({
   sendSection: {
@@ -172,22 +227,6 @@ const styles = StyleSheet.create({
   templateButton: {
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  messageInput: {
-    flex: 1,
-    minHeight: rem(36),
-    maxHeight: rem(120),
-    fontSize: fp(14),
-    fontFamily: fonts['400'],
-    color: colors.primary.blue,
-    backgroundColor: 'rgba(96, 102, 197, 0.1)',
-    paddingHorizontal: rem(12),
-    paddingVertical: rem(10),
-    borderRadius: rem(15),
-    borderWidth: 1,
-    borderColor: 'rgba(96, 102, 197, 0.31)',
-    textAlignVertical: 'center',
-    includeFontPadding: false,
   },
   sendButton: {
     justifyContent: 'center',
@@ -240,4 +279,3 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 });
-

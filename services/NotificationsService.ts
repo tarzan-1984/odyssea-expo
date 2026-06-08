@@ -10,8 +10,70 @@ import { useChatStore } from '@/stores/chatStore';
 import { getChatAvatarSource, getChatDisplayName } from '@/utils/chatAvatarUtils';
 import { ChatRoom } from '@/components/ChatListItem';
 
+/** Cold start: user tapped a chat push before navigation was ready */
+export const PENDING_CHAT_NAVIGATION_KEY = '@pending_chat_navigation';
+
 /** Cold start: user tapped an offer-related push before navigation was ready */
 export const PENDING_OFFERS_NAVIGATION_KEY = '@pending_offers_navigation';
+
+export function getChatNavigationPath(chatRoomId: string): string {
+  return `/(tabs)/chat/${chatRoomId}`;
+}
+
+let notificationListenersAttached = false;
+let initialNotificationResponseConsumed = false;
+
+async function handleNotificationTap(data: Record<string, unknown> | null | undefined): Promise<void> {
+  const chatRoomId = data?.chatRoomId as string | undefined;
+
+  if (chatRoomId) {
+    console.log('[NotificationsService] Notification tapped, navigating to chat:', chatRoomId);
+    try {
+      await AsyncStorage.setItem(PENDING_CHAT_NAVIGATION_KEY, chatRoomId);
+      console.log('[NotificationsService] Saved pending chat navigation:', chatRoomId);
+    } catch (storageError) {
+      console.warn('[NotificationsService] Failed to save pending navigation:', storageError);
+    }
+    const { eventBus, AppEvents } = await import('@/services/EventBus');
+    eventBus.emit(AppEvents.NavigateToChat, { chatRoomId });
+    return;
+  }
+
+  if (isOfferRelatedPushData(data)) {
+    console.log('[NotificationsService] Offer push tapped → Work / Offers');
+    try {
+      await AsyncStorage.setItem(PENDING_OFFERS_NAVIGATION_KEY, '1');
+    } catch (storageError) {
+      console.warn('[NotificationsService] Failed to save pending offers navigation:', storageError);
+    }
+    const { eventBus, AppEvents } = await import('@/services/EventBus');
+    eventBus.emit(AppEvents.NavigateToOffers, {});
+  }
+}
+
+/**
+ * Cold start: when the app was killed, the response listener may not fire.
+ * Expo recommends reading the last notification response on launch.
+ */
+export async function consumeInitialNotificationResponse(): Promise<void> {
+  if (initialNotificationResponseConsumed) {
+    return;
+  }
+  initialNotificationResponseConsumed = true;
+
+  try {
+    const response = await Notifications.getLastNotificationResponseAsync();
+    if (!response) {
+      return;
+    }
+
+    const data = response.notification.request.content.data as Record<string, unknown> | undefined;
+    console.log('[NotificationsService] Initial notification response:', data?.chatRoomId ?? data?.type ?? 'unknown');
+    await handleNotificationTap(data);
+  } catch (error) {
+    console.warn('[NotificationsService] Failed to consume initial notification response:', error);
+  }
+}
 
 function isOfferRelatedPushData(data: Record<string, unknown> | null | undefined): boolean {
   const t = data?.type;
@@ -378,6 +440,14 @@ export async function registerPushTokenToBackend(
 	}
 }
 
+export function ensureNotificationListeners(): () => void {
+  if (notificationListenersAttached) {
+    return () => {};
+  }
+  notificationListenersAttached = true;
+  return addNotificationListeners();
+}
+
 export function addNotificationListeners() {
 	const receivedSub = Notifications.addNotificationReceivedListener(async (notification) => {
 		// Foreground notifications are handled by system
@@ -417,35 +487,13 @@ export function addNotificationListeners() {
 	const responseSub = Notifications.addNotificationResponseReceivedListener(async (response) => {
 		try {
 			const data = response.notification.request.content.data as Record<string, unknown> | undefined;
-			const chatRoomId = data?.chatRoomId as string | undefined;
-
-			if (chatRoomId) {
-				console.log('[NotificationsService] Notification tapped, navigating to chat:', chatRoomId);
-				try {
-					await AsyncStorage.setItem('@pending_chat_navigation', chatRoomId);
-					console.log('[NotificationsService] Saved pending chat navigation:', chatRoomId);
-				} catch (storageError) {
-					console.warn('[NotificationsService] Failed to save pending navigation:', storageError);
-				}
-				const { eventBus, AppEvents } = await import('@/services/EventBus');
-				eventBus.emit(AppEvents.NavigateToChat, { chatRoomId });
-				return;
-			}
-
-			if (isOfferRelatedPushData(data)) {
-				console.log('[NotificationsService] Offer push tapped → Work / Offers');
-				try {
-					await AsyncStorage.setItem(PENDING_OFFERS_NAVIGATION_KEY, '1');
-				} catch (storageError) {
-					console.warn('[NotificationsService] Failed to save pending offers navigation:', storageError);
-				}
-				const { eventBus, AppEvents } = await import('@/services/EventBus');
-				eventBus.emit(AppEvents.NavigateToOffers, {});
-			}
+			await handleNotificationTap(data);
 		} catch (e) {
 			console.error('[NotificationsService] Failed to handle notification tap:', e);
 		}
 	});
+
+	void consumeInitialNotificationResponse();
 	
 	return () => {
 		receivedSub.remove();

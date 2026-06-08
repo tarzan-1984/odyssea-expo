@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, Image, ScrollView, ActivityIn
 import { BlurView } from 'expo-blur';
 import { colors, fonts, rem, fp, borderRadius } from '@/lib';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import BottomNavigation from "../../components/navigation/BottomNavigation";
+import BottomNavigation, { BOTTOM_NAV_SCROLL_PADDING } from '../../components/navigation/BottomNavigation';
 import { useAuth } from "@/context/AuthContext";
 import { uploadImageViaPresign, updateUserAvatarOnBackend } from '@/app-api/upload';
 import { getUserById, getUserFromBackend } from '@/app-api/users';
@@ -633,7 +633,7 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.neutral.white,
     position: 'relative',
-    paddingBottom: 70,
+    paddingBottom: BOTTOM_NAV_SCROLL_PADDING,
   },
   header: {
     flexDirection: 'row',

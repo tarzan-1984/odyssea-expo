@@ -1,6 +1,4 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { AppState, AppStateStatus } from 'react-native';
-import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { chatApi } from '@/app-api/chatApi';
 import { chatCacheService } from '@/services/ChatCacheService';
@@ -8,8 +6,18 @@ import { ChatRoom } from '@/components/ChatListItem';
 import { useChatStore } from '@/stores/chatStore';
 import { useWebSocket } from '@/context/WebSocketContext';
 import { useAuth } from '@/context/AuthContext';
+import { normalizeChatParticipants } from '@/utils/normalizeChatParticipants';
 
 const OPENED_CHATS_KEY = '@chat_opened_rooms';
+
+/** One initial fetch for the whole app — avoids duplicate API work per screen/nav mount. */
+let globalHasLoadedOnce = false;
+let globalMountLoadScheduled = false;
+
+export function resetChatRoomsLoaderState() {
+  globalHasLoadedOnce = false;
+  globalMountLoadScheduled = false;
+}
 
 // Keep opened chat room IDs in AsyncStorage in sync with existing chat rooms list.
 // This removes chats that were deleted / user left, so the "opened in this session"
@@ -94,27 +102,12 @@ export const useChatRooms = (): UseChatRoomsReturn => {
   const { authState } = useAuth();
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const hasLoadedOnceRef = useRef<boolean>(false);
   const isConnectedRef = useRef<boolean>(isConnected);
-  const loadChatRoomsRef = useRef<typeof loadChatRooms | null>(null);
 
   // Sort chat rooms by pin status, mute status, and last message date
   const sortedChatRooms = useMemo(() => {
     return sortChatRoomsByLastMessage(chatRooms);
   }, [chatRooms]);
-
-  /**
-   * Normalize participants data (similar to Next.js implementation)
-   */
-  const normalizeParticipants = (participants: any[]) => {
-    return participants.map(p => ({
-      ...p,
-      user: {
-        ...p.user,
-        avatar: p.user.avatar || p.user.profilePhoto,
-      },
-    }));
-  };
 
   /**
    * Load chat rooms from API and sync with cache
@@ -129,9 +122,9 @@ export const useChatRooms = (): UseChatRoomsReturn => {
       // On first load, check if we need to refresh
       // Only force refresh if WebSocket is not connected (to sync with server)
       // If WebSocket is connected, rely on it for real-time updates
-      const isFirstLoad = !hasLoadedOnceRef.current;
+      const isFirstLoad = !globalHasLoadedOnce;
       if (isFirstLoad) {
-        hasLoadedOnceRef.current = true;
+        globalHasLoadedOnce = true;
         // Only force refresh if WebSocket is not connected
         // If connected, WebSocket will provide real-time updates
         if (!isConnected) {
@@ -232,7 +225,7 @@ export const useChatRooms = (): UseChatRoomsReturn => {
           const apiRooms = await chatApi.getChatRooms();
           const normalizedApiRooms = apiRooms.map(room => ({
             ...room,
-            participants: normalizeParticipants(room.participants || []),
+            participants: normalizeChatParticipants(room.participants || []),
           }));
 
           // Get cached rooms first to preserve unreadCount
@@ -315,7 +308,7 @@ export const useChatRooms = (): UseChatRoomsReturn => {
         const apiRooms = await chatApi.getChatRooms();
         const normalizedApiRooms = apiRooms.map(room => ({
           ...room,
-          participants: normalizeParticipants(room.participants || []),
+          participants: normalizeChatParticipants(room.participants || []),
         }));
 
         // Merge API data with current state to preserve real-time updates.
@@ -383,14 +376,9 @@ export const useChatRooms = (): UseChatRoomsReturn => {
     }
   }, [isConnected, chatRooms]);
 
-  // Keep latest values in refs for use inside AppState listener
   useEffect(() => {
     isConnectedRef.current = isConnected;
   }, [isConnected]);
-
-  useEffect(() => {
-    loadChatRoomsRef.current = loadChatRooms;
-  }, [loadChatRooms]);
 
   /**
    * Force refresh chat rooms from API (ignoring cache)
@@ -403,7 +391,7 @@ export const useChatRooms = (): UseChatRoomsReturn => {
       const apiRooms = await chatApi.getChatRooms();
       const normalizedApiRooms = apiRooms.map(room => ({
         ...room,
-        participants: normalizeParticipants(room.participants || []),
+        participants: normalizeChatParticipants(room.participants || []),
       }));
 
       storeSetChatRooms(normalizedApiRooms);
@@ -495,78 +483,12 @@ export const useChatRooms = (): UseChatRoomsReturn => {
   // Realtime chat addition now comes from WebSocketContext directly to store
   useEffect(() => {}, [addChatRoom]);
 
-  // Track app state to force sync when app opens after being closed or returns from background.
-  // On transition from inactive/background -> active:
-  // - Force refresh chat rooms from API
-  // - Log refreshed chat rooms and total unread count to console
+  // Foreground chat sync lives in GlobalChatRoomsSync (_layout) so Home tab badge updates after push.
+
+  // Load chat rooms once per app session (not per screen that uses this hook)
   useEffect(() => {
-    let appState = AppState.currentState;
-    let wasInBackground = false;
-
-    const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
-      // Track when app goes to background/inactive
-      if (appState.match(/active/) && nextAppState.match(/inactive|background/)) {
-        wasInBackground = true;
-        console.log('📱 [useChatRooms] App went to background/inactive');
-      }
-
-      // When app becomes active again
-      if (nextAppState === 'active') {
-        if (wasInBackground) {
-          console.log('📱 [useChatRooms] App became active after being in background, forcing chat rooms sync from API...');
-          wasInBackground = false;
-
-          // Only sync if user is authenticated
-          if (!authState.isAuthenticated) {
-            console.log('📱 [useChatRooms] User not authenticated, skipping chat rooms sync');
-            return;
-          }
-
-          // Force refresh from API to sync unreadCount and chat list.
-          // After sync, log resulting chat rooms and total unread count.
-          (async () => {
-            try {
-              if (loadChatRoomsRef.current) {
-                await loadChatRoomsRef.current(true);
-              }
-
-              // Read the latest chat rooms from store after loadChatRooms finishes
-              const latestRooms = useChatStore.getState().chatRooms;
-              const totalUnread = latestRooms.reduce((total, room) => {
-                return total + (room.unreadCount || 0);
-              }, 0);
-
-              // Try to align OS badge counter with real unread messages count.
-              // Note: On Android badge support depends on launcher, but where supported
-              // this will set the unread messages count on the app icon.
-              try {
-                await Notifications.setBadgeCountAsync(totalUnread);
-              } catch (e) {
-                console.warn('[useChatRooms] Failed to set badge count:', e);
-              }
-            } catch (error) {
-              console.error('❌ [useChatRooms] Failed to sync on app open:', error);
-            }
-          })();
-        } else {
-          // App was already active (just switching between screens)
-          // Only reset flags if WebSocket is not connected
-          if (!isConnectedRef.current) {
-            hasLoadedOnceRef.current = false;
-          }
-        }
-      }
-
-      appState = nextAppState;
-    });
-
-    return () => {
-      subscription.remove();
-    };
-  }, [authState.isAuthenticated]); // subscribe once; use refs for latest values, but check auth state
-
-  // Load chat rooms on mount (only once)
-  useEffect(() => {
+    if (globalMountLoadScheduled) return;
+    globalMountLoadScheduled = true;
     loadChatRooms();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

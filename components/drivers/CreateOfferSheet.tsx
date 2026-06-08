@@ -29,22 +29,13 @@ import { CREATE_OFFER_SPECIAL_REQUIREMENTS } from '@/constants/driversListConsta
 import {
   geocodeToFormattedAddress,
   calculateRouteDistanceMiles,
+  isValidLocationFormat,
+  LOCATION_FORMAT_ERROR,
+  normalizeLocationForGeocode,
+  needsLocationGeocode,
 } from '@/utils/offerRouteLocation';
 import OfferRouteTimePickerModal from '@/components/drivers/OfferRouteTimePickerModal';
 import OfferRouteStopFlowIcon from '@/icons/OfferRouteStopFlowIcon';
-
-const ZIP_PATTERN = /^\d{5}(-\d{4})?$/;
-const CITY_STATE_PATTERN = /^[^,]+\s*,\s*[^,]+$/;
-/** "City, ST" — geocode expands to "City, State ZIP" (same as Next CreateOfferModal) */
-const CITY_STATE_ABBR_PATTERN = /^([^,]+),\s*([A-Za-z]{2})\s*$/;
-
-function isValidLocationFormat(value: string): boolean {
-  const trimmed = value.trim();
-  if (!trimmed) return true;
-  const normalized = trimmed.replace(/\s/g, '');
-  if (ZIP_PATTERN.test(normalized)) return true;
-  return CITY_STATE_PATTERN.test(trimmed);
-}
 
 /** Same as Next.js CreateOfferModal `allLocationsFilledAndValid` */
 function allLocationsFilledAndValid(locs: string[]): boolean {
@@ -53,9 +44,6 @@ function allLocationsFilledAndValid(locs: string[]): boolean {
     locs.every((l) => l.trim() !== '' && isValidLocationFormat(l.trim()))
   );
 }
-
-const LOCATION_FORMAT_ERROR =
-  'Use format: City, State (e.g. Los Angeles, CA) or ZIP code';
 
 type RowType = 'pickup' | 'delivery';
 
@@ -248,13 +236,11 @@ export default function CreateOfferSheet({
         return next;
       });
 
-      const needsGeocode =
-        ZIP_PATTERN.test(trimmed.replace(/\s/g, '')) ||
-        CITY_STATE_ABBR_PATTERN.test(trimmed);
+      const geocodeAddress = normalizeLocationForGeocode(trimmed);
 
-      if (needsGeocode) {
+      if (needsLocationGeocode(trimmed)) {
         try {
-          const formatted = await geocodeToFormattedAddress(trimmed);
+          const formatted = await geocodeToFormattedAddress(geocodeAddress);
           setRouteRows((prev) => {
             const idx = prev.findIndex((r) => r.id === rowId);
             if (idx < 0) return prev;
@@ -271,6 +257,18 @@ export default function CreateOfferSheet({
             return current;
           });
         }
+        return;
+      }
+
+      if (geocodeAddress !== trimmed) {
+        setRouteRows((prev) => {
+          const idx = prev.findIndex((r) => r.id === rowId);
+          if (idx < 0) return prev;
+          const next = [...prev];
+          next[idx] = { ...next[idx], location: geocodeAddress };
+          commitLocationsFromRows(next);
+          return next;
+        });
         return;
       }
 

@@ -7,6 +7,9 @@ import ReadCheckIcon from '@/icons/ReadCheckIcon';
 import UnreadCheckIcon from '@/icons/UnreadCheckIcon';
 import MessageDropdown from '@/components/MessageDropdown';
 import MessageReply from '@/components/MessageReply';
+import ChatMessageText from '@/components/chat/ChatMessageText';
+import IncomingMessageFooter from '@/components/chat/IncomingMessageFooter';
+import { getIncomingMessageMeta } from '@/utils/chatMessageMeta';
 import MessageReactions, { MessageReactionAnchor, MessageReactionPicker } from '@/components/MessageReactions';
 import { Message } from '@/components/ChatListItem';
 import { getMessageMultiAttachments } from '@/utils/messageAttachments';
@@ -109,7 +112,10 @@ export default function MessageItem({ message, isSender, chatType, currentUserRo
 	const normalizedChatType = (chatType || '').trim().toUpperCase();
 	const normalizedCurrentUserRole = (currentUserRole || '').trim().toUpperCase();
 	const shouldShowSenderAvatar = !isSender && (normalizedChatType === 'GROUP' || normalizedChatType === 'LOAD');
-	const senderFullName = `${senderFirstName} ${senderLastName}`.trim();
+	const incomingMeta = useMemo(
+		() => (isSender ? null : getIncomingMessageMeta(message, chatType)),
+		[isSender, message, chatType]
+	);
 	const canDeleteMessage = isSender && normalizedCurrentUserRole.length > 0 && normalizedCurrentUserRole !== 'DRIVER';
 	const multiAttachments = getMessageMultiAttachments(message);
 	const showSingleFile = Boolean(!multiAttachments && message.fileUrl);
@@ -157,11 +163,11 @@ export default function MessageItem({ message, isSender, chatType, currentUserRo
 			{!!message.content && (
 				<View style={[styles.messageTextBlock, hasFiles ? styles.messageTextBlockAfterFiles : null]}>
 					{message.replyData && <MessageReply replyData={message.replyData} isSender={isSender} />}
-					<Text
+					<ChatMessageText
+						content={message.content}
+						isOutgoing={isSender}
 						style={[styles.messageText, isSender ? styles.messageTextSender : styles.messageTextOther]}
-					>
-						{message.content}
-					</Text>
+					/>
 				</View>
 			)}
 			{isSender ? (
@@ -203,9 +209,15 @@ export default function MessageItem({ message, isSender, chatType, currentUserRo
 
 	const bubbleNode = (
 		<View style={styles.messageBubbleWrap}>
-			{!isSender && senderFullName ? (
-				<Text style={[styles.senderNameAboveBubble]} numberOfLines={1}>
-					{senderFullName}
+			{!isSender && incomingMeta?.senderNameLabel ? (
+				<Text
+					style={[
+						styles.senderNameAboveBubble,
+						shouldShowSenderAvatar && styles.senderNameAboveBubbleWithAvatar,
+					]}
+					numberOfLines={1}
+				>
+					{incomingMeta.senderNameLabel}
 				</Text>
 			) : null}
 
@@ -249,6 +261,9 @@ export default function MessageItem({ message, isSender, chatType, currentUserRo
 					</Pressable>
 				</View>
 			</View>
+			{incomingMeta?.showFooter && incomingMeta.phone ? (
+				<IncomingMessageFooter phone={incomingMeta.phone} />
+			) : null}
 			<MessageReactions
 				message={message}
 				canReact={!isSender}
@@ -316,14 +331,15 @@ const styles = StyleSheet.create({
 		alignItems: 'flex-start',
 	},
 	senderNameAboveBubble: {
-		fontSize: fp(12),
-		fontFamily: fonts['600'],
-		color: 'rgba(41, 41, 102, 0.7)',
+		fontSize: fp(15),
+		lineHeight: fp(20),
+		fontFamily: fonts['700'],
+		color: 'rgba(41, 41, 102, 0.85)',
 		marginBottom: rem(6),
 		marginLeft: 0,
 	},
 	senderNameAboveBubbleWithAvatar: {
-		marginLeft: rem(54), // align with bubble when avatar is present
+		marginLeft: 0,
 	},
 	incomingRow: {
 		flexDirection: 'row',

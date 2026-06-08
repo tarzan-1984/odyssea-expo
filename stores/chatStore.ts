@@ -14,6 +14,8 @@ type ChatState = {
   updateMessage: (chatRoomId: string, messageId: string, updates: Partial<Message>) => void;
   removeMessage: (chatRoomId: string, messageId: string) => void;
   markMessagesRead: (chatRoomId: string, messageIds: string[], userId: string) => void;
+  /** Optimistic sync when user taps "Read all" (before API / WebSocket). */
+  markChatRoomsAsReadLocally: (chatRoomIds: string[], userId: string) => void;
   removeChatRoom: (chatRoomId: string) => void;
   reset: () => void;
 };
@@ -95,6 +97,41 @@ const storeCreator: StateCreator<ChatState> = (set, get) => ({
         lastMessage: next[next.length - 1],
       });
     }
+  },
+
+  markChatRoomsAsReadLocally: (chatRoomIds, userId) => {
+    if (!chatRoomIds.length || !userId) return;
+
+    const roomIdSet = new Set(chatRoomIds);
+    const { chatRooms, messagesByRoom } = get();
+
+    const nextMessagesByRoom = { ...messagesByRoom };
+    for (const roomId of chatRoomIds) {
+      const roomMessages = nextMessagesByRoom[roomId];
+      if (!roomMessages?.length) continue;
+      nextMessagesByRoom[roomId] = roomMessages.map((m) => {
+        const readBy = m.readBy || [];
+        const withUser = readBy.includes(userId) ? readBy : [...readBy, userId];
+        return { ...m, isRead: true, readBy: withUser } as Message;
+      });
+    }
+
+    const nextRooms = chatRooms.map((room) => {
+      if (!roomIdSet.has(room.id)) return room;
+      const next: ChatRoom = { ...room, unreadCount: 0 };
+      if (room.lastMessage) {
+        const readBy = room.lastMessage.readBy || [];
+        const withUser = readBy.includes(userId) ? readBy : [...readBy, userId];
+        next.lastMessage = {
+          ...room.lastMessage,
+          isRead: true,
+          readBy: withUser,
+        } as Message;
+      }
+      return next;
+    });
+
+    set({ chatRooms: nextRooms, messagesByRoom: nextMessagesByRoom });
   },
 
   markMessagesRead: (chatRoomId, messageIds, userId) => {

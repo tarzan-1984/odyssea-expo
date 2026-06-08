@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { colors, fonts, fp, rem } from '@/lib';
 import { Message } from '@/components/ChatListItem';
+import { stripMarkdown } from '@/utils/chatMarkdown';
 
 interface MessageReplyProps {
   replyData: Message['replyData'];
@@ -20,10 +21,9 @@ export default function MessageReply({ replyData, isSender }: MessageReplyProps)
     });
   };
 
+  const plain = stripMarkdown(replyData.content);
   const truncatedContent =
-    replyData.content.length > 100
-      ? `${replyData.content.substring(0, 100)}...`
-      : replyData.content;
+    plain.length > 100 ? `${plain.substring(0, 100)}...` : plain;
 
   return (
     <View style={[styles.container, isSender && styles.containerSender]}>

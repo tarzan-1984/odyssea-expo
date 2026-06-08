@@ -787,7 +787,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       // Clear chat store (Zustand in-memory state)
       const { useChatStore } = await import('@/stores/chatStore');
+      const { resetChatRoomsLoaderState } = await import('@/hooks/useChatRooms');
       useChatStore.getState().reset();
+      resetChatRoomsLoaderState();
       console.log('💾 [AuthContext] Cleared chat store (in-memory state)');
       
       // Clear all AsyncStorage data
@@ -810,7 +812,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await AsyncStorage.removeItem(USER_DEACTIVATE_ACCOUNT_STORAGE_KEY);
       
       // Clear navigation data
-      await AsyncStorage.removeItem('@pending_chat_navigation');
+      const { PENDING_CHAT_NAVIGATION_KEY } = await import('@/services/NotificationsService');
+      await AsyncStorage.removeItem(PENDING_CHAT_NAVIGATION_KEY);
       // Clear per-session chat state (opened chat rooms list)
       await AsyncStorage.removeItem('@chat_opened_rooms');
 

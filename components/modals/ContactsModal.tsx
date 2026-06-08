@@ -1,5 +1,21 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Modal, View, Text, StyleSheet, TouchableOpacity, TextInput, FlatList, ActivityIndicator, Image, ScrollView } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Modal,
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  TextInput,
+  FlatList,
+  ActivityIndicator,
+  Image,
+  ScrollView,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, fonts, rem, fp, borderRadius } from '@/lib';
 import { chatApi, UsersResponse } from '@/app-api/chatApi';
 import { useOnlineStatusContext } from '@/context/OnlineStatusContext';
@@ -56,6 +72,8 @@ export default function ContactsModal({
   const { isUserOnline } = useOnlineStatusContext();
   const { chatRooms } = useChatRooms();
   const { authState } = useAuth();
+  const insets = useSafeAreaInsets();
+  const searchInputRef = useRef<TextInput>(null);
   const [users, setUsers] = useState<UserItem[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -123,6 +141,8 @@ export default function ContactsModal({
   // Reset state when modal closes to ensure clean slate on next open
   useEffect(() => {
     if (!visible) {
+      searchInputRef.current?.blur();
+      Keyboard.dismiss();
       setSearch('');
       setDebouncedSearch('');
       setSelectedRole('');
@@ -224,8 +244,14 @@ export default function ContactsModal({
   }, [users, search, chatRooms]);
 
   // Handlers to clear search on close/select
+  const dismissKeyboard = useCallback(() => {
+    searchInputRef.current?.blur();
+    Keyboard.dismiss();
+  }, []);
+
   const handleClose = () => {
     if (isCreatingDirectChat) return;
+    dismissKeyboard();
     setSearch('');
     setDebouncedSearch('');
     setPage(1);
@@ -280,8 +306,16 @@ export default function ContactsModal({
 
   return (
     <Modal transparent visible={visible} animationType="fade" onRequestClose={handleClose}>
-      <View style={styles.overlay}>
-        <View style={styles.container}>
+      <View style={styles.modalRoot}>
+        <Pressable style={styles.backdrop} onPress={dismissKeyboard} accessibilityRole="button" />
+        <KeyboardAvoidingView
+          style={styles.keyboardLayer}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
+          pointerEvents="box-none"
+        >
+          <View style={styles.sheetWrap} pointerEvents="box-none">
+          <View style={styles.container} onStartShouldSetResponder={() => true}>
           <View style={styles.header}>
             <Text style={styles.title}>Contacts</Text>
             <TouchableOpacity
@@ -297,11 +331,15 @@ export default function ContactsModal({
 
           <View style={styles.searchBox}>
             <TextInput
+              ref={searchInputRef}
               style={styles.searchInput}
               placeholder="Search contacts..."
               placeholderTextColor={colors.neutral.darkGrey}
               value={search}
               onChangeText={setSearch}
+              returnKeyType="search"
+              blurOnSubmit
+              onSubmitEditing={dismissKeyboard}
             />
           </View>
 
@@ -310,7 +348,10 @@ export default function ContactsModal({
             <View style={styles.roleFilterContainer}>
               <TouchableOpacity 
                 style={styles.roleSelectButton}
-                onPress={() => setIsRoleModalVisible(true)}
+                onPress={() => {
+                  dismissKeyboard();
+                  setIsRoleModalVisible(true);
+                }}
               >
                 <Text style={styles.roleSelectText}>
                   {selectedRole ? ROLE_OPTIONS.find(r => r.value === selectedRole)?.label || selectedRole : 'All Roles'}
@@ -367,28 +408,32 @@ export default function ContactsModal({
           </Modal>
 
           {isLoading ? (
-            <View style={styles.loaderWrap}>
+            <Pressable style={styles.loaderWrap} onPress={dismissKeyboard}>
               <ActivityIndicator size="large" color={colors.primary.violet} />
-            </View>
+            </Pressable>
           ) : error ? (
-            <View style={styles.errorWrap}>
+            <Pressable style={styles.errorWrap} onPress={dismissKeyboard}>
               <Text style={styles.errorText}>{error}</Text>
-            </View>
+            </Pressable>
           ) : (
             <FlatList
+              style={styles.list}
               data={filtered}
               keyExtractor={(item, index) => `contact-${item.id}-${index}`}
               renderItem={renderItem}
               ItemSeparatorComponent={() => <View style={styles.separator} />}
               contentContainerStyle={styles.listContent}
               keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              onScrollBeginDrag={dismissKeyboard}
+              onMomentumScrollBegin={dismissKeyboard}
               onEndReachedThreshold={0.6}
               onEndReached={loadMore}
               scrollEnabled={!isCreatingDirectChat}
               ListEmptyComponent={
-                <View style={styles.emptyWrap}>
+                <Pressable style={styles.emptyWrap} onPress={dismissKeyboard}>
                   <Text style={styles.emptyText}>Contact not found</Text>
-                </View>
+                </Pressable>
               }
               ListFooterComponent={isLoadingMore ? (
                 <View style={styles.loaderMoreWrap}><ActivityIndicator size="small" color={colors.primary.violet} /></View>
@@ -404,26 +449,41 @@ export default function ContactsModal({
               </View>
             </View>
           ) : null}
-        </View>
+          </View>
+          </View>
+        </KeyboardAvoidingView>
       </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: {
+  modalRoot: {
     flex: 1,
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  keyboardLayer: {
+    flex: 1,
     justifyContent: 'center',
-    alignItems: 'center',
+  },
+  sheetWrap: {
+    flex: 1,
+    justifyContent: 'center',
     padding: rem(16),
   },
   container: {
     width: '100%',
-    maxHeight: '80%',
+    maxHeight: '85%',
+    height: '85%',
     backgroundColor: colors.neutral.white,
     borderRadius: borderRadius.lg || 16,
     overflow: 'hidden',
+  },
+  list: {
+    flex: 1,
   },
   header: {
     flexDirection: 'row',
@@ -475,9 +535,9 @@ const styles = StyleSheet.create({
     includeFontPadding: false as any,
     lineHeight: fp(16),
   },
-  loaderWrap: { padding: rem(20), alignItems: 'center' },
+  loaderWrap: { flex: 1, padding: rem(20), alignItems: 'center', justifyContent: 'center' },
   loaderMoreWrap: { padding: rem(12), alignItems: 'center' },
-  errorWrap: { padding: rem(20), alignItems: 'center' },
+  errorWrap: { flex: 1, padding: rem(20), alignItems: 'center', justifyContent: 'center' },
   errorText: { color: colors.semantic.error, fontFamily: fonts['600'] },
   listContent: { paddingVertical: rem(8) },
   emptyWrap: {

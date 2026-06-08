@@ -1,8 +1,13 @@
 /**
  * Raster basemap for Leaflet in WebView.
- * Prefer MapTiler (streets-v4) when EXPO_PUBLIC_MAPTILER_API_KEY is set;
- * otherwise CARTO Voyager (same fallback as Next.js).
+ *
+ * MapTiler only when `useMapTiler: true` (load detail screen).
+ * All other screens use CARTO Voyager (free).
  */
+
+export type MapTileLayerOptions = {
+	useMapTiler?: boolean;
+};
 
 const MAPTILER_STYLE = 'streets-v4';
 
@@ -14,11 +19,33 @@ export type LeafletRasterTileConfig = {
 	maxZoom: number;
 };
 
-export function getLeafletRasterTileConfig(): LeafletRasterTileConfig {
+export function getCartoVoyagerTileConfig(): LeafletRasterTileConfig {
+	return {
+		url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+		attribution:
+			'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+		subdomains: 'abcd',
+		maxZoom: 20,
+	};
+}
+
+export function isMapTilerConfigured(): boolean {
 	const key =
 		process.env.EXPO_PUBLIC_MAPTILER_API_KEY?.trim() ??
 		process.env.NEXT_PUBLIC_MAPTILER_API_KEY?.trim() ??
 		'';
+	return Boolean(key);
+}
+
+export function getLeafletRasterTileConfig(
+	options?: MapTileLayerOptions,
+): LeafletRasterTileConfig {
+	const useMapTiler = options?.useMapTiler === true;
+	const key = useMapTiler
+		? (process.env.EXPO_PUBLIC_MAPTILER_API_KEY?.trim() ??
+			process.env.NEXT_PUBLIC_MAPTILER_API_KEY?.trim() ??
+			'')
+		: '';
 	if (key) {
 		return {
 			url: `https://api.maptiler.com/maps/${MAPTILER_STYLE}/{z}/{x}/{y}.png?key=${encodeURIComponent(key)}`,
@@ -28,11 +55,5 @@ export function getLeafletRasterTileConfig(): LeafletRasterTileConfig {
 			maxZoom: 22,
 		};
 	}
-	return {
-		url: 'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-		attribution:
-			'&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-		subdomains: 'abcd',
-		maxZoom: 20,
-	};
+	return getCartoVoyagerTileConfig();
 }

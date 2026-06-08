@@ -10,6 +10,12 @@ import MutedIcon from '@/icons/MutedIcon';
 import MoreDotsIcon from '@/icons/MoreDotsIcon';
 import { chatApi } from '@/app-api/chatApi';
 import { getMessageMultiAttachments } from '@/utils/messageAttachments';
+import { stripMarkdown } from '@/utils/chatMarkdown';
+import {
+  findLoadChatDispatcherParticipant,
+  getLoadChatDispatcherAvatarBg,
+  getLoadChatDispatcherInitials,
+} from '@/utils/loadChatAvatar';
 
 // Types for chat data
 export interface User {
@@ -21,6 +27,8 @@ export interface User {
   userColor?: string | null;
   role?: string;
   unit?: string;
+  externalId?: string | null;
+  phone?: string | null;
 }
 
 export type MessageReactionUser = Pick<
@@ -380,11 +388,14 @@ export default function ChatListItem({
       return null;
     }
     
-    // For GROUP/LOAD chats, use chat avatar if available
+    if (chatRoom.type === 'LOAD') {
+      return null;
+    }
+
     if (chatRoom.avatar) {
       return { uri: chatRoom.avatar };
     }
-    
+
     return null;
   };
 
@@ -411,7 +422,7 @@ export default function ChatListItem({
       return `📎 ${chatRoom.lastMessage.fileName || 'File'}`;
     }
     
-    return chatRoom.lastMessage.content;
+    return stripMarkdown(chatRoom.lastMessage.content);
   };
 
   // Format timestamp
@@ -450,7 +461,15 @@ export default function ChatListItem({
   const offerSubtitle = getOfferSubtitle();
   const role = getRole();
   const avatarSource = getAvatarSource();
-  const initials = getInitials();
+  const loadDispatcher =
+    chatRoom.type === 'LOAD' ? findLoadChatDispatcherParticipant(chatRoom) : undefined;
+  const initials =
+    chatRoom.type === 'LOAD'
+      ? getLoadChatDispatcherInitials(chatRoom) || getInitials()
+      : getInitials();
+  const avatarPlaceholderBg = loadDispatcher
+    ? getLoadChatDispatcherAvatarBg(loadDispatcher.user.userColor)
+    : undefined;
   const lastMessage = getLastMessage();
   const timestamp = formatTimestamp();
 
@@ -574,8 +593,20 @@ export default function ChatListItem({
             resizeMode="cover"
           />
         ) : (
-          <View style={styles.avatarPlaceholder}>
-            <Text style={styles.avatarText}>{initials}</Text>
+          <View
+            style={[
+              styles.avatarPlaceholder,
+              avatarPlaceholderBg ? { backgroundColor: avatarPlaceholderBg } : null,
+            ]}
+          >
+            <Text
+              style={[
+                styles.avatarText,
+                avatarPlaceholderBg ? styles.avatarTextOnColor : null,
+              ]}
+            >
+              {initials}
+            </Text>
           </View>
         )}
         {/* Online status indicator */}
@@ -684,6 +715,9 @@ const styles = StyleSheet.create({
     fontSize: fp(15),
     fontFamily: fonts['700'],
     color: colors.neutral.black,
+  },
+  avatarTextOnColor: {
+    color: colors.neutral.white,
   },
   statusIndicator: {
     position: 'absolute',

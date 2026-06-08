@@ -4,7 +4,7 @@ import type { TextInput as RNTextInput } from 'react-native';
 import { colors, fonts, rem, fp, borderRadius } from '@/lib';
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from 'expo-router';
-import BottomNavigation from "../../components/navigation/BottomNavigation";
+import BottomNavigation, { BOTTOM_NAV_SCROLL_PADDING } from '../../components/navigation/BottomNavigation';
 import SearchIcon from '@/icons/SearchIcon';
 import ClearIcon from '@/icons/ClearIcon';
 import ArrowDownIcon from '@/icons/ArrowDownIcon';
@@ -23,7 +23,9 @@ import { chatApi } from '@/app-api/chatApi';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { eventBus } from '@/services/EventBus';
 import { useChatStore } from '@/stores/chatStore';
+import { chatCacheService } from '@/services/ChatCacheService';
 import LoadChatsArchiveSection from '@/components/LoadChatsArchiveSection';
+import { chatRoomMatchesSearchQuery } from '@/utils/chatSearch';
 
 type FilterType = 'all' | 'muted' | 'unread' | 'favorite';
 
@@ -270,28 +272,29 @@ export default function MessagesScreen() {
     }
   };
 
-  // Mark all messages as read in all chat rooms with unread messages (mirrors Next.js handleReadAll)
-  const handleReadAll = async () => {
-    try {
-      // Get all chat room IDs with unread messages
-      const unreadChatRoomIds = chatRooms
-        .filter((room) => isRoomInMessagesTab(room, activeTab))
-        .filter(room => (room.unreadCount || 0) > 0)
-        .map(room => room.id);
+  const markChatRoomsAsReadLocally = useChatStore((s) => s.markChatRoomsAsReadLocally);
 
-      if (unreadChatRoomIds.length === 0) {
-        return; // No unread messages
-      }
+  // Mark all messages as read (optimistic UI, mirrors Next.js ChatList.handleReadAll)
+  const handleReadAll = () => {
+    const userId = authState.user?.id;
+    if (!userId) return;
 
-      // Call the API to mark all messages as read
-      const result = await chatApi.markAllMessagesAsReadByChatRooms(unreadChatRoomIds);
-      
-      // WebSocket will automatically update unreadCount via messagesMarkedAsRead event
-      // No need to manually update here - the event handler in WebSocketContext will do it
-      console.log(`✅ [MessagesScreen] Marked all messages as read in ${result.chatRoomIds.length} chat rooms`);
-    } catch (error) {
+    const unreadChatRoomIds = chatRooms
+      .filter((room) => isRoomInMessagesTab(room, activeTab))
+      .filter((room) => (room.unreadCount || 0) > 0)
+      .map((room) => room.id);
+
+    if (unreadChatRoomIds.length === 0) return;
+
+    markChatRoomsAsReadLocally(unreadChatRoomIds, userId);
+
+    unreadChatRoomIds.forEach((chatRoomId) => {
+      chatCacheService.updateChatRoom(chatRoomId, { unreadCount: 0 }).catch(() => {});
+    });
+
+    void chatApi.markAllMessagesAsReadByChatRooms(unreadChatRoomIds).catch((error) => {
       console.error('❌ [MessagesScreen] Failed to mark all messages as read:', error);
-    }
+    });
   };
 
   // Get display name for chat room (for search filtering)
@@ -355,24 +358,23 @@ export default function MessagesScreen() {
         }
       }
 
-      // Apply search filter - search by display name and also by individual name parts
-      const searchQueryLower = debouncedSearchQuery.trim().toLowerCase();
-      let matchesSearch = !searchQueryLower;
-      
-      if (searchQueryLower) {
-        const displayName = getChatDisplayName(chatRoom).toLowerCase();
-        matchesSearch = displayName.includes(searchQueryLower);
-        
-        // For DIRECT chats, also search by firstName and lastName separately
-        if (!matchesSearch && chatRoom.type === 'DIRECT' && chatRoom.participants.length === 2) {
-          const otherParticipant = chatRoom.participants.find(
-            p => p.user.id !== authState.user?.id
-          );
-          if (otherParticipant) {
-            const firstName = otherParticipant.user.firstName?.toLowerCase() || '';
-            const lastName = otherParticipant.user.lastName?.toLowerCase() || '';
-            matchesSearch = firstName.includes(searchQueryLower) || lastName.includes(searchQueryLower);
-          }
+      let matchesSearch = chatRoomMatchesSearchQuery(
+        chatRoom,
+        debouncedSearchQuery,
+        getChatDisplayName,
+        { includeParticipantPhones: activeTab === 'shipments' },
+      );
+
+      // For DIRECT chats, also search by firstName and lastName separately
+      if (!matchesSearch && debouncedSearchQuery.trim() && chatRoom.type === 'DIRECT' && chatRoom.participants.length === 2) {
+        const searchQueryLower = debouncedSearchQuery.trim().toLowerCase();
+        const otherParticipant = chatRoom.participants.find(
+          p => p.user.id !== authState.user?.id
+        );
+        if (otherParticipant) {
+          const firstName = otherParticipant.user.firstName?.toLowerCase() || '';
+          const lastName = otherParticipant.user.lastName?.toLowerCase() || '';
+          matchesSearch = firstName.includes(searchQueryLower) || lastName.includes(searchQueryLower);
         }
       }
 
@@ -540,6 +542,7 @@ export default function MessagesScreen() {
                     activeOpacity={0.7}
                     onPress={() => {
                       setIsAddNewMenuOpen(false);
+                      Keyboard.dismiss();
                       setIsContactsOpen(true);
                     }}
                   >
@@ -632,7 +635,7 @@ export default function MessagesScreen() {
                       activeTab === 'shipments' && styles.tabButtonTextActive,
                     ]}
                   >
-                    Shipments
+                    Active Loads
                   </Text>
                 </TouchableOpacity>
 
@@ -817,7 +820,7 @@ export default function MessagesScreen() {
                   {debouncedSearchQuery.trim()
                     ? 'No chats found'
                     : activeTab === 'shipments'
-                      ? 'No active shipments'
+                      ? 'No active loads'
                       : 'No chats yet'}
                 </Text>
                 {debouncedSearchQuery.trim() ? (
@@ -899,12 +902,14 @@ export default function MessagesScreen() {
               setIsCreatingDirectChat(true);
               setCreatingDirectChatUserId(user.id);
 
-              // If a DIRECT chat with this user already exists, open it instead of creating
-              const existing = chatRooms.find(room => 
-                room.type === 'DIRECT' &&
-                room.participants?.length === 2 &&
-                room.participants.some(p => p.userId === user.id)
-              );
+              const myUserId = authState.user?.id;
+              if (!myUserId) return;
+
+              await loadChatRooms(true);
+
+              const { findDirectChatWithUser } = await import('@/utils/findDirectChatRoom');
+              const latestRooms = useChatStore.getState().chatRooms;
+              const existing = findDirectChatWithUser(latestRooms, myUserId, user.id);
               if (existing) {
                 setIsContactsOpen(false);
                 router.push(`/chat/${existing.id}` as any);
@@ -1119,7 +1124,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     position: 'relative',
-    paddingBottom: 70,
+    paddingBottom: BOTTOM_NAV_SCROLL_PADDING,
     backgroundColor: 'rgba(247, 248, 255, 1)',
   },
   searchFilterSection: {

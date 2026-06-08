@@ -2,7 +2,7 @@
 
 import React from "react";
 import * as Notifications from 'expo-notifications';
-import { registerForPushNotificationsAsync, addNotificationListeners, registerPushTokenToBackend } from "@/services/NotificationsService";
+import { registerForPushNotificationsAsync, registerPushTokenToBackend } from "@/services/NotificationsService";
 import { secureStorage } from "@/utils/secureStorage";
 import { useAuth } from "@/context/AuthContext";
 
@@ -18,7 +18,6 @@ import { useAuth } from "@/context/AuthContext";
  */
 export default function PushTokenRegistrar() {
   const { authState } = useAuth();
-  const [listenersAttached, setListenersAttached] = React.useState(false);
 
   // Check on app start and when auth state changes
   React.useEffect(() => {
@@ -105,15 +104,6 @@ export default function PushTokenRegistrar() {
       canceled = true;
     };
   }, [authState.isAuthenticated, authState.accessToken]);
-
-  // Attach notification listeners once
-  React.useEffect(() => {
-    if (!listenersAttached) {
-      const cleanup = addNotificationListeners();
-      setListenersAttached(true);
-      return cleanup;
-    }
-  }, [listenersAttached]);
 
   return null;
 }

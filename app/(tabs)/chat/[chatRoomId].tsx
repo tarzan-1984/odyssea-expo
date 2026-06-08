@@ -13,10 +13,15 @@ import EmojiPicker from '@/components/EmojiPicker';
 import MessageItem from '@/components/MessageItem';
 import ChatHeaderDropdown from '@/components/ChatHeaderDropdown';
 import { setActiveChatRoomId } from '@/services/ActiveChatService';
-import { type FileData, type UploadQueueItem, uploadAttachmentFile, useAttachmentPicker } from '@/utils/chatAttachmentHelpers';
+import { type FileData, type UploadQueueItem, uploadAttachmentFiles, useAttachmentPicker } from '@/utils/chatAttachmentHelpers';
 import FilesModal from '@/components/modals/FilesModal';
-import ChatInputSection from '@/components/chat/ChatInputSection';
-import { getChatAvatarSource as getChatAvatarSourceUtil, getChatInitials } from '@/utils/chatAvatarUtils';
+import ChatInputSection, {
+  type ChatInputSectionRef,
+} from '@/components/chat/ChatInputSection';
+import {
+  getChatAvatarSource as getChatAvatarSourceUtil,
+  getChatAvatarPlaceholderMeta,
+} from '@/utils/chatAvatarUtils';
 import ChatInfoModal from '@/components/modals/ChatInfoModal';
 import MessageTemplatesModal from '@/components/modals/MessageTemplatesModal';
 
@@ -36,8 +41,10 @@ export default function ChatRoomScreen() {
   const [isFilesModalOpen, setIsFilesModalOpen] = useState(false);
   const [isChatInfoModalOpen, setIsChatInfoModalOpen] = useState(false);
   
-  // Message input state
+  // Message input state (markdown, same as Next.js chat compose)
   const [messageText, setMessageText] = useState('');
+  const [composeResetKey, setComposeResetKey] = useState(0);
+  const chatInputRef = useRef<ChatInputSectionRef>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
@@ -246,32 +253,25 @@ export default function ChatRoomScreen() {
       const uploaded: { fileUrl: string; fileName: string; fileSize: number }[] = [];
 
       if (hasFiles) {
-        for (let i = 0; i < pendingAttachments.length; i++) {
-          setUploadQueue((queue) =>
-            queue.map((item, index) =>
-              index === i ? { ...item, status: 'uploading' } : item
-            )
+        setUploadQueue((queue) =>
+          queue.map((item) => ({ ...item, status: 'uploading' as const })),
+        );
+        try {
+          const batchUploaded = await uploadAttachmentFiles(
+            pendingAttachments,
+            (index, status) => {
+              setUploadQueue((queue) =>
+                queue.map((item, i) => (i === index ? { ...item, status } : item)),
+              );
+            },
           );
-          try {
-            const fd = await uploadAttachmentFile(pendingAttachments[i]);
-            uploaded.push(fd);
-            setUploadQueue((queue) =>
-              queue.map((item, index) =>
-                index === i ? { ...item, status: 'done' } : item
-              )
-            );
-          } catch {
-            setUploadQueue((queue) =>
-              queue.map((item, index) =>
-                index === i ? { ...item, status: 'error' } : item
-              )
-            );
-            Alert.alert(
-              'Send failed',
-              'Failed to upload one or more files. Please try again.'
-            );
-            return;
-          }
+          uploaded.push(...batchUploaded);
+        } catch {
+          Alert.alert(
+            'Send failed',
+            'Failed to upload one or more files. Please try again.',
+          );
+          return;
         }
       }
 
@@ -284,6 +284,7 @@ export default function ChatRoomScreen() {
       }
 
       setMessageText('');
+      setComposeResetKey((k) => k + 1);
       setReplyingTo(null);
       clearPendingAttachments();
       sendTyping(chatRoomId as string, false);
@@ -546,14 +547,30 @@ export default function ChatRoomScreen() {
               ) : (
                 (() => {
                   const avatarUri = getChatAvatarSourceUtil(chatRoom || null, authState.user?.id);
-                  const initials = getChatInitials(getChatDisplayName());
+                  const displayName = getChatDisplayName();
+                  const { initials, backgroundColor } = getChatAvatarPlaceholderMeta(
+                    chatRoom || null,
+                    displayName,
+                  );
                   return (
                     <View style={styles.headerAvatarContainer}>
                       {avatarUri ? (
                         <Image source={{ uri: avatarUri }} style={styles.headerAvatarImage} />
                       ) : (
-                        <View style={styles.headerAvatarPlaceholder}>
-                          <Text style={styles.headerAvatarText}>{initials}</Text>
+                        <View
+                          style={[
+                            styles.headerAvatarPlaceholder,
+                            backgroundColor ? { backgroundColor } : null,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.headerAvatarText,
+                              backgroundColor ? { color: '#fff' } : null,
+                            ]}
+                          >
+                            {initials}
+                          </Text>
                         </View>
                       )}
                     </View>
@@ -827,11 +844,13 @@ export default function ChatRoomScreen() {
         ) : null}
         
         <ChatInputSection
+          ref={chatInputRef}
           messageText={messageText}
-          onMessageTextChange={(t) => {
-            setMessageText(t);
+          composeResetKey={composeResetKey}
+          onMessageTextChange={setMessageText}
+          onPlainTextChange={(plain) => {
             if (chatRoomId) {
-              sendTyping(chatRoomId as string, t.trim().length > 0);
+              sendTyping(chatRoomId as string, plain.trim().length > 0);
             }
           }}
           onSendPress={handleSendPress}
@@ -879,7 +898,7 @@ export default function ChatRoomScreen() {
           isOpen={showEmojiPicker}
           onClose={() => setShowEmojiPicker(false)}
           onEmojiSelect={(emoji) => {
-            setMessageText(prev => prev + emoji);
+            chatInputRef.current?.insertText(emoji);
           }}
         />
 
@@ -890,10 +909,8 @@ export default function ChatRoomScreen() {
           onInsertContent={(content) => {
             const text = content.trim();
             if (!text) return;
-            setMessageText(prev => {
-              const current = prev.trim();
-              return current ? `${current}\n${text}` : text;
-            });
+            const prefix = messageText.trim() ? '\n' : '';
+            chatInputRef.current?.insertText(`${prefix}${text}`);
             if (chatRoomId) {
               sendTyping(chatRoomId as string, true);
             }

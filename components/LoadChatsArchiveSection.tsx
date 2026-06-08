@@ -24,6 +24,8 @@ import ChatListItem, { ChatRoom } from '@/components/ChatListItem';
 import { chatApi } from '@/app-api/chatApi';
 import { eventBus, AppEvents } from '@/services/EventBus';
 import { ARCHIVED_LOAD_CHATS_QUERY_KEY } from '@/components/loadArchivedChatsQueryKey';
+import { chatRoomMatchesSearchQuery } from '@/utils/chatSearch';
+import { normalizeChatParticipants } from '@/utils/normalizeChatParticipants';
 
 const PAGE_SIZE = 10;
 
@@ -48,16 +50,6 @@ function archivedChatTitle(chatRoom: ChatRoom): string {
   if (chatRoom.name?.trim()) return chatRoom.name.trim();
   if (chatRoom.loadId?.trim()) return `#${chatRoom.loadId.trim()}`;
   return 'Archived shipment';
-}
-
-function normalizeParticipants(participants: any[]): ChatRoom['participants'] {
-  return (participants ?? []).map((p) => ({
-    ...p,
-    user: {
-      ...p.user,
-      avatar: p.user.avatar || p.user.profilePhoto,
-    },
-  }));
 }
 
 /** Mirrors Next.js ChatList.getChatDisplayName; LOAD behaves like GROUP for participant fallback. */
@@ -125,7 +117,7 @@ export default function LoadChatsArchiveSection({
   const mergeNormalized = useCallback((list: ChatRoom[]): ChatRoom[] => {
     return list.map((room) => ({
       ...room,
-      participants: normalizeParticipants(room.participants || []),
+      participants: normalizeChatParticipants(room.participants || []),
       name: archivedChatTitle(room),
       isLoadArchived: true as const,
     }));
@@ -204,28 +196,16 @@ export default function LoadChatsArchiveSection({
   );
 
   const filteredDisplayRooms = useMemo(() => {
-    const q = debouncedArchiveSearch.trim().toLowerCase();
+    const q = debouncedArchiveSearch.trim();
     if (!q) return displayRooms;
-    return displayRooms.filter((room) => {
-      const displayName =
-        getArchiveChatDisplayName(room, currentUserId).toLowerCase();
-      if (displayName.includes(q)) return true;
-      if (
-        room.type === 'DIRECT' &&
-        room.participants.length === 2 &&
-        currentUserId
-      ) {
-        const other = room.participants.find(
-          (p) => p.user.id !== currentUserId,
-        );
-        if (other) {
-          const fn = other.user.firstName?.toLowerCase() || '';
-          const ln = other.user.lastName?.toLowerCase() || '';
-          if (fn.includes(q) || ln.includes(q)) return true;
-        }
-      }
-      return false;
-    });
+    return displayRooms.filter((room) =>
+      chatRoomMatchesSearchQuery(
+        room,
+        q,
+        (r) => getArchiveChatDisplayName(r, currentUserId),
+        { includeParticipantPhones: true },
+      ),
+    );
   }, [displayRooms, debouncedArchiveSearch, currentUserId]);
 
   useEffect(() => {

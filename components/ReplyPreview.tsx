@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { colors, fonts, fp, rem } from '@/lib';
 import ClearIcon from '@/icons/ClearIcon';
 import { Message } from '@/components/ChatListItem';
+import { stripMarkdown } from '@/utils/chatMarkdown';
 
 interface ReplyPreviewProps {
   replyData: Message['replyData'];
@@ -21,10 +22,9 @@ export default function ReplyPreview({ replyData, onCancel }: ReplyPreviewProps)
     });
   };
 
+  const plain = stripMarkdown(replyData.content);
   const truncatedContent =
-    replyData.content.length > 100
-      ? `${replyData.content.substring(0, 100)}...`
-      : replyData.content;
+    plain.length > 100 ? `${plain.substring(0, 100)}...` : plain;
 
   return (
     <View style={styles.container}>

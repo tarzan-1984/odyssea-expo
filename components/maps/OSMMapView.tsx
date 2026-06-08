@@ -1,7 +1,11 @@
 import React, { useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
 import { View, StyleSheet, StyleProp, ViewStyle, Linking, Image } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { getLeafletRasterTileConfig } from '@/utils/mapTileLayer';
+import {
+  getCartoVoyagerTileConfig,
+  getLeafletRasterTileConfig,
+  isMapTilerConfigured,
+} from '@/utils/mapTileLayer';
 
 const TRACKING_DRIVER_MARKER_URI = Image.resolveAssetSource(
   require('@/assets/images/tracking-driver-marker.png'),
@@ -58,6 +62,8 @@ export interface OSMMapViewProps {
   rotateEnabled?: boolean;
   pitchEnabled?: boolean;
   showsCompass?: boolean;
+  /** MapTiler when key is set; only enable on load detail (default: free CARTO). */
+  useMapTilerBasemap?: boolean;
   onMapPress?: (latitude: number, longitude: number) => void;
   onMarkerPress?: (driverData: {
     id: string;
@@ -84,6 +90,7 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
     onMarkerPress,
     scrollEnabled = true,
     zoomEnabled = true,
+    useMapTilerBasemap = false,
   }, ref) => {
     const webViewRef = useRef<WebView>(null);
     const mapReadyRef = useRef(false);
@@ -399,9 +406,14 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
       }
     }, [polylineCoordinates, polylines]);
 
-    const rasterTile = getLeafletRasterTileConfig();
+    const rasterTile = getLeafletRasterTileConfig({ useMapTiler: useMapTilerBasemap });
+    const cartoTile = getCartoVoyagerTileConfig();
+    const useMapTilerWithFallback = useMapTilerBasemap && isMapTilerConfigured();
     const tileLayerSubdomainsJs = rasterTile.subdomains
       ? `subdomains: '${rasterTile.subdomains}',`
+      : '';
+    const cartoTileSubdomainsJs = cartoTile.subdomains
+      ? `subdomains: '${cartoTile.subdomains}',`
       : '';
     const draggingJs = scrollEnabled ? 'true' : 'false';
     const zoomJs = zoomEnabled ? 'true' : 'false';
@@ -488,7 +500,48 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
       markerZoomAnimation: true
     });
 
-    // MapTiler streets-v4 if EXPO_PUBLIC_MAPTILER_API_KEY is set, else CARTO Voyager (no key)
+    // MapTiler when key is set; on repeated tile errors (quota/403) fall back to CARTO Voyager
+    ${
+      useMapTilerWithFallback
+        ? `
+    (function() {
+      var activeTileLayer = L.tileLayer(${JSON.stringify(rasterTile.url)}, {
+        attribution: '',
+        ${tileLayerSubdomainsJs}
+        maxZoom: ${rasterTile.maxZoom},
+        tileSize: 256,
+        zoomOffset: 0
+      });
+      var tileErrorCount = 0;
+      var tileErrorTimer = null;
+      activeTileLayer.on('tileerror', function() {
+        tileErrorCount += 1;
+        if (!tileErrorTimer) {
+          tileErrorTimer = setTimeout(function() {
+            tileErrorCount = 0;
+            tileErrorTimer = null;
+          }, 2500);
+        }
+        if (tileErrorCount >= 5) {
+          if (tileErrorTimer) {
+            clearTimeout(tileErrorTimer);
+            tileErrorTimer = null;
+          }
+          tileErrorCount = 0;
+          map.removeLayer(activeTileLayer);
+          activeTileLayer = L.tileLayer(${JSON.stringify(cartoTile.url)}, {
+            attribution: '',
+            ${cartoTileSubdomainsJs}
+            maxZoom: ${cartoTile.maxZoom},
+            tileSize: 256,
+            zoomOffset: 0
+          }).addTo(map);
+        }
+      });
+      activeTileLayer.addTo(map);
+    })();
+    `
+        : `
     L.tileLayer(${JSON.stringify(rasterTile.url)}, {
       attribution: '',
       ${tileLayerSubdomainsJs}
@@ -496,6 +549,8 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
       tileSize: 256,
       zoomOffset: 0
     }).addTo(map);
+    `
+    }
 
     // Store map and markers in window for access from React Native
     window.map = map;

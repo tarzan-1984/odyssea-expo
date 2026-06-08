@@ -24,9 +24,17 @@ import '@/tasks/locationTask';
 import { LOCATION_TASK_NAME } from '@/tasks/locationTask';
 import * as TaskManager from 'expo-task-manager';
 // Ensure notifications handler is always registered regardless of auth flow
-import '@/services/NotificationsService';
-import { PENDING_OFFERS_NAVIGATION_KEY } from '@/services/NotificationsService';
+import {
+  ensureNotificationListeners,
+  consumeInitialNotificationResponse,
+  getChatNavigationPath,
+  PENDING_CHAT_NAVIGATION_KEY,
+  PENDING_OFFERS_NAVIGATION_KEY,
+} from '@/services/NotificationsService';
+
+ensureNotificationListeners();
 import PushTokenRegistrar from '@/components/notifications/PushTokenRegistrar';
+import GlobalChatRoomsSync from '@/components/chat/GlobalChatRoomsSync';
 import MandatoryIosUpdateGate from '@/components/common/MandatoryIosUpdateGate';
 
 // Prevent the splash screen from auto-hiding
@@ -60,6 +68,7 @@ function RootLayoutNav() {
     openLocationSettings,
   } = useLocationPermission();
   const lastCheckedSegment = useRef<string>('');
+  const pendingChatNavigationRef = useRef<string | null>(null);
   const hasRequestedPermissionRef = useRef(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [isAccountBlocked, setIsAccountBlocked] = useState(false);
@@ -134,8 +143,8 @@ function RootLayoutNav() {
     const { eventBus, AppEvents } = require('@/services/EventBus');
     const handleNavigateToChat = (data: { chatRoomId: string }) => {
       if (authState.isAuthenticated && data.chatRoomId) {
-        // Use replace instead of push to avoid back navigation issues
-        router.replace(`/chat/${data.chatRoomId}` as any);
+        pendingChatNavigationRef.current = data.chatRoomId;
+        router.replace(getChatNavigationPath(data.chatRoomId) as any);
       }
     };
     const handleNavigateToOffers = () => {
@@ -158,12 +167,15 @@ function RootLayoutNav() {
 
     const checkPendingNavigation = async () => {
       try {
-        const pendingChatId = await AsyncStorage.getItem('@pending_chat_navigation');
+        const pendingChatId =
+          pendingChatNavigationRef.current ||
+          (await AsyncStorage.getItem(PENDING_CHAT_NAVIGATION_KEY));
         const pendingOffers = await AsyncStorage.getItem(PENDING_OFFERS_NAVIGATION_KEY);
 
         if (pendingChatId) {
-          await AsyncStorage.removeItem('@pending_chat_navigation');
-          router.replace(`/chat/${pendingChatId}` as any);
+          pendingChatNavigationRef.current = pendingChatId;
+          await AsyncStorage.removeItem(PENDING_CHAT_NAVIGATION_KEY);
+          router.replace(getChatNavigationPath(pendingChatId) as any);
         } else if (pendingOffers) {
           await AsyncStorage.removeItem(PENDING_OFFERS_NAVIGATION_KEY);
           router.replace('/work' as any);
@@ -174,6 +186,14 @@ function RootLayoutNav() {
     };
 
     checkPendingNavigation();
+
+    const onAppStateChange = (next: AppStateStatus) => {
+      if (next === 'active') {
+        checkPendingNavigation();
+      }
+    };
+    const appSub = AppState.addEventListener('change', onAppStateChange);
+    return () => appSub.remove();
   }, [isReady, authState.isAuthenticated, router]);
 
   // Verify task registration on mount and try to re-register if needed
@@ -255,6 +275,12 @@ function RootLayoutNav() {
   // Load stored auth and check permissions on mount (first load)
   useEffect(() => {
     const initAuth = async () => {
+      await consumeInitialNotificationResponse();
+      const pendingChatFromTap = await AsyncStorage.getItem(PENDING_CHAT_NAVIGATION_KEY);
+      if (pendingChatFromTap) {
+        pendingChatNavigationRef.current = pendingChatFromTap;
+      }
+
       // Check install timestamp FIRST, before loading auth data
       // This ensures all data is cleared on new installation before auth is loaded
       try {
@@ -292,7 +318,7 @@ function RootLayoutNav() {
             '@permissions_onboarding_completed',
             
             // Navigation & Chat
-            '@pending_chat_navigation',
+            PENDING_CHAT_NAVIGATION_KEY,
             '@chat_opened_rooms',
           ];
           
@@ -398,6 +424,13 @@ function RootLayoutNav() {
     const currentPath = segments.join('/');
 
     if (authState.isAuthenticated) {
+      const pendingChatId = pendingChatNavigationRef.current;
+      const inChatScreen = currentPath.includes('/chat/');
+
+      if (pendingChatId || inChatScreen) {
+        return;
+      }
+
       // User is authenticated
       if (inAuthGroup && currentPath !== '(auth)/final-verify') {
         // Authenticated but on auth screens (except final-verify) → redirect to final-verify
@@ -566,6 +599,7 @@ export default function RootLayout() {
             <OnlineStatusProvider>
             {/* Globally ensure push token is generated/registered for logged-in users too */}
               <PushTokenRegistrar />
+              <GlobalChatRoomsSync />
               <RootLayoutNav />
             </OnlineStatusProvider>
           </WebSocketProvider>

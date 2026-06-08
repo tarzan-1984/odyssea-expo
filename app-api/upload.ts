@@ -1,238 +1,299 @@
+import * as FileSystem from 'expo-file-system/legacy';
+import { ensureHeicUploadMetadata } from '@/utils/heicUpload';
+
 type PresignResponse = {
-  uploadUrl: string;
-  fileUrl: string;
-  key: string;
+	uploadUrl: string;
+	fileUrl: string;
+	key: string;
 };
 
 export type UploadedChatFile = {
-  fileUrl: string;
-  fileName: string;
-  fileSize: number;
+	fileUrl: string;
+	fileName: string;
+	fileSize: number;
 };
 
-function isHeicFile(filename: string, mimeType?: string): boolean {
-  const lowerName = filename.toLowerCase();
-  const lowerType = String(mimeType || '').toLowerCase();
-  return (
-    lowerName.endsWith('.heic') ||
-    lowerName.endsWith('.heif') ||
-    lowerType === 'image/heic' ||
-    lowerType === 'image/heif'
-  );
-}
+type PreparedUploadFile = {
+	fileUri: string;
+	filename: string;
+	mimeType: string;
+	fileSize: number;
+};
 
-function toJpegFilename(filename: string): string {
-  if (/\.(heic|heif)$/i.test(filename)) {
-    return filename.replace(/\.(heic|heif)$/i, '.jpg');
-  }
-  return `${filename.replace(/\.[^/.]+$/, '') || 'image'}.jpg`;
-}
+const DEFAULT_UPLOAD_CONCURRENCY = 3;
 
 async function getPresignedUpload(params: {
-  filename: string;
-  mimeType: string;
-  accessToken: string;
+	filename: string;
+	mimeType: string;
+	accessToken: string;
 }): Promise<PresignResponse> {
-  const { filename, mimeType, accessToken } = params;
-  const presignRes = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/v1/storage/presign`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({ filename, contentType: mimeType }),
-  });
+	const { filename, mimeType, accessToken } = params;
+	const presignRes = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/v1/storage/presign`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${accessToken}`,
+		},
+		body: JSON.stringify({ filename, contentType: mimeType }),
+	});
 
-  if (!presignRes.ok) {
-    const t = await presignRes.text().catch(() => '');
-    throw new Error(`Failed to get presigned URL: ${presignRes.status} ${t}`);
-  }
+	if (!presignRes.ok) {
+		const t = await presignRes.text().catch(() => '');
+		throw new Error(`Failed to get presigned URL: ${presignRes.status} ${t}`);
+	}
 
-  const data = await presignRes.json();
-  return data.data || data;
+	const data = await presignRes.json();
+	return data.data || data;
 }
 
-async function putBlobToStorage(params: {
-  uploadUrl: string;
-  blob: Blob;
-  mimeType: string;
+async function getPresignedUploadBatch(params: {
+	files: { filename: string; mimeType: string }[];
+	accessToken: string;
+}): Promise<PresignResponse[]> {
+	const { files, accessToken } = params;
+
+	const presignRes = await fetch(
+		`${process.env.EXPO_PUBLIC_API_BASE_URL}/v1/storage/presign-batch`,
+		{
+			method: 'POST',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${accessToken}`,
+			},
+			body: JSON.stringify({
+				files: files.map((f) => ({
+					filename: f.filename,
+					contentType: f.mimeType,
+				})),
+			}),
+		},
+	);
+
+	// Fallback for older backend builds that only expose single presign.
+	if (presignRes.status === 404 || presignRes.status === 405) {
+		return Promise.all(
+			files.map((f) =>
+				getPresignedUpload({
+					filename: f.filename,
+					mimeType: f.mimeType,
+					accessToken,
+				}),
+			),
+		);
+	}
+
+	if (!presignRes.ok) {
+		const t = await presignRes.text().catch(() => '');
+		throw new Error(`Failed to get presigned URLs: ${presignRes.status} ${t}`);
+	}
+
+	const data = await presignRes.json();
+	const items: PresignResponse[] = data.data || data;
+	if (!Array.isArray(items) || items.length !== files.length) {
+		throw new Error('Invalid presign batch response');
+	}
+	return items;
+}
+
+async function uploadLocalFileToPresignedUrl(params: {
+	fileUri: string;
+	uploadUrl: string;
+	mimeType: string;
 }): Promise<void> {
-  const putRes = await fetch(params.uploadUrl, {
-    method: 'PUT',
-    headers: { 'Content-Type': params.mimeType || 'application/octet-stream' },
-    body: params.blob,
-  });
-  if (!putRes.ok) {
-    const et = await putRes.text().catch(() => '');
-    throw new Error(`Upload failed: ${putRes.status} ${et}`);
-  }
+	const result = await FileSystem.uploadAsync(params.uploadUrl, params.fileUri, {
+		httpMethod: 'PUT',
+		uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+		headers: {
+			'Content-Type': params.mimeType || 'application/octet-stream',
+		},
+	});
+
+	if (result.status < 200 || result.status >= 300) {
+		throw new Error(`Upload failed: ${result.status} ${result.body || ''}`.trim());
+	}
 }
 
-async function convertHeicFileToJpegBlob(params: {
-  fileUri: string;
-  filename: string;
-  mimeType?: string;
-  accessToken: string;
-}): Promise<Blob> {
-  const formData = new FormData();
-  formData.append('file', {
-    uri: params.fileUri,
-    name: params.filename,
-    type: params.mimeType || 'image/heic',
-  } as unknown as Blob);
+async function prepareUploadFile(params: {
+	fileUri: string;
+	filename: string;
+	mimeType?: string;
+}): Promise<PreparedUploadFile> {
+	const fileInfo = await FileSystem.getInfoAsync(params.fileUri);
+	if (!fileInfo.exists) {
+		throw new Error('Selected file is missing or could not be read');
+	}
 
-  const response = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/v1/storage/convert-heic`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${params.accessToken}`,
-    },
-    body: formData,
-  });
+	const { filename, mimeType } = await ensureHeicUploadMetadata({
+		fileUri: params.fileUri,
+		filename: params.filename,
+		mimeType: params.mimeType,
+	});
 
-  if (!response.ok) {
-    const t = await response.text().catch(() => '');
-    throw new Error(`Failed to convert HEIC image: ${response.status} ${t}`);
-  }
+	return {
+		fileUri: params.fileUri,
+		filename,
+		mimeType,
+		fileSize: fileInfo.size || 0,
+	};
+}
 
-  return response.blob();
+async function runWithConcurrency<T>(
+	count: number,
+	concurrency: number,
+	fn: (index: number) => Promise<T>,
+): Promise<T[]> {
+	const results: T[] = new Array(count);
+	let nextIndex = 0;
+
+	async function worker(): Promise<void> {
+		while (true) {
+			const i = nextIndex++;
+			if (i >= count) return;
+			results[i] = await fn(i);
+		}
+	}
+
+	await Promise.all(
+		Array.from({ length: Math.min(concurrency, count) }, () => worker()),
+	);
+	return results;
+}
+
+/**
+ * Upload multiple chat attachments: one presign-batch request, then parallel S3 PUTs.
+ * Falls back to per-file presign if the batch endpoint is unavailable (older backend).
+ */
+export async function uploadChatFilesBatch(params: {
+	files: { fileUri: string; filename: string; mimeType?: string }[];
+	accessToken: string;
+	concurrency?: number;
+	onFileComplete?: (index: number, success: boolean) => void;
+}): Promise<UploadedChatFile[]> {
+	const { files, accessToken, onFileComplete } = params;
+	if (files.length === 0) return [];
+
+	const concurrency = params.concurrency ?? DEFAULT_UPLOAD_CONCURRENCY;
+	const prepared = await Promise.all(files.map((f) => prepareUploadFile(f)));
+
+	const presigned = await getPresignedUploadBatch({
+		files: prepared.map((f) => ({ filename: f.filename, mimeType: f.mimeType })),
+		accessToken,
+	});
+
+	type UploadOutcome =
+		| { ok: true; file: UploadedChatFile }
+		| { ok: false; index: number; error: unknown };
+
+	const outcomes = await runWithConcurrency<UploadOutcome>(
+		prepared.length,
+		concurrency,
+		async (index) => {
+			const file = prepared[index];
+			const { uploadUrl, fileUrl } = presigned[index];
+			try {
+				await uploadLocalFileToPresignedUrl({
+					fileUri: file.fileUri,
+					uploadUrl,
+					mimeType: file.mimeType,
+				});
+				onFileComplete?.(index, true);
+				return {
+					ok: true,
+					file: {
+						fileUrl,
+						fileName: file.filename,
+						fileSize: file.fileSize,
+					},
+				};
+			} catch (error) {
+				onFileComplete?.(index, false);
+				return { ok: false, index, error };
+			}
+		},
+	);
+
+	const failed = outcomes.filter((o): o is Extract<UploadOutcome, { ok: false }> => !o.ok);
+	if (failed.length > 0) {
+		const firstError = failed[0].error;
+		const message =
+			firstError instanceof Error
+				? firstError.message
+				: `Failed to upload ${failed.length} file(s)`;
+		throw new Error(message);
+	}
+
+	return outcomes.map((o) => (o as Extract<UploadOutcome, { ok: true }>).file);
+}
+
+/**
+ * Upload a chat attachment via presigned URL.
+ * HEIC/HEIF files are stored as-is; conversion happens on the server when viewing/downloading.
+ */
+export async function uploadChatFileViaPresign(params: {
+	fileUri: string;
+	filename: string;
+	mimeType?: string;
+	accessToken: string;
+}): Promise<UploadedChatFile> {
+	const [uploaded] = await uploadChatFilesBatch({
+		files: [
+			{
+				fileUri: params.fileUri,
+				filename: params.filename,
+				mimeType: params.mimeType,
+			},
+		],
+		accessToken: params.accessToken,
+		concurrency: 1,
+	});
+	return uploaded;
 }
 
 export async function uploadImageViaPresign(params: {
-  fileUri: string;
-  filename: string;
-  mimeType: string;
-  accessToken: string;
+	fileUri: string;
+	filename: string;
+	mimeType: string;
+	accessToken: string;
 }): Promise<string> {
-  const { fileUri, filename, mimeType, accessToken } = params;
-
-  // 1) Ask backend for presigned URL
-  const presignRes = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/v1/storage/presign`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({ filename, contentType: mimeType }),
-  });
-
-  if (!presignRes.ok) {
-    const t = await presignRes.text().catch(() => '');
-    throw new Error(`Failed to get presigned URL: ${presignRes.status} ${t}`);
-  }
-  
-  const data = await presignRes.json();
-  
-  const uploadUrl = data.data.uploadUrl;
-  const fileUrl = data.data.fileUrl;
-  
-  // 2) Read file and PUT to storage
-  const fileResponse = await fetch(fileUri);
-  const blob = await fileResponse.blob();
-  const putRes = await fetch(uploadUrl, {
-    method: 'PUT',
-    headers: { 'Content-Type': mimeType || 'application/octet-stream' },
-    body: blob,
-  });
-  if (!putRes.ok) {
-    const et = await putRes.text().catch(() => '');
-    throw new Error(`Upload failed: ${putRes.status} ${et}`);
-  }
-
-  return fileUrl;
+	const uploaded = await uploadChatFileViaPresign({
+		fileUri: params.fileUri,
+		filename: params.filename,
+		mimeType: params.mimeType,
+		accessToken: params.accessToken,
+	});
+	return uploaded.fileUrl;
 }
 
 /**
  * Generic file upload via presigned URL (any mime type).
- * Returns the final public file URL.
  */
 export async function uploadFileViaPresign(params: {
-  fileUri: string;
-  filename: string;
-  mimeType?: string;
-  accessToken: string;
+	fileUri: string;
+	filename: string;
+	mimeType?: string;
+	accessToken: string;
 }): Promise<string> {
-  const { fileUri, filename, mimeType, accessToken } = params;
-
-  const presignRes = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/v1/storage/presign`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({ filename, contentType: mimeType || 'application/octet-stream' }),
-  });
-
-  if (!presignRes.ok) {
-    const t = await presignRes.text().catch(() => '');
-    throw new Error(`Failed to get presigned URL: ${presignRes.status} ${t}`);
-  }
-
-  const data = await presignRes.json();
-  const uploadUrl = data.data.uploadUrl as string;
-  const fileUrl = data.data.fileUrl as string;
-
-  const fileResponse = await fetch(fileUri);
-  const blob = await fileResponse.blob();
-  const putRes = await fetch(uploadUrl, {
-    method: 'PUT',
-    headers: { 'Content-Type': mimeType || 'application/octet-stream' },
-    body: blob,
-  });
-  if (!putRes.ok) {
-    const et = await putRes.text().catch(() => '');
-    throw new Error(`Upload failed: ${putRes.status} ${et}`);
-  }
-
-  return fileUrl;
-}
-
-export async function uploadChatFileViaPresign(params: {
-  fileUri: string;
-  filename: string;
-  mimeType?: string;
-  accessToken: string;
-}): Promise<UploadedChatFile> {
-  const shouldConvert = isHeicFile(params.filename, params.mimeType);
-  const fileName = shouldConvert ? toJpegFilename(params.filename) : params.filename;
-  const mimeType = shouldConvert ? 'image/jpeg' : params.mimeType || 'application/octet-stream';
-  const blob = shouldConvert
-    ? await convertHeicFileToJpegBlob(params)
-    : await fetch(params.fileUri).then((response) => response.blob());
-
-  const { uploadUrl, fileUrl } = await getPresignedUpload({
-    filename: fileName,
-    mimeType,
-    accessToken: params.accessToken,
-  });
-
-  await putBlobToStorage({ uploadUrl, blob, mimeType });
-
-  return {
-    fileUrl,
-    fileName,
-    fileSize: blob.size || 0,
-  };
+	const uploaded = await uploadChatFileViaPresign(params);
+	return uploaded.fileUrl;
 }
 
 export async function updateUserAvatarOnBackend(params: {
-  userId: string;
-  avatarUrl: string;
-  accessToken: string;
+	userId: string;
+	avatarUrl: string;
+	accessToken: string;
 }): Promise<void> {
-  const { userId, avatarUrl, accessToken } = params;
+	const { userId, avatarUrl, accessToken } = params;
 
-  const res = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/v1/users/${userId}`, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify({ profilePhoto: avatarUrl }),
-  });
-  if (!res.ok) {
-    const t = await res.text().catch(() => '');
-    throw new Error(`Failed to update avatar: ${res.status} ${t}`);
-  }
+	const res = await fetch(`${process.env.EXPO_PUBLIC_API_BASE_URL}/v1/users/${userId}`, {
+		method: 'PUT',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${accessToken}`,
+		},
+		body: JSON.stringify({ profilePhoto: avatarUrl }),
+	});
+	if (!res.ok) {
+		const t = await res.text().catch(() => '');
+		throw new Error(`Failed to update avatar: ${res.status} ${t}`);
+	}
 }
-
-

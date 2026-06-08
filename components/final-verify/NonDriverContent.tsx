@@ -13,18 +13,10 @@ import type { ChatRoom } from '@/components/ChatListItem';
 import { chatApi } from '@/app-api/chatApi';
 import { useChatStore } from '@/stores/chatStore';
 import { useRouter } from 'expo-router';
+import { findDirectChatWithUser } from '@/utils/findDirectChatRoom';
 
 interface NonDriverContentProps {
   firstName: string;
-}
-
-function findDirectChatWithUser(rooms: ChatRoom[], myUserId: string, otherUserId: string): ChatRoom | undefined {
-  return rooms.find((r) => {
-    if (r.type !== 'DIRECT') return false;
-    const hasOther = r.participants?.some((p) => p.user?.id === otherUserId);
-    const hasMe = r.participants?.some((p) => p.user?.id === myUserId);
-    return Boolean(hasOther && hasMe);
-  });
 }
 
 const DEFAULT_FILTERS: DriversMapSearchFilters = {

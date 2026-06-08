@@ -17,7 +17,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, fonts, rem, fp } from '@/lib';
 import { useAuth } from '@/context/AuthContext';
 import { canAccessWorkTab, canAccessDriversAndOffers } from '@/constants/roleAccess';
-import BottomNavigation from '@/components/navigation/BottomNavigation';
+import BottomNavigation, { BOTTOM_NAV_SCROLL_PADDING } from '@/components/navigation/BottomNavigation';
 import ArrowLeft from '@/icons/ArrowLeft';
 import OSMMapView, { type Region, type OSMMapViewRef } from '@/components/maps/OSMMapView';
 import { useUserByExternalId } from '@/hooks/useUserByExternalId';
@@ -1269,6 +1269,7 @@ export default function LoadDetailScreen() {
                 markers={markers as any}
                 polylineCoordinates={polylineCoordinates}
                 polylines={mapPolylines}
+                useMapTilerBasemap
                 style={StyleSheet.absoluteFill}
               />
             </View>
@@ -1878,7 +1879,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     position: 'relative',
-    paddingBottom: 70,
+    paddingBottom: BOTTOM_NAV_SCROLL_PADDING,
     backgroundColor: 'rgba(247, 248, 255, 1)',
   },
   header: {

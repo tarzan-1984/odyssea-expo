@@ -7,7 +7,7 @@ import LogsSettings from '@/components/settings/LogsSettings';
 import NotificationToggleSettings from '@/components/settings/NotificationToggleSettings';
 import ChatCacheSettings from '@/components/settings/ChatCacheSettings';
 import WebSocketConnectionSettings from '@/components/settings/WebSocketConnectionSettings';
-import BottomNavigation from '@/components/navigation/BottomNavigation';
+import BottomNavigation, { BOTTOM_NAV_SCROLL_PADDING } from '@/components/navigation/BottomNavigation';
 import { colors } from '@/lib/colors';
 import { fonts, fp, rem } from '@/lib';
 
@@ -117,7 +117,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
-    paddingBottom: 70,
+    paddingBottom: BOTTOM_NAV_SCROLL_PADDING,
   },
   sectionCard: {
     padding: rem(16),

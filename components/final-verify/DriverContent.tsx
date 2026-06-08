@@ -223,7 +223,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
     return `Last updated: ${month}/${day}/${year} ${hours}:${minutes}:${seconds}`;
   };
   const mapRef = useRef<{ animateToRegion: (region: Region, duration?: number) => void }>(null);
-  // OSMMapView: MapTiler streets-v4 if EXPO_PUBLIC_MAPTILER_API_KEY is set, else CARTO Voyager (no key)
+  // OSMMapView: CARTO Voyager (MapTiler only on work/load/[id] via useMapTilerBasemap)
   const initialRegion: Region = {
     latitude: 39.2904, // default Baltimore
     longitude: -76.6122,

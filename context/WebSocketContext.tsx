@@ -11,6 +11,7 @@ import { ChatRoom, Message } from '@/components/ChatListItem';
 import { messagesCacheService } from '@/services/MessagesCacheService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { syncAppLocationSettingsFromBackend } from '@/utils/appLocationSettings';
+import { normalizeChatParticipants } from '@/utils/normalizeChatParticipants';
 
 // WebSocket context interface
 interface WebSocketContextType {
@@ -77,16 +78,10 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   const hasConnectedOnceRef = useRef(false);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
-  const normalizeParticipants = useCallback((participants: any[]): any[] => {
-    if (!Array.isArray(participants)) return [];
-    return participants.map((p: any) => ({
-      ...p,
-      user: {
-        ...p.user,
-        avatar: p.user?.avatar ?? p.user?.profilePhoto ?? '',
-      },
-    }));
-  }, []);
+  const normalizeParticipants = useCallback(
+    (participants: any[]) => normalizeChatParticipants(participants),
+    [],
+  );
 
   // Get authentication token from secure storage
   const getAuthToken = useCallback(async (): Promise<string | null> => {
@@ -339,15 +334,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
             // Normalize participant avatar field (profilePhoto -> avatar)
             const normalized: ChatRoom = {
               ...restoredRoom,
-              participants: Array.isArray(restoredRoom.participants)
-                ? restoredRoom.participants.map((p: any) => ({
-                    ...p,
-                    user: {
-                      ...p.user,
-                      avatar: p.user?.avatar ?? p.user?.profilePhoto ?? '',
-                    },
-                  }))
-                : [],
+              participants: normalizeChatParticipants(restoredRoom.participants),
             };
 
             // Add restored chat room to store
@@ -653,15 +640,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         // Normalize participant avatar field (profilePhoto -> avatar)
         const normalized: ChatRoom = {
           ...restoredRoom,
-          participants: Array.isArray(restoredRoom.participants)
-            ? restoredRoom.participants.map((p: any) => ({
-                ...p,
-                user: {
-                  ...p.user,
-                  avatar: p.user?.avatar ?? p.user?.profilePhoto ?? '',
-                },
-              }))
-            : [],
+          participants: normalizeChatParticipants(restoredRoom.participants),
         };
 
         // Add restored chat room to store
@@ -843,15 +822,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           // Mirrors Next.js normalization logic
           const normalized: ChatRoom = {
             ...raw,
-            participants: Array.isArray(raw.participants)
-              ? raw.participants.map((p: any) => ({
-                  ...p,
-                  user: {
-                    ...p.user,
-                    avatar: p.user?.avatar ?? p.user?.profilePhoto ?? '',
-                  },
-                }))
-              : [],
+            participants: normalizeChatParticipants(raw.participants),
           };
 
           console.log('✅ [WebSocket] Normalized chat room:', {
@@ -907,15 +878,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
             // Normalize participant avatar field (profilePhoto -> avatar)
             const normalized: ChatRoom = {
               ...room,
-              participants: Array.isArray(room.participants)
-                ? room.participants.map((p: any) => ({
-                    ...p,
-                    user: {
-                      ...p.user,
-                      avatar: p.user?.avatar ?? p.user?.profilePhoto ?? '',
-                    },
-                  }))
-                : [],
+              participants: normalizeChatParticipants(room.participants),
             };
             
             console.log('✅ [WebSocket] Loaded and normalized chat room from API:', {

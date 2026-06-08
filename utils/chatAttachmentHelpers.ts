@@ -3,7 +3,8 @@ import { Alert } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { secureStorage } from '@/utils/secureStorage';
-import { uploadChatFileViaPresign } from '@/app-api/upload';
+import { uploadChatFilesBatch } from '@/app-api/upload';
+import { ensureHeicUploadMetadata } from '@/utils/heicUpload';
 
 export interface FileData {
   uri: string;
@@ -29,24 +30,75 @@ export type ChatSendMessageFn = (
   attachments?: ChatSendFileAttachment[],
 ) => Promise<void>;
 
+/** Normalize iOS gallery/camera metadata so HEIC uploads use the correct name and MIME. */
+export async function normalizeAttachmentForUpload(file: FileData): Promise<FileData> {
+  const meta = await ensureHeicUploadMetadata({
+    fileUri: file.uri,
+    filename: file.name,
+    mimeType: file.mimeType,
+  });
+  return {
+    ...file,
+    name: meta.filename,
+    mimeType: meta.mimeType,
+  };
+}
+
 export async function uploadAttachmentFile(file: FileData): Promise<{ fileUrl: string; fileName: string; fileSize: number }> {
+  const [uploaded] = await uploadAttachmentFiles([file]);
+  return uploaded;
+}
+
+export type UploadProgressCallback = (index: number, status: UploadQueueItem['status']) => void;
+
+/** Upload multiple attachments in one presign-batch + parallel S3 PUT flow. */
+export async function uploadAttachmentFiles(
+  files: FileData[],
+  onProgress?: UploadProgressCallback,
+): Promise<{ fileUrl: string; fileName: string; fileSize: number }[]> {
+  if (files.length === 0) return [];
+
   const token = await secureStorage.getItemAsync('accessToken').catch(() => null);
   if (!token) {
     throw new Error('Authentication required');
   }
 
-  const uploaded = await uploadChatFileViaPresign({
-    fileUri: file.uri,
-    filename: file.name,
-    mimeType: file.mimeType,
+  const normalized = await Promise.all(files.map((f) => normalizeAttachmentForUpload(f)));
+  normalized.forEach((_, index) => onProgress?.(index, 'uploading'));
+
+  const uploaded = await uploadChatFilesBatch({
+    files: normalized.map((f) => ({
+      fileUri: f.uri,
+      filename: f.name,
+      mimeType: f.mimeType,
+    })),
     accessToken: token,
+    onFileComplete: (index, success) => {
+      onProgress?.(index, success ? 'done' : 'error');
+    },
   });
 
-  return {
-    fileUrl: uploaded.fileUrl,
-    fileName: uploaded.fileName,
-    fileSize: uploaded.fileSize || file.size || 0,
-  };
+  return uploaded.map((item, index) => ({
+    fileUrl: item.fileUrl,
+    fileName: item.fileName,
+    fileSize: item.fileSize || files[index].size || 0,
+  }));
+}
+
+async function sendUploadedAttachments(
+  uploaded: ChatSendFileAttachment[],
+  sendMessage: ChatSendMessageFn,
+): Promise<void> {
+  if (uploaded.length >= 2) {
+    await sendMessage('', undefined, undefined, uploaded);
+  } else if (uploaded.length === 1) {
+    const one = uploaded[0];
+    await sendMessage('', {
+      fileUrl: one.fileUrl,
+      fileName: one.fileName,
+      fileSize: one.fileSize ?? 0,
+    });
+  }
 }
 
 /**
@@ -85,20 +137,15 @@ export async function capturePhoto(): Promise<FileData[]> {
   if (result.canceled) return [];
   const asset = result.assets?.[0];
   if (!asset) return [];
-  // Derive filename and mime
-  const isJpg = (asset.type || 'image') === 'image';
-  const filename =
-    asset.fileName ||
-    `photo_${Date.now()}.${isJpg ? 'jpg' : 'bin'}`;
-  const mimeType = asset.mimeType || (isJpg ? 'image/jpeg' : 'application/octet-stream');
-  return [
-    {
-      uri: asset.uri,
-      name: filename,
-      mimeType,
-      size: asset.fileSize || undefined,
-    },
-  ];
+  const filename = asset.fileName || `photo_${Date.now()}.jpg`;
+  const mimeType = asset.mimeType || 'image/jpeg';
+  const file: FileData = {
+    uri: asset.uri,
+    name: filename,
+    mimeType,
+    size: asset.fileSize || undefined,
+  };
+  return [await normalizeAttachmentForUpload(file)];
 }
 
 const GALLERY_EXTENSION_TO_MIME: Record<string, string> = {
@@ -192,7 +239,12 @@ export async function pickPhotoFromGallery(): Promise<FileData[]> {
       return [];
     }
 
-    return assets.map((asset, i) => fileDataFromGalleryAsset(asset, i));
+    const files = await Promise.all(
+      assets.map(async (asset, i) =>
+        normalizeAttachmentForUpload(fileDataFromGalleryAsset(asset, i))
+      )
+    );
+    return files;
   } catch (error) {
     console.error('[chatAttachmentHelpers] Error picking photo from gallery:', error);
     Alert.alert('Error', 'Failed to select photo from gallery. Please try again.');
@@ -214,51 +266,24 @@ export async function handleUploadAndSend(params: {
   const files = await pickFiles();
   if (files.length === 0) return;
   setIsUploading(true);
-  // Load token
-  const token = await secureStorage.getItemAsync('accessToken').catch(() => null);
-  const uploaded: ChatSendFileAttachment[] = [];
-  for (const f of files) {
-    setUploadQueue((q) => [...q, { name: f.name, mimeType: f.mimeType, size: f.size, status: 'uploading' }]);
-    try {
-      const uploadedFile = await uploadChatFileViaPresign({
-        fileUri: f.uri,
-        filename: f.name,
-        mimeType: f.mimeType,
-        accessToken: token || '',
-      });
-      uploaded.push({
-        fileUrl: uploadedFile.fileUrl,
-        fileName: uploadedFile.fileName,
-        fileSize: uploadedFile.fileSize || f.size || 0,
-      });
-      setUploadQueue((q) => {
-        const idx = q.findIndex((x) => x.name === f.name && x.status === 'uploading');
-        if (idx === -1) return q;
-        const copy = [...q];
-        copy[idx] = { ...copy[idx], status: 'done' };
-        return copy;
-      });
-    } catch {
-      setUploadQueue((q) => {
-        const idx = q.findIndex((x) => x.name === f.name && x.status === 'uploading');
-        if (idx === -1) return q;
-        const copy = [...q];
-        copy[idx] = { ...copy[idx], status: 'error' };
-        return copy;
-      });
-    }
-  }
-  if (uploaded.length >= 2) {
-    await sendMessage('', undefined, undefined, uploaded);
-  } else if (uploaded.length === 1) {
-    const one = uploaded[0];
-    await sendMessage('', {
-      fileUrl: one.fileUrl,
-      fileName: one.fileName,
-      fileSize: one.fileSize ?? 0,
+  setUploadQueue(
+    files.map((f) => ({
+      name: f.name,
+      mimeType: f.mimeType,
+      size: f.size,
+      status: 'uploading' as const,
+    })),
+  );
+
+  try {
+    const uploaded = await uploadAttachmentFiles(files, (index, status) => {
+      setUploadQueue((q) => q.map((item, i) => (i === index ? { ...item, status } : item)));
     });
+    await sendUploadedAttachments(uploaded, sendMessage);
+  } catch {
+    Alert.alert('Upload failed', 'Failed to upload one or more files. Please try again.');
   }
-  // Auto-clear items that are done
+
   setTimeout(() => setUploadQueue([]), 1200);
   setIsUploading(false);
 }
@@ -316,70 +341,25 @@ async function uploadPhotoAndSend(params: {
   }
   
   setIsUploading(true);
-  
-  const uploaded: ChatSendFileAttachment[] = [];
+  setUploadQueue(
+    files.map((f) => ({
+      name: f.name,
+      mimeType: f.mimeType,
+      size: f.size,
+      status: 'uploading' as const,
+    })),
+  );
 
-  for (const f of files) {
-    console.log('[chatAttachmentHelpers] Uploading file:', f.name);
-    setUploadQueue((q) => [...q, { name: f.name, mimeType: f.mimeType, size: f.size, status: 'uploading' }]);
-    
-    try {
-      console.log('[chatAttachmentHelpers] Getting presigned URL for:', f.name);
-      const uploadedFile = await uploadChatFileViaPresign({
-        fileUri: f.uri,
-        filename: f.name,
-        mimeType: f.mimeType,
-        accessToken: token,
-      });
-      console.log('[chatAttachmentHelpers] File uploaded successfully, URL:', uploadedFile.fileUrl?.substring(0, 50) + '...');
-      
-      uploaded.push({
-        fileUrl: uploadedFile.fileUrl,
-        fileName: uploadedFile.fileName,
-        fileSize: uploadedFile.fileSize || f.size || 0,
-      });
-      console.log('[chatAttachmentHelpers] File staged for send');
-      
-      setUploadQueue((q) => {
-        const idx = q.findIndex((x) => x.name === f.name && x.status === 'uploading');
-        if (idx === -1) return q;
-        const copy = [...q];
-        copy[idx] = { ...copy[idx], status: 'done' };
-        return copy;
-      });
-    } catch (error) {
-      console.error('[chatAttachmentHelpers] Error uploading file:', f.name, error);
-      if (error instanceof Error) {
-        console.error('[chatAttachmentHelpers] Error message:', error.message);
-        console.error('[chatAttachmentHelpers] Error stack:', error.stack);
-      }
-      
-      setUploadQueue((q) => {
-        const idx = q.findIndex((x) => x.name === f.name && x.status === 'uploading');
-        if (idx === -1) return q;
-        const copy = [...q];
-        copy[idx] = { ...copy[idx], status: 'error' };
-        return copy;
-      });
-      
-      Alert.alert('Upload failed', `Failed to upload ${f.name}. Please try again.`);
-    }
-  }
-
-  if (uploaded.length >= 2) {
-    console.log('[chatAttachmentHelpers] Sending one message with', uploaded.length, 'attachments');
-    await sendMessage('', undefined, undefined, uploaded);
-  } else if (uploaded.length === 1) {
-    const one = uploaded[0];
-    console.log('[chatAttachmentHelpers] Sending message with file attachment');
-    await sendMessage('', {
-      fileUrl: one.fileUrl,
-      fileName: one.fileName,
-      fileSize: one.fileSize ?? 0,
+  try {
+    const uploaded = await uploadAttachmentFiles(files, (index, status) => {
+      setUploadQueue((q) => q.map((item, i) => (i === index ? { ...item, status } : item)));
     });
-    console.log('[chatAttachmentHelpers] Message sent successfully');
+    await sendUploadedAttachments(uploaded, sendMessage);
+  } catch (error) {
+    console.error('[chatAttachmentHelpers] Batch upload failed:', error);
+    Alert.alert('Upload failed', 'Failed to upload one or more files. Please try again.');
   }
-  
+
   setTimeout(() => setUploadQueue([]), 1200);
   setIsUploading(false);
   console.log('[chatAttachmentHelpers] uploadPhotoAndSend completed');
