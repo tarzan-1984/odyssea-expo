@@ -39,6 +39,12 @@ import { toTmsLocationCode } from '@/utils/tmsLocationCode';
 import { englishCountryLabel } from '@/utils/geocodeLocale';
 import { toBackendStateDisplayName } from '@/utils/stateDisplayName';
 import {
+  DEFAULT_GEOCODE_COUNTRY,
+  ZIP_COUNTRY_STORAGE_KEY,
+  type GeocodeCountryCode,
+  parseGeocodeCountryCode,
+} from '@/utils/geocodeCountry';
+import {
   startBackgroundLocationTracking,
   stopBackgroundLocationTracking,
 } from '@/utils/backgroundLocationTracking';
@@ -68,6 +74,11 @@ function isInactiveDriverSelfServiceStatus(status: StatusValue): boolean {
     status === 'on_vocation' ||
     status === 'banned'
   );
+}
+
+/** ZIP field hidden — server resolves zip/city/state from GPS when status is Available. */
+function hidesZipField(status: StatusValue): boolean {
+  return status === 'available' || isInactiveDriverSelfServiceStatus(status);
 }
 
 /** No live map tiles — static illustration + blur overlay. */
@@ -149,6 +160,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
   const isInitialLoadRef = useRef(true); // Track if this is the first load
   const isUpdatingLocationSharingRef = useRef(false); // Prevent infinite loops when updating location sharing
   const [zip, setZipState] = useState('');
+  const [zipCountry, setZipCountryState] = useState<GeocodeCountryCode>(DEFAULT_GEOCODE_COUNTRY);
   
   // Wrapper function to set ZIP and save to AsyncStorage
   const setZip = useCallback(async (newZip: string) => {
@@ -162,6 +174,15 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         error: error instanceof Error ? error.message : String(error),
         zip: newZip,
       });
+    }
+  }, []);
+
+  const setZipCountry = useCallback(async (country: GeocodeCountryCode) => {
+    setZipCountryState(country);
+    try {
+      await AsyncStorage.setItem(ZIP_COUNTRY_STORAGE_KEY, country);
+    } catch (error) {
+      console.error('[FinalVerify] Failed to save ZIP country to AsyncStorage:', error);
     }
   }, []);
   
@@ -267,11 +288,11 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
     return parts.join(' ');
   }, []);
 
-  const geocodeZipAndFillLocation = useCallback(async (zipValue: string) => {
+  const geocodeZipAndFillLocation = useCallback(async (zipValue: string, country: GeocodeCountryCode = zipCountry) => {
     const trimmed = zipValue.trim();
     if (!trimmed) return;
     try {
-      const addr = await geocodeZipToAddress(trimmed, 'us');
+      const addr = await geocodeZipToAddress(trimmed, country);
       if (addr && (addr.city || addr.state)) {
         setFormCity(addr.city || '');
         setFormState(addr.state || '');
@@ -282,7 +303,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
     } catch {
       // Silently ignore geocoding errors
     }
-  }, []);
+  }, [zipCountry]);
 
   // Auto-manage automatic location sharing based on driver status transition
   const updateLocationSharingBasedOnStatus = useCallback(async (driverStatus: StatusValue, previousStatus: StatusValue | null) => {
@@ -460,6 +481,10 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         
         // Load zip: from AsyncStorage first; if empty (first login), use user from authState and persist
         const savedZip = await AsyncStorage.getItem('@user_zip');
+        const savedZipCountry = await AsyncStorage.getItem(ZIP_COUNTRY_STORAGE_KEY);
+        if (savedZipCountry) {
+          setZipCountryState(parseGeocodeCountryCode(savedZipCountry));
+        }
         if (savedZip) {
           setZip(savedZip);
         } else {
@@ -629,8 +654,8 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         setUserLocation({ latitude, longitude });
       }
 
-      // Don't auto-fill ZIP only for available_on (user sets manually). For available/loaded_enroute: show last ZIP, allow auto-update
-      const skipZipRestore = status === 'available_on';
+      // Don't auto-fill ZIP for available_on (manual) or available (server geocode on submit).
+      const skipZipRestore = status === 'available_on' || status === 'available';
       const skipDueToShare = zipJustSetFromShareRef.current;
       const skipDueToStatusSelectClear = zipClearedByStatusSelectRef.current;
       if (!skipZipRestore && !skipDueToShare && !skipDueToStatusSelectClear && authState.userZipCode && authState.userZipCode !== zip) {
@@ -711,7 +736,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           }
           setUserLocation({ latitude: nextLat, longitude: nextLng });
           // Don't auto-fill ZIP only for available_on (user sets manually). For available/loaded_enroute: show last ZIP, allow auto-update
-          const skipZipRestore = status === 'available_on';
+          const skipZipRestore = status === 'available_on' || status === 'available';
           const skipDueToShare = zipJustSetFromShareRef.current;
           const skipDueToStatusSelectClear = zipClearedByStatusSelectRef.current;
           if (zipCode && !skipZipRestore && !skipDueToShare && !skipDueToStatusSelectClear) {
@@ -881,6 +906,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         return;
       }
       const isNotAvailable = isInactiveDriverSelfServiceStatus(status);
+      const isAvailable = status === 'available';
       const useCurrentDateTime = status === 'available' || status === 'loaded_enroute';
       let zipToSend = zip;
       let dateToSend = date;
@@ -891,7 +917,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       } else if (useCurrentDateTime) {
         // available, loaded_enroute - use current date/time (date field is hidden)
         dateToSend = formatDateWithTime(new Date());
-        if (!zip || zip.trim() === '') {
+        if (status === 'loaded_enroute' && (!zip || zip.trim() === '')) {
           postDriverBanner('ZIP code is required');
           setTimeout(() => postDriverBanner(null), 3000);
           return;
@@ -927,7 +953,9 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       // available_on: always use coordinates + address from the entered ZIP (Nominatim), not current GPS/cached city
       if (status === 'available_on' && zipToSend?.trim()) {
         try {
-          const geoResult = await geocodeWithPostalAsync(zipToSend.trim(), 'us');
+          const savedZipCountry = await AsyncStorage.getItem(ZIP_COUNTRY_STORAGE_KEY);
+          const countryForGeocode = parseGeocodeCountryCode(savedZipCountry ?? zipCountry);
+          const geoResult = await geocodeWithPostalAsync(zipToSend.trim(), countryForGeocode);
           if (!geoResult) {
             postDriverBanner('Failed to determine location from ZIP code');
             setTimeout(() => postDriverBanner(null), 3000);
@@ -951,6 +979,56 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         }
       }
 
+      // Available: fresh GPS fix — backend geocodes zip/city/state from coordinates.
+      if (isAvailable) {
+        try {
+          if (hasLocationPermission === null || hasLocationPermission === false) {
+            const { status: permStatus } = await Location.requestForegroundPermissionsAsync();
+            const granted = permStatus === 'granted';
+            setHasLocationPermission(granted);
+            if (!granted) {
+              postDriverBanner('Location permission is required to update status.');
+              setTimeout(() => postDriverBanner(null), 3000);
+              return;
+            }
+          }
+          const isLocationEnabled = await Location.hasServicesEnabledAsync();
+          if (!isLocationEnabled) {
+            postDriverBanner('Please enable location services and try again.');
+            setTimeout(() => postDriverBanner(null), 3000);
+            return;
+          }
+          const pos = await getBestCurrentPositionAsync();
+          console.log(
+            `[DriverContent] Status update (available) GPS: ${formatGpsAccuracyLog(pos.coords)}`,
+          );
+          currentLocation = {
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+          };
+          setUserLocation(currentLocation);
+          setIsLocationReady(true);
+          mapRef.current?.animateToRegion(
+            {
+              latitude: pos.coords.latitude,
+              longitude: pos.coords.longitude,
+              latitudeDelta: 0.008,
+              longitudeDelta: 0.008,
+            },
+            1000,
+          );
+        } catch (locationError: unknown) {
+          const errMsg =
+            locationError instanceof Error ? locationError.message : String(locationError);
+          fileLogger.error('DriverContent', 'Failed to get GPS for available status', {
+            error: errMsg,
+          });
+          postDriverBanner('Failed to get your location. Please try again.');
+          setTimeout(() => postDriverBanner(null), 4000);
+          return;
+        }
+      }
+
       if (!currentLocation) {
         postDriverBanner('Location data is required. Please share your location first.');
         setTimeout(() => postDriverBanner(null), 3000);
@@ -960,7 +1038,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       const previousStatus = previousStatusRef.current;
 
       const statusUpdatePayload = {
-        zip: zipToSend,
+        ...(isAvailable ? {} : { zip: zipToSend }),
         latitude: currentLocation.latitude,
         longitude: currentLocation.longitude,
         lastUpdateIso: getLocalIsoString(),
@@ -991,6 +1069,14 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         if (resolved?.city && resolved?.state) {
           locationLineForApi = `${resolved.city}, ${resolved.state}${zipForLine ? ` ${zipForLine}` : ''}`.trim();
           setFormLocation(locationLineForApi);
+          setLocationLabel(locationLineForApi);
+        }
+        if (isAvailable && resolved) {
+          await persistResolvedUserLocationToCache({
+            latitude: currentLocation.latitude,
+            longitude: currentLocation.longitude,
+            resolved,
+          });
         }
         if (syncResult.tmsSyncFailed) {
           console.warn('[DriverContent] Location/status saved; TMS sync failed:', syncResult.tmsError);
@@ -999,10 +1085,12 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           });
         }
         await recordSuccessfulLocationApiSend();
+        const zipToPersist = isAvailable ? (resolved?.zip || '') : zipToSend;
         await AsyncStorage.multiSet([
           ['@user_status', status],
-          ['@user_zip', zipToSend],
+          ['@user_zip', zipToPersist],
           ['@user_date', dateToSend],
+          [ZIP_COUNTRY_STORAGE_KEY, zipCountry],
         ]);
         setDriverStatusFromStorage(status);
         previousStatusRef.current = status;
@@ -1010,7 +1098,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         await updateUserLocation(
           currentLocation.latitude,
           currentLocation.longitude,
-          zipToSend
+          zipToPersist
         );
         postDriverBanner('Successful status update');
         setTimeout(() => {
@@ -1167,7 +1255,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         const locStr = buildLocationDisplayLabel({
           city,
           state: stateDisplayForApi,
-          zip: postalCode || undefined,
+          zip: status === 'available' ? undefined : postalCode || undefined,
         });
         if (locStr) {
           setFormLocation(locStr);
@@ -1182,22 +1270,24 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           }
         }
 
-        if (postalCode) {
-          zipJustSetFromShareRef.current = true;
-          setZip(postalCode);
-          setTimeout(() => {
-            zipJustSetFromShareRef.current = false;
-          }, 6000);
-        } else if (city || stateDisplayForApi) {
-          // Drop stale ZIP from another country (e.g. Peru) when server sent new city/state only.
-          zipJustSetFromShareRef.current = true;
-          await setZip('');
-          setTimeout(() => {
-            zipJustSetFromShareRef.current = false;
-          }, 6000);
+        if (status !== 'available') {
+          if (postalCode) {
+            zipJustSetFromShareRef.current = true;
+            setZip(postalCode);
+            setTimeout(() => {
+              zipJustSetFromShareRef.current = false;
+            }, 6000);
+          } else if (city || stateDisplayForApi) {
+            // Drop stale ZIP from another country (e.g. Peru) when server sent new city/state only.
+            zipJustSetFromShareRef.current = true;
+            await setZip('');
+            setTimeout(() => {
+              zipJustSetFromShareRef.current = false;
+            }, 6000);
+          }
         }
 
-        await updateUserLocation(latitude, longitude, postalCode || '');
+        await updateUserLocation(latitude, longitude, status === 'available' ? '' : postalCode || '');
 
         if (shareSync.tmsSyncFailed) {
           console.warn('[DriverContent] Share: saved; TMS failed:', shareSync.tmsError);
@@ -1216,7 +1306,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         });
       }
 
-      if (postalCode) {
+      if (status === 'available' || postalCode) {
         postDriverBanner('Location obtained successfully');
         setTimeout(() => {
           postDriverBanner(null);
@@ -1407,7 +1497,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           const resolved = toggleSync.resolved;
           if (resolved?.zip) {
             currentZipCode = resolved.zip;
-            if (status !== 'available_on') {
+            if (status !== 'available_on' && status !== 'available') {
               await setZip(resolved.zip);
             }
           }
@@ -1625,18 +1715,18 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
                 <StatusSelect value={status} onChange={handleStatusChange} disabled={isStatusDisabled} />
           </View>
           
-          {/* ZIP - hidden when not available; when available_on: tappable; otherwise read-only */}
+          {/* ZIP - hidden for Available (server geocode) and inactive statuses; tappable for available_on */}
               <View
                 style={[
                   styles.settingsWrap,
-                  isInactiveDriverSelfServiceStatus(status) && {
+                  hidesZipField(status) && {
                     opacity: 0,
                     height: 0,
                     marginBottom: 0,
                     overflow: 'hidden',
                   },
                 ]}
-                pointerEvents={isInactiveDriverSelfServiceStatus(status) ? 'none' : 'auto'}
+                pointerEvents={hidesZipField(status) ? 'none' : 'auto'}
               >
                 <Text style={styles.settingsLabel}>ZIP</Text>
                 {status === 'available_on' ? (
@@ -1720,11 +1810,13 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       <ZipEditPopup
         visible={editPopupField === 'zip'}
         initialValue={zip}
+        initialCountry={zipCountry}
         onClose={() => setEditPopupField(null)}
-        onSet={(value) => {
+        onSet={(value, country) => {
           setZip(value);
+          setZipCountry(country);
           setEditPopupField(null);
-          geocodeZipAndFillLocation(value);
+          geocodeZipAndFillLocation(value, country);
         }}
       />
 

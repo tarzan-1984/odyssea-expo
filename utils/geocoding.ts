@@ -9,6 +9,7 @@ import {
   isLatinGeocodeText,
   sanitizeLatinGeocodeField,
 } from '@/utils/geocodeLocale';
+import type { GeocodeCountryCode } from '@/utils/geocodeCountry';
 import { toBackendStateDisplayName } from '@/utils/stateDisplayName';
 
 const NOMINATIM_ACCEPT_LANGUAGE = 'en-US,en;q=0.9';
@@ -479,7 +480,10 @@ export interface GeocodeResult {
 /**
  * Geocode address or ZIP to coordinates using Nominatim search API
  */
-export async function geocodeAsync(query: string, countryCode: 'us' | 'ca' = 'us'): Promise<{ latitude: number; longitude: number } | null> {
+export async function geocodeAsync(
+  query: string,
+  countryCode: GeocodeCountryCode = 'us',
+): Promise<{ latitude: number; longitude: number } | null> {
   const result = await geocodeWithPostalAsync(query, countryCode);
   return result ? { latitude: result.latitude, longitude: result.longitude } : null;
 }
@@ -488,7 +492,10 @@ export async function geocodeAsync(query: string, countryCode: 'us' | 'ca' = 'us
  * Geocode address or ZIP to coordinates and return postal code when available.
  * Uses addressdetails=1; if search doesn't return postcode, falls back to reverse geocode.
  */
-export async function geocodeWithPostalAsync(query: string, countryCode: 'us' | 'ca' = 'us'): Promise<GeocodeResult | null> {
+export async function geocodeWithPostalAsync(
+  query: string,
+  countryCode: GeocodeCountryCode = 'us',
+): Promise<GeocodeResult | null> {
   try {
     const trimmed = query.trim();
     if (!trimmed) return null;
@@ -563,7 +570,7 @@ export async function geocodeWithPostalAsync(query: string, countryCode: 'us' | 
  */
 export async function geocodeZipToAddress(
   zipOrAddress: string,
-  countryCode: 'us' | 'ca' = 'us'
+  countryCode: GeocodeCountryCode = 'us',
 ): Promise<{ city: string; state: string } | null> {
   const coords = await geocodeWithPostalAsync(zipOrAddress.trim(), countryCode);
   if (!coords) return null;

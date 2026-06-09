@@ -38,15 +38,35 @@ export type GooglePlayListing = {
   marketUrl: string;
 };
 
-/**
- * Fetches the public App Store listing for the bundle id (TestFlight builds are not returned here).
- */
-export async function fetchAppStoreListing(bundleId: string): Promise<AppStoreListing | null> {
-  if (Platform.OS !== 'ios' || !bundleId) {
-    return null;
+/** ISO 3166-1 alpha-2 storefront country derived from the device locale (e.g. ua, de, us). */
+export function getDeviceStoreCountryCode(): string {
+  try {
+    const localeTag = Intl.DateTimeFormat().resolvedOptions().locale ?? '';
+
+    if (typeof Intl.Locale === 'function' && localeTag) {
+      const region = new Intl.Locale(localeTag).region;
+      if (region && /^[a-zA-Z]{2}$/u.test(region)) {
+        return region.toLowerCase();
+      }
+    }
+
+    const match = /[-_](?<region>[a-zA-Z]{2})\b/u.exec(localeTag);
+    if (match?.groups?.region) {
+      return match.groups.region.toLowerCase();
+    }
+  } catch {
+    // Fall back below when locale cannot be resolved.
   }
 
-  const url = `https://itunes.apple.com/lookup?bundleId=${encodeURIComponent(bundleId)}`;
+  return 'us';
+}
+
+async function fetchItunesLookup(
+  bundleId: string,
+  country: string,
+): Promise<AppStoreListing | null> {
+  // country is required — lookup without it can return a stale marketing version.
+  const url = `https://itunes.apple.com/lookup?bundleId=${encodeURIComponent(bundleId)}&country=${encodeURIComponent(country)}`;
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), LOOKUP_TIMEOUT_MS);
@@ -75,6 +95,28 @@ export async function fetchAppStoreListing(bundleId: string): Promise<AppStoreLi
   }
 }
 
+/**
+ * Fetches the public App Store listing for the bundle id (TestFlight builds are not returned here).
+ */
+export async function fetchAppStoreListing(bundleId: string): Promise<AppStoreListing | null> {
+  if (Platform.OS !== 'ios' || !bundleId) {
+    return null;
+  }
+
+  const deviceCountry = getDeviceStoreCountryCode();
+  const countriesToTry =
+    deviceCountry === 'us' ? ['us'] : [deviceCountry, 'us'];
+
+  for (const country of countriesToTry) {
+    const listing = await fetchItunesLookup(bundleId, country);
+    if (listing) {
+      return listing;
+    }
+  }
+
+  return null;
+}
+
 function decodeHtmlEntities(value: string): string {
   return value
     .replace(/&amp;/g, '&')
@@ -85,19 +127,37 @@ function decodeHtmlEntities(value: string): string {
     .trim();
 }
 
+function isValidAppVersion(version: string): boolean {
+  return /^\d+(?:\.\d+)+(?:[-\w.]*)?$/u.test(version);
+}
+
 function extractGooglePlayVersion(html: string): string | null {
   const patterns = [
+    // Google Play embeds the current version in AF_initDataCallback ds:5 (field id 141).
+    /"141"\s*:\s*\[\[\["(\d+(?:\.\d+)+(?:[-\w.]*)?)"\]\]/u,
     /"softwareVersion"\s*:\s*"([^"]+)"/u,
     /Current Version[\s\S]{0,800}?>(\d+(?:\.\d+)+(?:[-\w.]*)?)</iu,
     /Version[\s\S]{0,800}?>(\d+(?:\.\d+)+(?:[-\w.]*)?)</iu,
+    // Triple-nested array form used in Play Store payloads.
+    /\[\[\["(\d+(?:\.\d+)+(?:[-\w.]*)?)"\]\]/u,
   ];
 
   for (const pattern of patterns) {
     const match = pattern.exec(html);
     const version = match?.[1] ? decodeHtmlEntities(match[1]) : '';
-    if (/^\d+(?:\.\d+)+(?:[-\w.]*)?$/u.test(version)) {
+    if (isValidAppVersion(version)) {
       return version;
     }
+  }
+
+  // Last resort: app detail pages usually expose exactly one marketing semver.
+  const quotedVersions = [
+    ...new Set(
+      [...html.matchAll(/"(\d+\.\d+\.\d+)"/gu)].map((match) => match[1]),
+    ),
+  ];
+  if (quotedVersions.length === 1 && isValidAppVersion(quotedVersions[0])) {
+    return quotedVersions[0];
   }
 
   return null;
@@ -113,7 +173,8 @@ export async function fetchGooglePlayListing(packageId: string): Promise<GoogleP
     return null;
   }
 
-  const webUrl = `https://play.google.com/store/apps/details?id=${encodeURIComponent(packageId)}&hl=en&gl=US`;
+  const storeCountry = getDeviceStoreCountryCode().toUpperCase();
+  const webUrl = `https://play.google.com/store/apps/details?id=${encodeURIComponent(packageId)}&hl=en&gl=${encodeURIComponent(storeCountry)}`;
   const marketUrl = `market://details?id=${encodeURIComponent(packageId)}`;
 
   const controller = new AbortController();
@@ -125,6 +186,8 @@ export async function fetchGooglePlayListing(packageId: string): Promise<GoogleP
       headers: {
         Accept: 'text/html,application/xhtml+xml,application/xml',
         'Accept-Language': 'en-US,en;q=0.9',
+        'User-Agent':
+          'Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
       },
     });
     if (!res.ok) {
