@@ -16,6 +16,7 @@ import {
   getLoadChatDispatcherAvatarBg,
   getLoadChatDispatcherInitials,
 } from '@/utils/loadChatAvatar';
+import { formatChatRelativeTimeNy } from '@/utils/nyWallClock';
 
 // Types for chat data
 export interface User {
@@ -425,36 +426,11 @@ export default function ChatListItem({
     return stripMarkdown(chatRoom.lastMessage.content);
   };
 
-  // Format timestamp
   const formatTimestamp = (): string => {
     if (!chatRoom.lastMessage) {
       return '';
     }
-    
-    const messageTime = new Date(chatRoom.lastMessage.createdAt);
-    const now = new Date();
-    const diffInMinutes = Math.floor((now.getTime() - messageTime.getTime()) / (1000 * 60));
-    
-    if (diffInMinutes < 1) return 'Just now';
-    if (diffInMinutes < 60) return `${diffInMinutes}m`;
-    if (diffInMinutes < 1440) {
-      const hours = Math.floor(diffInMinutes / 60);
-      return `${hours}h`;
-    }
-    
-    // Format date
-    const isToday = messageTime.toDateString() === now.toDateString();
-    const isYesterday = new Date(now.getTime() - 86400000).toDateString() === messageTime.toDateString();
-    
-    if (isToday) {
-      return messageTime.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
-    }
-    
-    if (isYesterday) {
-      return 'YESTERDAY';
-    }
-    
-    return messageTime.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' });
+    return formatChatRelativeTimeNy(chatRoom.lastMessage.createdAt);
   };
 
   const displayName = getDisplayName();

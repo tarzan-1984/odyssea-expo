@@ -24,6 +24,10 @@ import {
 } from '@/utils/chatAvatarUtils';
 import ChatInfoModal from '@/components/modals/ChatInfoModal';
 import MessageTemplatesModal from '@/components/modals/MessageTemplatesModal';
+import {
+  formatNyWallClockDateSeparator,
+  nyWallClockDateKey,
+} from '@/utils/nyWallClock';
 
 /**
  * Chat Room Screen
@@ -122,39 +126,15 @@ export default function ChatRoomScreen() {
     return 'Unknown Chat';
   };
 
-  // Format date for date separator
-  const formatDate = (timestamp: string): string => {
-    const date = new Date(timestamp);
-    const today = new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(yesterday.getDate() - 1);
+  const formatDate = (timestamp: string): string =>
+    formatNyWallClockDateSeparator(timestamp);
 
-    // Check if same day
-    if (date.toDateString() === today.toDateString()) {
-      return 'Today';
-    }
-
-    // Check if yesterday
-    if (date.toDateString() === yesterday.toDateString()) {
-      return 'Yesterday';
-    }
-
-    // Format as "DD MMM YYYY"
-    return date.toLocaleDateString('en-US', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric',
-    });
-  };
-
-  // Check if date has changed between messages
   const shouldShowDateSeparator = (currentMessage: Message, previousMessage?: Message): boolean => {
     if (!previousMessage) return true;
-    
-    const currentDate = new Date(currentMessage.createdAt).toDateString();
-    const previousDate = new Date(previousMessage.createdAt).toDateString();
-    
-    return currentDate !== previousDate;
+    return (
+      nyWallClockDateKey(currentMessage.createdAt) !==
+      nyWallClockDateKey(previousMessage.createdAt)
+    );
   };
 
   // Group messages with date separators

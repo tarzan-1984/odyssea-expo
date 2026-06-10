@@ -13,6 +13,7 @@ import { getIncomingMessageMeta } from '@/utils/chatMessageMeta';
 import MessageReactions, { MessageReactionAnchor, MessageReactionPicker } from '@/components/MessageReactions';
 import { Message } from '@/components/ChatListItem';
 import { getMessageMultiAttachments } from '@/utils/messageAttachments';
+import { formatNyWallClockTime } from '@/utils/nyWallClock';
 
 type Props = {
 	message: Message;
@@ -29,15 +30,6 @@ export default function MessageItem({ message, isSender, chatType, currentUserRo
 	const [reactionPickerOpen, setReactionPickerOpen] = useState(false);
 	const [reactionPickerAnchor, setReactionPickerAnchor] = useState<MessageReactionAnchor | null>(null);
 
-	const formatTime = (timestamp: string): string => {
-		const date = new Date(timestamp);
-		return date.toLocaleTimeString('en-US', {
-			hour: '2-digit',
-			minute: '2-digit',
-			hour12: true,
-		});
-	};
-	
 	const formatRoleText = (role: string): string => {
 		const normalizedRole = role
 			.trim()
@@ -180,7 +172,7 @@ export default function MessageItem({ message, isSender, chatType, currentUserRo
 						)}
 					</View>
 					<Text style={[styles.bubbleTimeText, styles.bubbleTimeTextSender]}>
-						{formatTime(message.createdAt)}
+						{formatNyWallClockTime(message.createdAt)}
 					</Text>
 				</View>
 			) : (
@@ -200,7 +192,7 @@ export default function MessageItem({ message, isSender, chatType, currentUserRo
 						<View />
 					)}
 					<Text style={[styles.bubbleTimeText, styles.bubbleTimeTextOther, styles.bubbleTimeTextIncoming]}>
-						{formatTime(message.createdAt)}
+						{formatNyWallClockTime(message.createdAt)}
 					</Text>
 				</View>
 			)}

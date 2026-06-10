@@ -27,6 +27,7 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
 	const isDriver = userRole === 'DRIVER';
 	const [locationAlways, setLocationAlways] = useState(false);
 	const [notificationsAllowed, setNotificationsAllowed] = useState(false);
+	const [notificationStatus, setNotificationStatus] = useState<"granted" | "denied" | "undetermined">("undetermined");
   const [gpsEnabled, setGpsEnabled] = useState<boolean>(false);
 	const [autoStartEnabled, setAutoStartEnabled] = useState(false);
 	const [batterySettings, setOpenBatterySettings] = useState(false);
@@ -100,6 +101,7 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
 		// Check notifications - for all users
 		const notif = await Notifications.getPermissionsAsync();
 		setNotificationsAllowed(notif.granted);
+		setNotificationStatus(notif.status as "granted" | "denied" | "undetermined");
 	}, [authState.user?.role]);
 	
 	const requestLocation = async () => {
@@ -145,8 +147,24 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
 	};
 	
 	const requestNotifications = async () => {
-		await Notifications.requestPermissionsAsync();
-		checkPermissions();
+		try {
+			const notif = await Notifications.getPermissionsAsync();
+
+			if (notif.status === "undetermined") {
+				await Notifications.requestPermissionsAsync();
+			} else if (!notif.granted) {
+				await Linking.openSettings();
+			}
+
+			checkPermissions();
+		} catch (error) {
+			console.error("[PermissionsAssistant] Failed to request notifications:", error);
+			try {
+				await Linking.openSettings();
+			} catch (fallbackError) {
+				console.error("[PermissionsAssistant] Failed to open settings:", fallbackError);
+			}
+		}
 	};
 	
 	const gotoGpsSettings = async () => {
@@ -363,7 +381,11 @@ export default function PermissionsAssistant({ onComplete }: { onComplete: () =>
         >
           <Text style={styles.label}>Allow notifications</Text>
           <Text style={styles.status}>
-            {notificationsAllowed ? "✓ Allowed" : "Click to allow"}
+            {notificationsAllowed
+              ? "✓ Allowed"
+              : notificationStatus === "undetermined"
+                ? "Click to allow"
+                : "Open Settings"}
           </Text>
         </TouchableOpacity>
         

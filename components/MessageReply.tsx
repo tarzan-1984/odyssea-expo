@@ -3,6 +3,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import { colors, fonts, fp, rem } from '@/lib';
 import { Message } from '@/components/ChatListItem';
 import { stripMarkdown } from '@/utils/chatMarkdown';
+import { formatNyWallClockTime } from '@/utils/nyWallClock';
 
 interface MessageReplyProps {
   replyData: Message['replyData'];
@@ -11,15 +12,6 @@ interface MessageReplyProps {
 
 export default function MessageReply({ replyData, isSender }: MessageReplyProps) {
   if (!replyData) return null;
-
-  const formatTime = (timeString: string) => {
-    const date = new Date(timeString);
-    return date.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
-    });
-  };
 
   const plain = stripMarkdown(replyData.content);
   const truncatedContent =
@@ -33,7 +25,7 @@ export default function MessageReply({ replyData, isSender }: MessageReplyProps)
           {replyData.senderName}
         </Text>
         <Text style={[styles.time, isSender && styles.timeSender]}>
-          {formatTime(replyData.time)}
+          {formatNyWallClockTime(replyData.time)}
         </Text>
       </View>
       <Text

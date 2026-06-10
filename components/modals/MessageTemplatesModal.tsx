@@ -307,8 +307,14 @@ export default function MessageTemplatesModal({
   return (
     <>
       <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
-        <Pressable style={styles.overlay} onPress={editorOpen ? Keyboard.dismiss : onClose}>
-          <Pressable style={styles.modalCard} onPress={() => {}}>
+        <View style={styles.modalRoot}>
+          <Pressable
+            style={styles.backdrop}
+            onPress={editorOpen ? Keyboard.dismiss : onClose}
+            accessibilityRole="button"
+          />
+          <View style={styles.sheetWrap} pointerEvents="box-none">
+            <View style={styles.modalCard}>
             {editorOpen ? (
               <KeyboardAvoidingView
                 behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -460,14 +466,20 @@ export default function MessageTemplatesModal({
                 ) : null}
 
                 {loading ? (
-                  <View style={styles.centerState}>
-                    <ActivityIndicator color={colors.primary.violet} />
+                  <View style={styles.list}>
+                    <View style={styles.centerState}>
+                      <ActivityIndicator color={colors.primary.violet} />
+                    </View>
                   </View>
                 ) : (
                   <FlatList
+                    style={styles.list}
                     data={items}
                     keyExtractor={item => `${item.id}-${item.updatedAt}`}
                     renderItem={renderTemplate}
+                    nestedScrollEnabled
+                    keyboardShouldPersistTaps="handled"
+                    showsVerticalScrollIndicator
                     contentContainerStyle={items.length === 0 ? styles.emptyList : undefined}
                     ListEmptyComponent={<Text style={styles.emptyText}>No templates yet.</Text>}
                     onEndReached={() => {
@@ -480,27 +492,37 @@ export default function MessageTemplatesModal({
                 )}
               </>
             )}
-          </Pressable>
-        </Pressable>
+            </View>
+          </View>
+        </View>
       </Modal>
     </>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: {
+  modalRoot: {
     flex: 1,
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0, 0, 0, 0.28)',
-    alignItems: 'center',
+  },
+  sheetWrap: {
+    flex: 1,
     justifyContent: 'center',
     paddingHorizontal: rem(16),
   },
   modalCard: {
     width: '100%',
+    height: '86%',
     maxHeight: '86%',
     backgroundColor: colors.neutral.white,
     borderRadius: rem(20),
     overflow: 'hidden',
+  },
+  list: {
+    flex: 1,
   },
   editorBody: {
     paddingBottom: rem(28),
