@@ -1,5 +1,17 @@
 import { Stack } from 'expo-router';
 import React from 'react';
+import { Platform } from 'react-native';
+
+const hiddenStackHeaderOptions = {
+  headerShown: false,
+  headerTitle: '',
+  headerBackTitle: '',
+  headerBackTitleVisible: false,
+  headerBackVisible: false,
+  ...(Platform.OS === 'ios'
+    ? { headerBackButtonDisplayMode: 'minimal' as const }
+    : {}),
+};
 
 /**
  * Tabs Layout
@@ -7,13 +19,5 @@ import React from 'react';
  * Uses a hidden Stack so every screen keeps its custom header only.
  */
 export default function TabsLayout() {
-  return (
-    <Stack
-      screenOptions={{
-        headerShown: false,
-        headerBackTitleVisible: false,
-        headerTitle: '',
-      }}
-    />
-  );
+  return <Stack screenOptions={hiddenStackHeaderOptions} />;
 }

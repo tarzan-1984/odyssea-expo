@@ -513,6 +513,13 @@ function RootLayoutNav() {
         <Stack
           screenOptions={{
             headerShown: false,
+            headerTitle: '',
+            headerBackTitle: '',
+            headerBackTitleVisible: false,
+            headerBackVisible: false,
+            ...(Platform.OS === 'ios'
+              ? { headerBackButtonDisplayMode: 'minimal' as const }
+              : {}),
           }}
         >
           <Stack.Screen name="(auth)" />
