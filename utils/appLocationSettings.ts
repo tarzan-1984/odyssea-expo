@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL } from '@/lib/config';
 import { fileLogger } from '@/utils/fileLogger';
-import { eventBus } from '@/services/EventBus';
+import { eventBus, AppEvents } from '@/services/EventBus';
 
 /** Defaults aligned with `locationSendThrottle.ts` (used when API/storage not yet loaded). */
 const FALLBACK_INTERVAL_MS = 60 * 1000;
@@ -180,5 +180,6 @@ export async function syncAppLocationSettingsFromBackend(
   if (changed) {
     eventBus.emit('APP_LOCATION_SETTINGS_SYNCED', remote);
   }
+  eventBus.emit(AppEvents.AppUpdateCheckRequested, remote);
   return changed;
 }

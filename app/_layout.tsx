@@ -509,8 +509,7 @@ function RootLayoutNav() {
   return (
     <>
       <StatusBar style="light" />
-      <MandatoryIosUpdateGate>
-        <Stack
+      <Stack
           screenOptions={{
             headerShown: false,
             headerTitle: '',
@@ -549,7 +548,6 @@ function RootLayoutNav() {
               <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
             </View>
           )}
-      </MandatoryIosUpdateGate>
     </>
   );
 }
@@ -600,18 +598,20 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <QueryClientProvider client={queryClient}>
-        <AuthProvider>
-          <WebSocketProvider>
-            <OnlineStatusProvider>
-            {/* Globally ensure push token is generated/registered for logged-in users too */}
-              <PushTokenRegistrar />
-              <GlobalChatRoomsSync />
-              <RootLayoutNav />
-            </OnlineStatusProvider>
-          </WebSocketProvider>
-        </AuthProvider>
-      </QueryClientProvider>
+      <MandatoryIosUpdateGate>
+        <QueryClientProvider client={queryClient}>
+          <AuthProvider>
+            <WebSocketProvider>
+              <OnlineStatusProvider>
+              {/* Globally ensure push token is generated/registered for logged-in users too */}
+                <PushTokenRegistrar />
+                <GlobalChatRoomsSync />
+                <RootLayoutNav />
+              </OnlineStatusProvider>
+            </WebSocketProvider>
+          </AuthProvider>
+        </QueryClientProvider>
+      </MandatoryIosUpdateGate>
     </GestureHandlerRootView>
   );
 }

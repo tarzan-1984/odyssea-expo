@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 
 const LOOKUP_TIMEOUT_MS = 12_000;
 
@@ -44,7 +45,7 @@ export type DefaultStoreUrls = {
   storeName: 'App Store' | 'Google Play';
 };
 
-/** Fallback store links when only the server minimum-version gate triggers force update. */
+/** Fallback store links when the server minimum-version gate triggers force update. */
 export function getDefaultStoreUrls(applicationId: string): DefaultStoreUrls | null {
   if (!applicationId) return null;
   if (Platform.OS === 'android') {
@@ -53,6 +54,14 @@ export function getDefaultStoreUrls(applicationId: string): DefaultStoreUrls | n
       storeUrl: `market://details?id=${encodeURIComponent(applicationId)}`,
       fallbackStoreUrl: webUrl,
       storeName: 'Google Play',
+    };
+  }
+  if (Platform.OS === 'ios') {
+    const extra = Constants.expoConfig?.extra as { iosAppStoreUrl?: string } | undefined;
+    const storeUrl = extra?.iosAppStoreUrl?.trim() || 'https://apps.apple.com/app/id6756887777';
+    return {
+      storeUrl,
+      storeName: 'App Store',
     };
   }
   return null;

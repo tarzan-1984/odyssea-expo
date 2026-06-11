@@ -2,7 +2,7 @@
   "expo": {
     "name": "Odysseia App",
     "slug": "odyssea",
-    "version": "2.1.4",
+    "version": "2.1.6",
     "orientation": "portrait",
     "icon": "./assets/android-adaptive-icon.png",
     "scheme": "odyssea",
@@ -42,7 +42,7 @@
         "foregroundImage": "./assets/android-adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "versionCode": 24,
+      "versionCode": 26,
       "package": "com.odyssea.app",
       "googleServicesFile": "./google-services.json",
       "notification": {
@@ -119,6 +119,7 @@
     },
     "extra": {
       "router": {},
+      "iosAppStoreUrl": "https://apps.apple.com/app/id6756887777",
       "eas": {
         "projectId": "d95b9117-4914-4642-ae1d-a6d37a32ec26"
       }

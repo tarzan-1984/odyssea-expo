@@ -35,4 +35,6 @@ export const AppEvents = {
   DriverStatusUpdated: 'DRIVER_STATUS_UPDATED',
   /** Reload paginated archived LOAD chats when LOAD rooms change via WS/sync. */
   ArchivedLoadChatsNeedRefresh: 'ARCHIVED_LOAD_CHATS_NEED_REFRESH',
+  /** Re-run App Store / Play Store version check (after settings sync or foreground). */
+  AppUpdateCheckRequested: 'APP_UPDATE_CHECK_REQUESTED',
 } as const;

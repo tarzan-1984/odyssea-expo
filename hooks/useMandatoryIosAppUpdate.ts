@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Platform } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AppState, AppStateStatus, Platform } from 'react-native';
 import Constants from 'expo-constants';
 import * as Application from 'expo-application';
 import { ApplicationReleaseType } from 'expo-application';
@@ -10,7 +10,7 @@ import {
   getDefaultStoreUrls,
 } from '@/services/appStoreUpdate';
 import { getResolvedAppLocationSettings } from '@/utils/appLocationSettings';
-import { eventBus } from '@/services/EventBus';
+import { eventBus, AppEvents } from '@/services/EventBus';
 
 export type MandatoryIosUpdateState =
   | { phase: 'skip' }
@@ -51,6 +51,7 @@ async function resolveForceUpdateFromBackend(
     return null;
   }
 
+  // Insurance gate: minimumAppVersion from admin (Next.js app settings).
   if (Platform.OS === 'ios') {
     const listing = await fetchAppStoreListing(applicationId);
     if (listing?.trackViewUrl) {
@@ -60,7 +61,6 @@ async function resolveForceUpdateFromBackend(
         storeName: 'App Store',
       };
     }
-    return null;
   }
 
   const defaults = getDefaultStoreUrls(applicationId);
@@ -105,18 +105,27 @@ async function resolveForceUpdateFromStore(
 }
 
 /**
- * Blocks the app when the installed build is older than the public store listing
- * or the server-configured minimumAppVersion (from GET /v1/app-settings).
+ * Blocks the app when the installed build is older than:
+ * 1) the public App Store / Google Play listing, or
+ * 2) the server minimumAppVersion from GET /v1/app-settings (admin Next.js UI).
+ *
+ * Re-checks on cold start, when the app returns to active, and after settings sync.
  */
 export function useMandatoryIosAppUpdate(): MandatoryIosUpdateState {
   const [state, setState] = useState<MandatoryIosUpdateState>(() =>
     shouldSkipStoreCheck() ? { phase: 'skip' } : { phase: 'loading' },
   );
+  const hasCompletedInitialCheckRef = useRef(false);
 
   const runChecks = useCallback(async (cancelled: () => boolean) => {
     if (shouldSkipStoreCheck()) {
       if (!cancelled()) setState({ phase: 'skip' });
       return;
+    }
+
+    const isRecheck = hasCompletedInitialCheckRef.current;
+    if (!isRecheck && !cancelled()) {
+      setState({ phase: 'loading' });
     }
 
     if (Platform.OS === 'ios') {
@@ -144,6 +153,7 @@ export function useMandatoryIosAppUpdate(): MandatoryIosUpdateState {
 
     if (cancelled()) return;
 
+    hasCompletedInitialCheckRef.current = true;
     const force = backendForce ?? storeForce;
     setState(force ?? { phase: 'ok' });
   }, []);
@@ -157,15 +167,30 @@ export function useMandatoryIosAppUpdate(): MandatoryIosUpdateState {
     let cancelled = false;
     const isCancelled = () => cancelled;
 
+    // Cold start: first check as soon as the gate mounts.
     void runChecks(isCancelled);
 
-    const unsubscribe = eventBus.on('APP_LOCATION_SETTINGS_SYNCED', () => {
+    const requestRecheck = () => {
       void runChecks(isCancelled);
+    };
+
+    const unsubscribeSettings = eventBus.on('APP_LOCATION_SETTINGS_SYNCED', requestRecheck);
+    const unsubscribeUpdateCheck = eventBus.on(AppEvents.AppUpdateCheckRequested, requestRecheck);
+
+    let appState: AppStateStatus = AppState.currentState;
+    const appStateSub = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
+      // Foreground: re-check store listing and cached/server minimumAppVersion.
+      if (nextAppState === 'active' && appState.match(/inactive|background/)) {
+        requestRecheck();
+      }
+      appState = nextAppState;
     });
 
     return () => {
       cancelled = true;
-      unsubscribe();
+      unsubscribeSettings();
+      unsubscribeUpdateCheck();
+      appStateSub.remove();
     };
   }, [runChecks]);
 
