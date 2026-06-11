@@ -21,6 +21,8 @@ export type AppLocationSettingsStored = {
   locationTestDriverExternalId: string;
   /** Max active unassigned offers the driver may bid on at once (server + UI limit). */
   maxDriverOpenOfferParticipations: number;
+  /** Server minimum marketing version; empty = no server-side force-update gate. */
+  minimumAppVersion: string;
 };
 
 export const DEFAULT_APP_LOCATION_SETTINGS: AppLocationSettingsStored = {
@@ -30,6 +32,7 @@ export const DEFAULT_APP_LOCATION_SETTINGS: AppLocationSettingsStored = {
   locationEnvironmentMode: FALLBACK_ENV_MODE,
   locationTestDriverExternalId: FALLBACK_TEST_DRIVER_EXTERNAL_ID,
   maxDriverOpenOfferParticipations: FALLBACK_MAX_DRIVER_OPEN_OFFER_PARTICIPATIONS,
+  minimumAppVersion: '',
 };
 
 function clampParticipationLimit(n: number): number {
@@ -73,6 +76,8 @@ export async function getResolvedAppLocationSettings(): Promise<AppLocationSetti
       typeof p.maxDriverOpenOfferParticipations === 'number'
         ? clampParticipationLimit(p.maxDriverOpenOfferParticipations)
         : DEFAULT_APP_LOCATION_SETTINGS.maxDriverOpenOfferParticipations;
+    const minimumAppVersion =
+      typeof p.minimumAppVersion === 'string' ? p.minimumAppVersion.trim() : '';
     return {
       locationMinIntervalMs: interval,
       locationMinDistanceM: distance,
@@ -80,6 +85,7 @@ export async function getResolvedAppLocationSettings(): Promise<AppLocationSetti
       locationEnvironmentMode: envMode,
       locationTestDriverExternalId: testExtId,
       maxDriverOpenOfferParticipations: participations,
+      minimumAppVersion,
     };
   } catch {
     return { ...DEFAULT_APP_LOCATION_SETTINGS };
@@ -130,6 +136,9 @@ export async function fetchAppLocationSettingsFromBackend(
       typeof maxPartRaw === 'number'
         ? clampParticipationLimit(maxPartRaw)
         : FALLBACK_MAX_DRIVER_OPEN_OFFER_PARTICIPATIONS;
+    const minimumAppVersionRaw = body.minimumAppVersion;
+    const minimumAppVersion =
+      typeof minimumAppVersionRaw === 'string' ? minimumAppVersionRaw.trim() : '';
     return {
       locationMinIntervalMs: interval,
       locationMinDistanceM: distance,
@@ -137,6 +146,7 @@ export async function fetchAppLocationSettingsFromBackend(
       locationEnvironmentMode: envMode,
       locationTestDriverExternalId: testExtId,
       maxDriverOpenOfferParticipations,
+      minimumAppVersion,
     };
   } catch (e) {
     fileLogger.error('appLocationSettings', 'FETCH_FAILED', {
@@ -163,7 +173,8 @@ export async function syncAppLocationSettingsFromBackend(
     prev.reverseGeocodeMinDistanceM !== remote.reverseGeocodeMinDistanceM ||
     prev.locationEnvironmentMode !== remote.locationEnvironmentMode ||
     prev.locationTestDriverExternalId !== remote.locationTestDriverExternalId ||
-    prev.maxDriverOpenOfferParticipations !== remote.maxDriverOpenOfferParticipations;
+    prev.maxDriverOpenOfferParticipations !== remote.maxDriverOpenOfferParticipations ||
+    prev.minimumAppVersion !== remote.minimumAppVersion;
 
   await persistAppLocationSettingsLocally(remote);
   if (changed) {

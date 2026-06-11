@@ -13,18 +13,27 @@ import { getIncomingMessageMeta } from '@/utils/chatMessageMeta';
 import MessageReactions, { MessageReactionAnchor, MessageReactionPicker } from '@/components/MessageReactions';
 import { Message } from '@/components/ChatListItem';
 import { getMessageMultiAttachments } from '@/utils/messageAttachments';
-import { formatNyWallClockTime } from '@/utils/nyWallClock';
+import { formatNyWallClockDateTime } from '@/utils/nyWallClock';
 
 type Props = {
 	message: Message;
 	isSender: boolean;
 	chatType?: string;
 	currentUserRole?: string;
+	shouldLoadMedia?: boolean;
 	onReplyPress?: (message: Message) => void;
 	onDeletePress?: (message: Message) => void;
 };
 
-export default function MessageItem({ message, isSender, chatType, currentUserRole, onReplyPress, onDeletePress }: Props) {
+export default function MessageItem({
+	message,
+	isSender,
+	chatType,
+	currentUserRole,
+	shouldLoadMedia = true,
+	onReplyPress,
+	onDeletePress,
+}: Props) {
 	const { width: windowWidth } = useWindowDimensions();
 	const bubbleRef = useRef<View>(null);
 	const [reactionPickerOpen, setReactionPickerOpen] = useState(false);
@@ -140,6 +149,7 @@ export default function MessageItem({ message, isSender, chatType, currentUserRo
 								fileSize={item.fileSize}
 								isSender={isSender}
 								createdAt={message.createdAt}
+								shouldLoadMedia={shouldLoadMedia}
 							/>
 						</View>
 					))}
@@ -150,6 +160,7 @@ export default function MessageItem({ message, isSender, chatType, currentUserRo
 					fileName={message.fileName}
 					fileSize={message.fileSize}
 					isSender={isSender}
+					shouldLoadMedia={shouldLoadMedia}
 				/>
 			) : null}
 			{!!message.content && (
@@ -172,7 +183,7 @@ export default function MessageItem({ message, isSender, chatType, currentUserRo
 						)}
 					</View>
 					<Text style={[styles.bubbleTimeText, styles.bubbleTimeTextSender]}>
-						{formatNyWallClockTime(message.createdAt)}
+						{formatNyWallClockDateTime(message.createdAt)}
 					</Text>
 				</View>
 			) : (
@@ -192,7 +203,7 @@ export default function MessageItem({ message, isSender, chatType, currentUserRo
 						<View />
 					)}
 					<Text style={[styles.bubbleTimeText, styles.bubbleTimeTextOther, styles.bubbleTimeTextIncoming]}>
-						{formatNyWallClockTime(message.createdAt)}
+						{formatNyWallClockDateTime(message.createdAt)}
 					</Text>
 				</View>
 			)}

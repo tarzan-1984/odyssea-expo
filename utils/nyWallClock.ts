@@ -60,6 +60,25 @@ export function formatNyWallClockTime(value: string | null | undefined): string 
 	});
 }
 
+/** Format chat message date and time in New York wall-clock (e.g. Jun 10, 2026, 11:27 AM). */
+export function formatNyWallClockDateTime(value: string | null | undefined): string {
+	const date = parseNaiveNyDateTime(value);
+	if (!date) return '';
+	const datePart = date.toLocaleDateString('en-US', {
+		day: 'numeric',
+		month: 'short',
+		year: 'numeric',
+		timeZone: 'UTC',
+	});
+	const timePart = date.toLocaleTimeString('en-US', {
+		hour: '2-digit',
+		minute: '2-digit',
+		hour12: true,
+		timeZone: 'UTC',
+	});
+	return `${datePart}, ${timePart}`;
+}
+
 function nowNyWallClockDate(): Date {
 	return parseNaiveNyDateTime(formatNyWallClockSqlString(new Date()))!;
 }

@@ -1,4 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import { normalizeUploadMimeType } from '@/utils/mimeTypeUpload';
 
 const HEIC_FTYP_BRANDS = new Set([
 	'heic',
@@ -92,7 +93,7 @@ export async function ensureHeicUploadMetadata(params: {
 	if (!isHeic) {
 		return {
 			filename: params.filename,
-			mimeType: params.mimeType || 'application/octet-stream',
+			mimeType: normalizeUploadMimeType(params.filename, params.mimeType),
 		};
 	}
 

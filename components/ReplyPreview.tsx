@@ -4,7 +4,7 @@ import { colors, fonts, fp, rem } from '@/lib';
 import ClearIcon from '@/icons/ClearIcon';
 import { Message } from '@/components/ChatListItem';
 import { stripMarkdown } from '@/utils/chatMarkdown';
-import { formatNyWallClockTime } from '@/utils/nyWallClock';
+import { formatNyWallClockDateTime } from '@/utils/nyWallClock';
 
 interface ReplyPreviewProps {
   replyData: Message['replyData'];
@@ -24,7 +24,7 @@ export default function ReplyPreview({ replyData, onCancel }: ReplyPreviewProps)
         <View style={styles.header}>
           <Text style={styles.label}>Replying to</Text>
           <Text style={styles.sender}>{replyData.senderName}</Text>
-          <Text style={styles.time}>{formatNyWallClockTime(replyData.time)}</Text>
+          <Text style={styles.time}>{formatNyWallClockDateTime(replyData.time)}</Text>
         </View>
         <Text style={styles.message} numberOfLines={2}>
           {truncatedContent}

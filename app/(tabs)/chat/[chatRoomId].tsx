@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useEffect, useCallback, useState } from 'react';
-import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, KeyboardAvoidingView, Platform, Keyboard, Animated, Easing, Image, Alert } from 'react-native';
+import { View, Text, StyleSheet, FlatList, ActivityIndicator, TouchableOpacity, KeyboardAvoidingView, Platform, Keyboard, Animated, Easing, Image, Alert, type ViewToken } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { BlurView } from 'expo-blur';
 import { colors, fonts, fp, rem } from '@/lib';
@@ -14,6 +14,7 @@ import MessageItem from '@/components/MessageItem';
 import ChatHeaderDropdown from '@/components/ChatHeaderDropdown';
 import { setActiveChatRoomId } from '@/services/ActiveChatService';
 import { type FileData, type UploadQueueItem, uploadAttachmentFiles, useAttachmentPicker } from '@/utils/chatAttachmentHelpers';
+import { formatUploadErrorMessage } from '@/utils/mimeTypeUpload';
 import FilesModal from '@/components/modals/FilesModal';
 import ChatInputSection, {
   type ChatInputSectionRef,
@@ -55,6 +56,7 @@ export default function ChatRoomScreen() {
   const [pendingAttachments, setPendingAttachments] = useState<FileData[]>([]);
   const [replyingTo, setReplyingTo] = useState<Message['replyData'] | null>(null);
   const [isTemplatesModalOpen, setIsTemplatesModalOpen] = useState(false);
+  const [viewableMessageIds, setViewableMessageIds] = useState<Set<string>>(() => new Set());
   
   // Use useChatRoom hook for loading chat room and messages with caching (same logic as Next.js)
   const {
@@ -178,6 +180,65 @@ export default function ChatRoomScreen() {
     }, messages.length);
   }, [messages]);
 
+  const messagesReady = !isLoadingMessages && !isInitialFullLoad;
+  const listExtraData = `${messagesRenderVersion}:${viewableMessageIds.size}:${messagesReady ? 1 : 0}`;
+
+  type ChatListRow = { type: 'message' | 'date'; data: Message | string };
+
+  const markViewableMessageIds = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    setViewableMessageIds((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      for (const id of ids) {
+        if (!next.has(id)) {
+          next.add(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, []);
+
+  const onViewableItemsChangedRef = useRef(
+    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
+      const ids: string[] = [];
+      for (const token of viewableItems) {
+        if (!token.isViewable || !token.item) continue;
+        const row = token.item as ChatListRow;
+        if (row.type !== 'message') continue;
+        ids.push((row.data as Message).id);
+      }
+      if (ids.length === 0) return;
+      setViewableMessageIds((prev) => {
+        const next = new Set(prev);
+        let changed = false;
+        for (const id of ids) {
+          if (!next.has(id)) {
+            next.add(id);
+            changed = true;
+          }
+        }
+        return changed ? next : prev;
+      });
+    },
+  );
+
+  const viewabilityConfigCallbackPairs = useRef([
+    {
+      viewabilityConfig: {
+        itemVisiblePercentThreshold: 5,
+        minimumViewTime: 0,
+        waitForInteraction: false,
+      },
+      onViewableItemsChanged: onViewableItemsChangedRef.current,
+    },
+  ]).current;
+
+  useEffect(() => {
+    setViewableMessageIds(new Set());
+  }, [chatRoomId]);
+
   // Prepare data for FlatList (inverted list needs reversed order)
   // When using inverted FlatList, we reverse the order so newest messages appear at bottom
   // In inverted list: last item of array appears at visual bottom, first item at visual top
@@ -186,6 +247,20 @@ export default function ChatRoomScreen() {
     // The last element (newest message) will appear at visual bottom
     return [...messagesWithSeparators].reverse();
   }, [messagesWithSeparators]);
+
+  // Inverted FlatList often skips the first onViewableItemsChanged — seed the initial viewport.
+  useEffect(() => {
+    if (!messagesReady || flatListData.length === 0) return;
+
+    const initialIds: string[] = [];
+    for (let i = 0; i < Math.min(18, flatListData.length); i++) {
+      const row = flatListData[i] as ChatListRow;
+      if (row.type === 'message') {
+        initialIds.push((row.data as Message).id);
+      }
+    }
+    markViewableMessageIds(initialIds);
+  }, [messagesReady, flatListData, markViewableMessageIds]);
 
   // Ref for FlatList to enable scrolling
   const flatListRef = useRef<FlatList>(null);
@@ -246,11 +321,8 @@ export default function ChatRoomScreen() {
             },
           );
           uploaded.push(...batchUploaded);
-        } catch {
-          Alert.alert(
-            'Send failed',
-            'Failed to upload one or more files. Please try again.',
-          );
+        } catch (uploadError) {
+          Alert.alert('Send failed', formatUploadErrorMessage(uploadError));
           return;
         }
       }
@@ -624,7 +696,12 @@ export default function ChatRoomScreen() {
               inverted
               style={styles.content}
               contentContainerStyle={styles.messagesContainer}
-              extraData={messagesRenderVersion}
+              extraData={listExtraData}
+              viewabilityConfigCallbackPairs={viewabilityConfigCallbackPairs}
+              initialNumToRender={12}
+              windowSize={7}
+              maxToRenderPerBatch={8}
+              removeClippedSubviews={Platform.OS === 'android'}
               keyboardDismissMode="on-drag"
               keyboardShouldPersistTaps="handled"
               onScrollBeginDrag={dismissKeyboard}
@@ -733,12 +810,16 @@ export default function ChatRoomScreen() {
                 const message = item.data as Message;
                 const isSender = message.senderId === authState.user?.id;
                 
+                const shouldLoadMedia =
+                  messagesReady && viewableMessageIds.has(message.id);
+
                 return (
                   <MessageItem
                     message={message}
                     isSender={isSender}
                     chatType={chatRoom?.type}
                     currentUserRole={authState.user?.role}
+                    shouldLoadMedia={shouldLoadMedia}
                     onDeletePress={(msg) => {
                       Alert.alert(
                         'Delete message',

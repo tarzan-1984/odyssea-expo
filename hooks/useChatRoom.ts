@@ -20,6 +20,36 @@ const getReactionsSignature = (message: Message): string =>
     .map((group) => `${group.emoji}:${group.users.map((user) => user.id).join('|')}:${group.hasCurrentUser ? 1 : 0}`)
     .join(',');
 
+const sortMessagesByCreatedAt = (messages: Message[]): Message[] =>
+  [...messages].sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+  );
+
+/** Merge API/store/WebSocket tails without dropping messages the API may omit. */
+const mergeMessageSources = (
+  ...sources: Array<Message[] | Message | null | undefined>
+): Message[] => {
+  const byId = new Map<string, Message>();
+
+  for (const source of sources) {
+    const list = Array.isArray(source) ? source : source ? [source] : [];
+    for (const msg of list) {
+      if (!msg?.id) continue;
+      const prev = byId.get(msg.id);
+      byId.set(msg.id, prev ? { ...prev, ...msg } : msg);
+    }
+  }
+
+  return sortMessagesByCreatedAt(Array.from(byId.values()));
+};
+
+const collectMessagesForRoom = (chatRoomId: string, apiMessages: Message[]): Message[] => {
+  const store = useChatStore.getState();
+  const storeMessages = store.messagesByRoom[chatRoomId] || [];
+  const room = store.chatRooms.find((r) => r.id === chatRoomId);
+  return mergeMessageSources(apiMessages, storeMessages, room?.lastMessage);
+};
+
 interface UseChatRoomReturn {
   chatRoom: ChatRoom | null;
   messages: Message[];
@@ -90,6 +120,18 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
   const [isLoadingArchivedMessages, setIsLoadingArchivedMessages] = useState(false);
   const [pendingArchiveLoad, setPendingArchiveLoad] = useState(false);
   const archivedMessagesCacheRef = useRef<Map<string, Message[]>>(new Map());
+  const archiveDaysLoadedRoomRef = useRef<string | null>(null);
+  const archiveDaysInflightRef = useRef<Promise<ArchiveDay[]> | null>(null);
+  const hasMoreMessagesRef = useRef(hasMoreMessages);
+  const messagesCountRef = useRef(messages.length);
+
+  useEffect(() => {
+    hasMoreMessagesRef.current = hasMoreMessages;
+  }, [hasMoreMessages]);
+
+  useEffect(() => {
+    messagesCountRef.current = messages.length;
+  }, [messages.length]);
 
   // Subscribe to global store messages for this room with a stable selector
   // Avoid returning a new array each render to prevent infinite update loops
@@ -155,42 +197,62 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
       return [];
     }
 
-    try {
-      setIsLoadingAvailableArchives(true);
-
-      const archives = await chatApi.getAvailableArchiveDays(chatRoomId);
-
-      // Filter archives by user join date to avoid unnecessary requests
-      const userJoinDate = getUserJoinDate();
-      
-      let filteredArchives = archives;
-      if (userJoinDate) {
-        filteredArchives = archives.filter(archive => {
-          const archiveDate = new Date(archive.year, archive.month - 1, archive.day);
-          const isAfterJoin = archiveDate >= userJoinDate;
-          
-          return isAfterJoin;
-        });
-      }
-
-      // Sort archives by date (newest first, but we'll load oldest first)
-      filteredArchives.sort((a, b) => {
-        const dateA = new Date(a.createdAt);
-        const dateB = new Date(b.createdAt);
-        return dateB.getTime() - dateA.getTime();
-      });
-
-      setAvailableArchives(filteredArchives);
-      setCurrentArchiveIndex(0);
-      setIsLoadingAvailableArchives(false);
-
-      return filteredArchives;
-    } catch (error) {
-      console.error(`❌ [useChatRoom] Failed to load available archive days:`, error);
-      setIsLoadingAvailableArchives(false);
-      return [];
+    if (archiveDaysLoadedRoomRef.current === chatRoomId) {
+      return availableArchives;
     }
-  }, [chatRoomId, getUserJoinDate]);
+
+    if (archiveDaysInflightRef.current) {
+      return archiveDaysInflightRef.current;
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        setIsLoadingAvailableArchives(true);
+
+        const archives = await chatApi.getAvailableArchiveDays(chatRoomId);
+
+        const userJoinDate = getUserJoinDate();
+
+        let filteredArchives = archives;
+        if (userJoinDate) {
+          filteredArchives = archives.filter(archive => {
+            const archiveDate = new Date(archive.year, archive.month - 1, archive.day);
+            return archiveDate >= userJoinDate;
+          });
+        }
+
+        filteredArchives.sort((a, b) => {
+          const dateA = new Date(a.createdAt);
+          const dateB = new Date(b.createdAt);
+          return dateB.getTime() - dateA.getTime();
+        });
+
+        setAvailableArchives(filteredArchives);
+        setCurrentArchiveIndex(0);
+        archiveDaysLoadedRoomRef.current = chatRoomId;
+
+        return filteredArchives;
+      } catch (error) {
+        console.error(`❌ [useChatRoom] Failed to load available archive days:`, error);
+        return [];
+      } finally {
+        setIsLoadingAvailableArchives(false);
+        archiveDaysInflightRef.current = null;
+      }
+    })();
+
+    archiveDaysInflightRef.current = fetchPromise;
+    return fetchPromise;
+  }, [chatRoomId, getUserJoinDate, availableArchives]);
+
+  /** Lazy S3 day list — only when scrolling into archive or PG is empty. */
+  const ensureAvailableArchiveDays = useCallback(async (): Promise<ArchiveDay[]> => {
+    if (!chatRoomId) return [];
+    if (archiveDaysLoadedRoomRef.current === chatRoomId) {
+      return availableArchives;
+    }
+    return getAvailableArchiveDays();
+  }, [chatRoomId, availableArchives, getAvailableArchiveDays]);
 
   /**
    * Get next available archive from the list
@@ -318,6 +380,14 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
     }
   }, [chatRoomId]);
 
+  const tryLoadNextArchivePage = useCallback(async () => {
+    await ensureAvailableArchiveDays();
+    const nextArchive = getNextAvailableArchive();
+    if (nextArchive) {
+      await loadArchivedMessages(nextArchive.year, nextArchive.month, nextArchive.day);
+    }
+  }, [ensureAvailableArchiveDays, getNextAvailableArchive, loadArchivedMessages]);
+
   /**
    * Load chat room data
    * This is called immediately when chat room is opened
@@ -356,7 +426,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
         }
       }
 
-      // Archives are still loaded in a separate effect that depends on chatRoom
+      // Archive day list is loaded lazily on scroll-up or when PG has no messages.
     } catch (err) {
       setError('Failed to load chat room');
     } finally {
@@ -403,11 +473,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
     if (!chatRoomId) return;
 
     const response = await chatApi.getMessages(chatRoomId, 1, limit);
-    const sortedMessages = [...response.messages].sort(
-      (a, b) =>
-        new Date(a.createdAt).getTime() -
-        new Date(b.createdAt).getTime()
-    );
+    const sortedMessages = collectMessagesForRoom(chatRoomId, response.messages);
     const lastMessage = sortedMessages[sortedMessages.length - 1];
 
     setMessages(sortedMessages);
@@ -536,6 +602,12 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
               console.log('[useChatRoom][smartSync] FULL sync returned 0 messages', {
                 chatRoomId,
               });
+              if (lastRoomMessage && !currentMessages.some((m) => m.id === lastRoomMessage.id)) {
+                const fallback = mergeMessageSources(currentMessages, lastRoomMessage);
+                setMessages(fallback);
+                useChatStore.getState().setMessages(chatRoomId, fallback);
+                await messagesCacheService.saveMessages(chatRoomId, fallback);
+              }
               return;
             }
 
@@ -762,11 +834,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
             });
 
             const response = await chatApi.getMessages(chatRoomId, 1, limit);
-            const sortedMessages = [...response.messages].sort(
-              (a, b) =>
-                new Date(a.createdAt).getTime() -
-                new Date(b.createdAt).getTime()
-            );
+            const sortedMessages = collectMessagesForRoom(chatRoomId, response.messages);
 
             setMessages(sortedMessages);
 
@@ -786,7 +854,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
 
             // Update pagination state
             setCurrentPage(1);
-            setHasMoreMessages(response.hasMore);
+            setHasMoreMessages(response.hasMore || sortedMessages.length >= limit);
 
             // Mark this chat as opened in the current session and persist
             try {
@@ -840,11 +908,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
               });
 
               const response = await chatApi.getMessages(chatRoomId, 1, limit);
-              const sortedMessages = [...response.messages].sort(
-                (a, b) =>
-                  new Date(a.createdAt).getTime() -
-                  new Date(b.createdAt).getTime()
-              );
+              const sortedMessages = collectMessagesForRoom(chatRoomId, response.messages);
 
               setMessages(sortedMessages);
 
@@ -864,7 +928,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
 
               // Update pagination state
               setCurrentPage(1);
-              setHasMoreMessages(response.hasMore);
+              setHasMoreMessages(response.hasMore || sortedMessages.length >= limit);
 
               setIsLoadingMessages(false);
               console.log('[useChatRoom][loadMessages] FULL initial load done', {
@@ -1013,9 +1077,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
         // This happens on first app launch or after data was cleared
         try {
           const response = await chatApi.getMessages(chatRoomId, page, limit);
-          const sortedMessages = [...response.messages].sort(
-            (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-          );
+          const sortedMessages = collectMessagesForRoom(chatRoomId, response.messages);
           
           setMessages(sortedMessages);
           
@@ -1051,9 +1113,14 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
         setError('Failed to load messages');
       } finally {
         setIsLoadingMessages(false);
+        setTimeout(() => {
+          if (!hasMoreMessagesRef.current && messagesCountRef.current === 0) {
+            tryLoadNextArchivePage().catch(() => {});
+          }
+        }, 0);
       }
     },
-    [chatRoomId, recalculateUnreadCount, isConnected, smartSyncMissingMessages, replaceMessagesFromApi]
+    [chatRoomId, recalculateUnreadCount, isConnected, smartSyncMissingMessages, replaceMessagesFromApi, tryLoadNextArchivePage]
   );
 
   /**
@@ -1123,27 +1190,17 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
         // If we just exhausted PostgreSQL (hasMore changed from true to false),
         // immediately try to load from archive if available
         if (wasHasMore && !response.hasMore) {
-          // PostgreSQL is now exhausted, try to load from archive
           if (isLoadingAvailableArchives) {
-            // Archives are still loading, set pending flag
             setPendingArchiveLoad(true);
             setIsLoadingMessages(false);
             setIsLoadingOlderMessages(false);
             isLoadingMoreRef.current = false;
           } else {
-            const nextArchive = getNextAvailableArchive();
-            if (nextArchive) {
-              // Keep loading state to show loader while loading archived messages
-              // loadArchivedMessages will manage isLoadingMessages state
-              try {
-                await loadArchivedMessages(nextArchive.year, nextArchive.month, nextArchive.day);
-              } catch (error) {
-                setIsLoadingMessages(false);
-                setIsLoadingOlderMessages(false);
-                isLoadingMoreRef.current = false;
-              }
-            } else {
-              // No more archives, stop loading
+            try {
+              await tryLoadNextArchivePage();
+            } catch {
+              // ignore
+            } finally {
               setIsLoadingMessages(false);
               setIsLoadingOlderMessages(false);
               isLoadingMoreRef.current = false;
@@ -1156,26 +1213,17 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
           isLoadingMoreRef.current = false;
         }
       } else {
-        // PostgreSQL is exhausted, try to load from archive
         if (isLoadingAvailableArchives) {
-          // Archives are still loading, set pending flag
           setPendingArchiveLoad(true);
           setIsLoadingMessages(false);
           setIsLoadingOlderMessages(false);
           isLoadingMoreRef.current = false;
         } else {
-          const nextArchive = getNextAvailableArchive();
-          if (nextArchive) {
-            // loadArchivedMessages will manage isLoadingMessages state
-            try {
-              await loadArchivedMessages(nextArchive.year, nextArchive.month, nextArchive.day);
-            } catch (error) {
-              setIsLoadingMessages(false);
-              setIsLoadingOlderMessages(false);
-              isLoadingMoreRef.current = false;
-            }
-          } else {
-            // No more archives available
+          try {
+            await tryLoadNextArchivePage();
+          } catch {
+            // ignore
+          } finally {
             setIsLoadingMessages(false);
             setIsLoadingOlderMessages(false);
             isLoadingMoreRef.current = false;
@@ -1194,8 +1242,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
     hasMoreMessages,
     currentPage,
     isLoadingAvailableArchives,
-    getNextAvailableArchive,
-    loadArchivedMessages,
+    tryLoadNextArchivePage,
   ]);
 
   /**
@@ -1463,14 +1510,12 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
 
   // Handle pending archive load when archives finish loading
   useEffect(() => {
-    if (pendingArchiveLoad && !isLoadingAvailableArchives && availableArchives.length > 0) {
-      setPendingArchiveLoad(false);
-      const nextArchive = getNextAvailableArchive();
-      if (nextArchive) {
-        loadArchivedMessages(nextArchive.year, nextArchive.month, nextArchive.day);
-      }
+    if (!pendingArchiveLoad || isLoadingAvailableArchives) {
+      return;
     }
-  }, [pendingArchiveLoad, isLoadingAvailableArchives, availableArchives, getNextAvailableArchive, loadArchivedMessages]);
+    setPendingArchiveLoad(false);
+    tryLoadNextArchivePage().catch(() => {});
+  }, [pendingArchiveLoad, isLoadingAvailableArchives, tryLoadNextArchivePage]);
 
   // Reset archive state when chat room changes
   useEffect(() => {
@@ -1480,19 +1525,9 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
     setIsLoadingAvailableArchives(false);
     setIsLoadingArchivedMessages(false);
     archivedMessagesCacheRef.current.clear();
+    archiveDaysLoadedRoomRef.current = null;
+    archiveDaysInflightRef.current = null;
   }, [chatRoomId]);
-
-  // Load available archives when chat room is loaded
-  // This mirrors Next.js behavior in chatStore.setCurrentChatRoom
-  // This is called immediately when chat room is opened to prepare archive data
-  // for subsequent pagination requests when user scrolls up
-  useEffect(() => {
-    if (chatRoom && chatRoomId) {
-      getAvailableArchiveDays().catch(() => {
-        // Silently handle errors
-      });
-    }
-  }, [chatRoom, chatRoomId, getAvailableArchiveDays]);
 
   // Handle bulk messages marked as read (when markChatRoomAsRead is called)
   // This matches Next.js behavior - unreadCount is updated only when server confirms

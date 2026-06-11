@@ -5,6 +5,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { secureStorage } from '@/utils/secureStorage';
 import { uploadChatFilesBatch } from '@/app-api/upload';
 import { ensureHeicUploadMetadata } from '@/utils/heicUpload';
+import { formatUploadErrorMessage } from '@/utils/mimeTypeUpload';
 
 export interface FileData {
   uri: string;
@@ -148,45 +149,17 @@ export async function capturePhoto(): Promise<FileData[]> {
   return [await normalizeAttachmentForUpload(file)];
 }
 
-const GALLERY_EXTENSION_TO_MIME: Record<string, string> = {
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  png: 'image/png',
-  gif: 'image/gif',
-  webp: 'image/webp',
-  heic: 'image/heic',
-  heif: 'image/heif',
-  bmp: 'image/bmp',
-  tiff: 'image/tiff',
-};
-
-const GALLERY_ALLOWED_MIME = [
-  'image/jpeg',
-  'image/png',
-  'image/gif',
-  'image/webp',
-  'image/heic',
-  'image/heif',
-  'image/bmp',
-  'image/tiff',
-];
-
 function fileDataFromGalleryAsset(
   asset: ImagePicker.ImagePickerAsset,
   uniqueIndex: number
 ): FileData {
   const fileName = asset.fileName || (asset as any).filename || '';
   const fileExtension = fileName.split('.').pop()?.toLowerCase() || '';
-
-  let mimeType = asset.mimeType;
-  if (!mimeType || !GALLERY_ALLOWED_MIME.includes(mimeType)) {
-    mimeType = GALLERY_EXTENSION_TO_MIME[fileExtension] || 'image/jpeg';
-  }
-
-  const fallbackExt = mimeType.includes('jpeg') ? 'jpg' : 'bin';
+  const fallbackExt = fileExtension || 'jpg';
   const filename =
     fileName ||
-    `photo_${Date.now()}_${uniqueIndex}.${fileExtension || fallbackExt}`;
+    `photo_${Date.now()}_${uniqueIndex}.${fallbackExt}`;
+  const mimeType = asset.mimeType || (fileExtension ? undefined : 'image/jpeg');
 
   return {
     uri: asset.uri,
@@ -280,8 +253,8 @@ export async function handleUploadAndSend(params: {
       setUploadQueue((q) => q.map((item, i) => (i === index ? { ...item, status } : item)));
     });
     await sendUploadedAttachments(uploaded, sendMessage);
-  } catch {
-    Alert.alert('Upload failed', 'Failed to upload one or more files. Please try again.');
+  } catch (error) {
+    Alert.alert('Upload failed', formatUploadErrorMessage(error));
   }
 
   setTimeout(() => setUploadQueue([]), 1200);
@@ -357,7 +330,7 @@ async function uploadPhotoAndSend(params: {
     await sendUploadedAttachments(uploaded, sendMessage);
   } catch (error) {
     console.error('[chatAttachmentHelpers] Batch upload failed:', error);
-    Alert.alert('Upload failed', 'Failed to upload one or more files. Please try again.');
+    Alert.alert('Upload failed', formatUploadErrorMessage(error));
   }
 
   setTimeout(() => setUploadQueue([]), 1200);

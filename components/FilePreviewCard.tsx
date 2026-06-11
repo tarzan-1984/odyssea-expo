@@ -12,6 +12,21 @@ import FileViewerModal from '@/components/modals/FileViewerModal';
 import { imageCacheService } from '@/services/ImageCacheService';
 import { secureStorage } from '@/utils/secureStorage';
 import { getHeicConvertApiUrl, toJpegFilename } from '@/utils/heicUpload';
+import {
+	ensureChatImageThumbnail,
+	getChatImageThumbnailUrl,
+	isChatImageThumbnailUrl,
+} from '@/utils/chatImageThumbnail';
+import ChatMediaPreviewPlaceholder from '@/components/chat/ChatMediaPreviewPlaceholder';
+
+const INLINE_IMAGE_LOAD_TIMEOUT_MS = 30_000;
+/** If onLoad/onLoadEnd never fire (cache / remount race), probe with getSize. */
+const INLINE_IMAGE_CACHE_FALLBACK_MS = 1_500;
+
+function formatFileSizeKb(fileSize?: number): string | null {
+	if (typeof fileSize !== 'number' || Number.isNaN(fileSize)) return null;
+	return `${Math.round(fileSize / 1024)}KB`;
+}
 
 type Props = {
 	fileUrl: string;
@@ -21,6 +36,8 @@ type Props = {
 	createdAt?: string; // Optional date to display next to file size
 	/** Compact width for multi-attach grid (2 per row in chat). */
 	variant?: 'default' | 'gridCell';
+	/** When false, show placeholder until the message is in the chat viewport. */
+	shouldLoadMedia?: boolean;
 };
 
 // Helper function to determine MIME type
@@ -108,6 +125,7 @@ export default function FilePreviewCard({
 	isSender,
 	createdAt,
 	variant = 'default',
+	shouldLoadMedia = true,
 }: Props) {
 	const queryClient = useQueryClient();
 	const name = fileName || 'Attachment';
@@ -120,7 +138,14 @@ export default function FilePreviewCard({
 	const [viewerVisible, setViewerVisible] = useState(false);
 	const [downloadedFileUri, setDownloadedFileUri] = useState<string | null>(null);
 	const [heicPreviewSource, setHeicPreviewSource] = useState<{ uri: string; headers?: { Authorization: string } } | null>(null);
+	const [previewImageUri, setPreviewImageUri] = useState<string | null>(null);
+	const [hasImageLoaded, setHasImageLoaded] = useState(false);
+	const [loadError, setLoadError] = useState<string | null>(null);
+	const [imageDimensions, setImageDimensions] = useState<{ w: number; h: number } | null>(null);
+	const thumbEnsureAttemptedRef = useRef(false);
+	const heicConvertAttemptedRef = useRef(false);
 	const activeRequestIdRef = useRef<number | null>(null);
+	const loadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const heicCacheQueryKey = [...imageCacheService.heicQueryKeyPrefix, fileUrl, name] as const;
 	const heicLocalFileQuery = useQuery({
 		queryKey: heicCacheQueryKey,
@@ -139,26 +164,164 @@ export default function FilePreviewCard({
 		};
 	}, []);
 
+	const clearLoadTimeout = () => {
+		if (loadTimeoutRef.current) {
+			clearTimeout(loadTimeoutRef.current);
+			loadTimeoutRef.current = null;
+		}
+	};
+
+	const resetInlineImageState = () => {
+		clearLoadTimeout();
+		setHasImageLoaded(false);
+		setLoadError(null);
+		setImageDimensions(null);
+	};
+
 	useEffect(() => {
-		if (!needsLocalImageOpen) {
-			setHeicPreviewSource(null);
+		return () => {
+			clearLoadTimeout();
+		};
+	}, []);
+
+	useEffect(() => {
+		thumbEnsureAttemptedRef.current = false;
+		heicConvertAttemptedRef.current = false;
+		resetInlineImageState();
+		setPreviewImageUri(null);
+		setHeicPreviewSource(null);
+	}, [fileUrl, name]);
+
+	useEffect(() => {
+		if (!shouldLoadMedia) {
+			return;
+		}
+		if (previewImageUri || heicPreviewSource) {
 			return;
 		}
 
 		let cancelled = false;
-		(async () => {
-			const accessToken = await secureStorage.getItemAsync('accessToken').catch(() => null);
-			if (cancelled) return;
-			setHeicPreviewSource({
-				uri: getHeicConvertApiUrl(fileUrl),
-				headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
-			});
-		})();
+
+		const loadPreview = async () => {
+			if (needsLocalImageOpen) {
+				try {
+					const thumbUrl = await ensureChatImageThumbnail(fileUrl, name);
+					if (cancelled) return;
+					thumbEnsureAttemptedRef.current = true;
+					setPreviewImageUri(thumbUrl);
+					return;
+				} catch {
+					if (cancelled) return;
+				}
+
+				const accessToken = await secureStorage.getItemAsync('accessToken').catch(() => null);
+				if (cancelled) return;
+				heicConvertAttemptedRef.current = true;
+				setHeicPreviewSource({
+					uri: getHeicConvertApiUrl(fileUrl),
+					headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+				});
+				return;
+			}
+
+			setPreviewImageUri(getChatImageThumbnailUrl(fileUrl, name) ?? fileUrl);
+		};
+
+		loadPreview().catch(() => {
+			if (!cancelled) {
+				setPreviewImageUri(fileUrl);
+			}
+		});
 
 		return () => {
 			cancelled = true;
 		};
-	}, [fileUrl, needsLocalImageOpen]);
+	}, [
+		shouldLoadMedia,
+		fileUrl,
+		name,
+		needsLocalImageOpen,
+		previewImageUri,
+		heicPreviewSource,
+	]);
+
+	useEffect(() => {
+		if (!shouldLoadMedia || hasImageLoaded || loadError) {
+			return;
+		}
+
+		// Auth-protected HEIC convert URLs cannot be probed with Image.getSize.
+		const probeUri = needsLocalImageOpen
+			? heicPreviewSource
+				? null
+				: previewImageUri
+			: previewImageUri;
+
+		if (!probeUri) {
+			return;
+		}
+
+		let cancelled = false;
+		const timer = setTimeout(() => {
+			if (cancelled) return;
+			Image.getSize(
+				probeUri,
+				(width, height) => {
+					if (cancelled) return;
+					clearLoadTimeout();
+					if (width && height) {
+						setImageDimensions({ w: width, h: height });
+					}
+					setHasImageLoaded(true);
+					setLoadError(null);
+				},
+				() => {}
+			);
+		}, INLINE_IMAGE_CACHE_FALLBACK_MS);
+
+		return () => {
+			cancelled = true;
+			clearTimeout(timer);
+		};
+	}, [
+		shouldLoadMedia,
+		hasImageLoaded,
+		loadError,
+		needsLocalImageOpen,
+		heicPreviewSource,
+		previewImageUri,
+	]);
+
+	useEffect(() => {
+		if (!shouldLoadMedia || hasImageLoaded || loadError) {
+			clearLoadTimeout();
+			return;
+		}
+
+		const imageSource = needsLocalImageOpen
+			? heicPreviewSource ?? (previewImageUri ? { uri: previewImageUri } : null)
+			: previewImageUri
+				? { uri: previewImageUri }
+				: null;
+
+		if (!imageSource) {
+			return;
+		}
+
+		clearLoadTimeout();
+		loadTimeoutRef.current = setTimeout(() => {
+			setLoadError('Failed to load image preview');
+		}, INLINE_IMAGE_LOAD_TIMEOUT_MS);
+
+		return clearLoadTimeout;
+	}, [
+		shouldLoadMedia,
+		hasImageLoaded,
+		loadError,
+		needsLocalImageOpen,
+		heicPreviewSource,
+		previewImageUri,
+	]);
 
 	const handleOpenFile = async (fileUri: string) => {
 		// For all files (except images and PDF which open in modal), open with system app
@@ -344,26 +507,181 @@ export default function FilePreviewCard({
 
 	const isGridCell = variant === 'gridCell';
 
+	const tryHeicConvertPreview = () => {
+		if (heicConvertAttemptedRef.current) {
+			return false;
+		}
+		heicConvertAttemptedRef.current = true;
+		resetInlineImageState();
+		void (async () => {
+			const accessToken = await secureStorage.getItemAsync('accessToken').catch(() => null);
+			setHeicPreviewSource({
+				uri: getHeicConvertApiUrl(fileUrl),
+				headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+			});
+		})();
+		return true;
+	};
+
+	const handlePreviewImageError = (failedUri?: string) => {
+		clearLoadTimeout();
+		resetInlineImageState();
+
+		if (
+			failedUri &&
+			isChatImageThumbnailUrl(failedUri) &&
+			!thumbEnsureAttemptedRef.current
+		) {
+			thumbEnsureAttemptedRef.current = true;
+			ensureChatImageThumbnail(fileUrl, name)
+				.then((url) => {
+					setPreviewImageUri(url);
+				})
+				.catch(() => {
+					if (needsLocalImageOpen && tryHeicConvertPreview()) {
+						return;
+					}
+					if (failedUri !== fileUrl) {
+						setPreviewImageUri(fileUrl);
+						return;
+					}
+					setLoadError('Failed to load image preview');
+				});
+			return;
+		}
+
+		if (needsLocalImageOpen && tryHeicConvertPreview()) {
+			return;
+		}
+
+		if (failedUri !== fileUrl) {
+			setPreviewImageUri(fileUrl);
+			return;
+		}
+
+		setLoadError('Failed to load image preview');
+	};
+
+	const handleInlineImageLoad = (event?: {
+		nativeEvent?: { source?: { width?: number; height?: number } };
+	}) => {
+		clearLoadTimeout();
+		const { width, height } = event?.nativeEvent?.source ?? {};
+		if (width && height) {
+			setImageDimensions({ w: width, h: height });
+		}
+		setHasImageLoaded(true);
+		setLoadError(null);
+	};
+
+	const resolutionLabel = imageDimensions
+		? `${imageDimensions.w} × ${imageDimensions.h}`
+		: formatFileSizeKb(fileSize);
+
 	// Show preview for images
 	if (isImage) {
+		const showPreviewContent =
+			shouldLoadMedia || Boolean(previewImageUri || heicPreviewSource);
+
+		if (!showPreviewContent) {
+			return <ChatMediaPreviewPlaceholder variant={isGridCell ? 'gridCell' : 'default'} />;
+		}
+
+		const imageSource = needsLocalImageOpen
+			? heicPreviewSource ?? (previewImageUri ? { uri: previewImageUri } : null)
+			: previewImageUri
+				? { uri: previewImageUri }
+				: null;
+
+		const showLoader = !hasImageLoaded && !loadError;
+		const imageUriKey =
+			imageSource && 'uri' in imageSource ? imageSource.uri : previewImageUri ?? fileUrl;
+
 		return (
 			<>
-				<TouchableOpacity
-					onPress={handleFileAction}
-					activeOpacity={0.9}
-					style={[styles.imageCard, isGridCell && styles.imageCardGrid]}
-				>
-					<Image
-						source={heicPreviewSource ?? { uri: fileUrl }}
-						style={[styles.previewImage, isGridCell && styles.previewImageGrid]}
-						resizeMode="cover"
-					/>
-					{isDownloading ? (
-						<View style={styles.imageLoadingOverlay}>
-							<ActivityIndicator size="large" color={colors.neutral.white} />
-						</View>
-					) : null}
-				</TouchableOpacity>
+				<View style={[styles.imagePreviewBlock, isGridCell && styles.imagePreviewBlockGrid]}>
+					<View style={styles.imageMetaHeader}>
+						<Text
+							style={[
+								styles.imageFileName,
+								isGridCell && styles.imageFileNameGrid,
+								isSender ? styles.imageMetaSender : styles.imageMetaOther,
+							]}
+							numberOfLines={isGridCell ? 2 : 1}
+						>
+							{name}
+						</Text>
+						{resolutionLabel ? (
+							<Text
+								style={[
+									styles.imageResolution,
+									isGridCell && styles.imageResolutionGrid,
+									isSender ? styles.imageMetaSubSender : styles.imageMetaSubOther,
+								]}
+								numberOfLines={1}
+							>
+								{resolutionLabel}
+							</Text>
+						) : null}
+					</View>
+
+					<TouchableOpacity
+						onPress={handleFileAction}
+						activeOpacity={0.9}
+						style={[
+							styles.imageCard,
+							isGridCell && styles.imageCardGrid,
+							showLoader && styles.imageCardLoading,
+						]}
+					>
+						{loadError ? (
+							<View style={[styles.previewImage, isGridCell && styles.previewImageGrid, styles.imageErrorState]}>
+								<Text
+									style={[
+										styles.imageErrorText,
+										isSender ? styles.imageMetaSubSender : styles.imageMetaSubOther,
+									]}
+								>
+									{loadError}
+								</Text>
+							</View>
+						) : imageSource ? (
+							<>
+								<Image
+									key={imageUriKey}
+									source={imageSource}
+									style={[
+										styles.previewImage,
+										isGridCell && styles.previewImageGrid,
+										showLoader && styles.previewImageLoading,
+									]}
+									resizeMode="cover"
+									onLoad={handleInlineImageLoad}
+									onLoadEnd={handleInlineImageLoad}
+									onError={() => {
+										const failedUri =
+											imageSource && 'uri' in imageSource ? imageSource.uri : undefined;
+										handlePreviewImageError(failedUri);
+									}}
+								/>
+								{showLoader ? (
+									<View style={styles.imagePreviewLoadingOverlay}>
+										<ActivityIndicator size="large" color={colors.primary.blue} />
+									</View>
+								) : null}
+							</>
+						) : (
+							<View style={[styles.previewImage, isGridCell && styles.previewImageGrid, styles.imageLoadingCard]}>
+								<ActivityIndicator size="large" color={colors.primary.blue} />
+							</View>
+						)}
+						{isDownloading ? (
+							<View style={styles.imageLoadingOverlay}>
+								<ActivityIndicator size="large" color={colors.neutral.white} />
+							</View>
+						) : null}
+					</TouchableOpacity>
+				</View>
 				{downloadedFileUri && (
 					<FileViewerModal
 						visible={viewerVisible}
@@ -439,19 +757,60 @@ export default function FilePreviewCard({
 }
 
 const styles = StyleSheet.create({
+	imagePreviewBlock: {
+		width: rem(260),
+		marginBottom: rem(6),
+	},
+	imagePreviewBlockGrid: {
+		width: '100%',
+		maxWidth: '100%',
+		alignSelf: 'stretch',
+		marginBottom: 0,
+	},
+	imageMetaHeader: {
+		marginBottom: rem(6),
+		gap: rem(2),
+	},
+	imageFileName: {
+		fontSize: fp(13),
+		fontFamily: fonts['600'],
+	},
+	imageFileNameGrid: {
+		fontSize: fp(11),
+	},
+	imageResolution: {
+		fontSize: fp(11),
+		fontFamily: fonts['400'],
+	},
+	imageResolutionGrid: {
+		fontSize: fp(10),
+	},
+	imageMetaSender: {
+		color: colors.neutral.white,
+	},
+	imageMetaOther: {
+		color: colors.primary.blue,
+	},
+	imageMetaSubSender: {
+		color: 'rgba(255, 255, 255, 0.75)',
+	},
+	imageMetaSubOther: {
+		color: 'rgba(41, 41, 102, 0.6)',
+	},
 	// Card for images
 	imageCard: {
-		width: rem(260),
+		width: '100%',
 		borderRadius: rem(10),
 		overflow: 'hidden',
-		marginBottom: rem(6),
 		position: 'relative',
 	},
 	imageCardGrid: {
 		width: '100%',
 		maxWidth: '100%',
 		alignSelf: 'stretch',
-		marginBottom: 0,
+	},
+	imageCardLoading: {
+		backgroundColor: colors.neutral.veryLightGrey,
 	},
 	previewImage: {
 		width: '100%',
@@ -462,11 +821,36 @@ const styles = StyleSheet.create({
 		height: rem(104),
 		borderRadius: rem(6),
 	},
+	previewImageLoading: {
+		opacity: 0,
+	},
+	imagePreviewLoadingOverlay: {
+		...StyleSheet.absoluteFillObject,
+		alignItems: 'center',
+		justifyContent: 'center',
+		backgroundColor: colors.neutral.veryLightGrey,
+	},
 	imageLoadingOverlay: {
 		...StyleSheet.absoluteFillObject,
 		alignItems: 'center',
 		justifyContent: 'center',
 		backgroundColor: 'rgba(0, 0, 0, 0.35)',
+	},
+	imageLoadingCard: {
+		alignItems: 'center',
+		justifyContent: 'center',
+		backgroundColor: colors.neutral.veryLightGrey,
+	},
+	imageErrorState: {
+		alignItems: 'center',
+		justifyContent: 'center',
+		backgroundColor: colors.neutral.veryLightGrey,
+		paddingHorizontal: rem(8),
+	},
+	imageErrorText: {
+		fontSize: fp(11),
+		fontFamily: fonts['400'],
+		textAlign: 'center',
 	},
 	// Card for files (not images)
 	fileCard: {

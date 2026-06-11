@@ -38,6 +38,26 @@ export type GooglePlayListing = {
   marketUrl: string;
 };
 
+export type DefaultStoreUrls = {
+  storeUrl: string;
+  fallbackStoreUrl?: string;
+  storeName: 'App Store' | 'Google Play';
+};
+
+/** Fallback store links when only the server minimum-version gate triggers force update. */
+export function getDefaultStoreUrls(applicationId: string): DefaultStoreUrls | null {
+  if (!applicationId) return null;
+  if (Platform.OS === 'android') {
+    const webUrl = `https://play.google.com/store/apps/details?id=${encodeURIComponent(applicationId)}`;
+    return {
+      storeUrl: `market://details?id=${encodeURIComponent(applicationId)}`,
+      fallbackStoreUrl: webUrl,
+      storeName: 'Google Play',
+    };
+  }
+  return null;
+}
+
 /** ISO 3166-1 alpha-2 storefront country derived from the device locale (e.g. ua, de, us). */
 export function getDeviceStoreCountryCode(): string {
   try {

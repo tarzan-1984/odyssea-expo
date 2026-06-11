@@ -31,6 +31,18 @@ class MessagesCacheService {
   }
 
   /**
+   * Parse stored JSON and ensure it is a valid messages array
+   */
+  private parseStoredMessages(storedData: string): StoredMessage[] {
+    const parsed: unknown = JSON.parse(storedData);
+    if (!Array.isArray(parsed)) {
+      console.warn('⚠️ [MessagesCache] Invalid cache format, expected array');
+      return [];
+    }
+    return parsed as StoredMessage[];
+  }
+
+  /**
    * Save messages to cache for a specific chat room
    * Messages are always saved sorted by createdAt (oldest first) to ensure correct order on load
    */
@@ -94,7 +106,7 @@ class MessagesCacheService {
         return [];
       }
 
-      const storedMessages: StoredMessage[] = JSON.parse(storedData);
+      const storedMessages = this.parseStoredMessages(storedData);
 
       // Messages should already be sorted when saved, but sort again to ensure correctness
       // Sort by creation time (oldest first - newest at bottom)
@@ -136,7 +148,7 @@ class MessagesCacheService {
         return false;
       }
 
-      const storedMessages: StoredMessage[] = JSON.parse(storedData);
+      const storedMessages = this.parseStoredMessages(storedData);
       return storedMessages.length > 0;
     } catch (error) {
       console.error('❌ [MessagesCache] Failed to check messages in cache:', error);
@@ -154,7 +166,7 @@ class MessagesCacheService {
         return 0;
       }
 
-      const storedMessages: StoredMessage[] = JSON.parse(storedData);
+      const storedMessages = this.parseStoredMessages(storedData);
       return storedMessages.length;
     } catch (error) {
       console.error('❌ [MessagesCache] Failed to get message count:', error);

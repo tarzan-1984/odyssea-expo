@@ -40,14 +40,8 @@ export default function ChangePasswordScreen() {
     if (password !== confirmPassword) {
       return 'Passwords do not match';
     }
-    if (!/[A-Z]/.test(password)) {
-      return 'Password must contain at least one uppercase letter';
-    }
-    if (!/\d/.test(password)) {
-      return 'Password must contain at least one number';
-    }
-    if (password.length < 8) {
-      return 'Password must be at least 8 characters';
+    if (password.length < 6) {
+      return 'Password must be at least 6 characters';
     }
     return null;
   };

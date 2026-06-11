@@ -308,25 +308,25 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           error: null,
         }));
 
-        if (userRole === 'DRIVER' && user?.id) {
+        if (user?.id) {
           void (async () => {
             try {
+              await syncAppLocationSettingsFromBackend(accessToken);
+              if (userRole !== 'DRIVER') {
+                await syncNotificationPreferencesFromBackend(user.id);
+                return;
+              }
               const result = await getDriverStatus(user.id);
               await persistDriverProfileLocally(result);
               emitDriverProfileSyncEvents(result);
               await ensureBackgroundLocationTrackingForAutoupdate(result.isAutoupdate);
-              await syncAppLocationSettingsFromBackend(accessToken);
               await syncNotificationPreferencesFromBackend(user.id);
             } catch (e) {
-              fileLogger.error('AuthContext', 'DRIVER_PROFILE_REFRESH_AFTER_LOGIN', {
+              fileLogger.error('AuthContext', 'PROFILE_REFRESH_AFTER_LOGIN', {
                 error: e instanceof Error ? e.message : String(e),
               });
             }
           })();
-        }
-
-        if (user?.id && userRole !== 'DRIVER') {
-          void syncNotificationPreferencesFromBackend(user.id);
         }
 
         // Request location permissions immediately after successful login
@@ -631,22 +631,24 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           });
         }
 
-        if ((user?.role ?? '').toUpperCase() === 'DRIVER' && user?.id) {
+        if (user?.id) {
           void (async () => {
             try {
+              await syncAppLocationSettingsFromBackend(finalAccessToken);
+              if ((user?.role ?? '').toUpperCase() !== 'DRIVER') {
+                await syncNotificationPreferencesFromBackend(user.id);
+                return;
+              }
               const result = await getDriverStatus(user.id);
               await persistDriverProfileLocally(result);
               emitDriverProfileSyncEvents(result);
               await ensureBackgroundLocationTrackingForAutoupdate(result.isAutoupdate);
-              await syncAppLocationSettingsFromBackend(finalAccessToken);
             } catch (e) {
-              fileLogger.error('AuthContext', 'DRIVER_PROFILE_REFRESH_AFTER_RESTORE', {
+              fileLogger.error('AuthContext', 'PROFILE_REFRESH_AFTER_RESTORE', {
                 error: e instanceof Error ? e.message : String(e),
               });
             }
           })();
-        } else if (user?.id) {
-          void syncNotificationPreferencesFromBackend(user.id);
         }
       } else {
         console.log('ℹ️ [AuthContext] No stored auth data found');
@@ -962,6 +964,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           '📱 [AppActive] App became ACTIVE (returned from background/inactive)',
         );
         try {
+          const token = await AsyncStorage.getItem('@user_access_token');
+          if (token) {
+            await syncAppLocationSettingsFromBackend(token);
+          }
+
           if (isDriver) {
             console.log(
               '📱 [AppActive] Fetching driver profile from server (GET /driver-status)...',
@@ -973,10 +980,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             await persistDriverProfileLocally(result);
             emitDriverProfileSyncEvents(result);
             await ensureBackgroundLocationTrackingForAutoupdate(result.isAutoupdate);
-            const token = await AsyncStorage.getItem('@user_access_token');
-            if (token) {
-              await syncAppLocationSettingsFromBackend(token);
-            }
             console.log('✅ [AppActive] Foreground driver profile sync completed');
           } else {
             await syncNotificationPreferencesFromBackend(userId);

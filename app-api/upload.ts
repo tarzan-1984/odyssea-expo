@@ -1,5 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { ensureHeicUploadMetadata } from '@/utils/heicUpload';
+import { normalizeUploadMimeType } from '@/utils/mimeTypeUpload';
 
 type PresignResponse = {
 	uploadUrl: string;
@@ -123,15 +124,16 @@ async function prepareUploadFile(params: {
 		throw new Error('Selected file is missing or could not be read');
 	}
 
-	const { filename, mimeType } = await ensureHeicUploadMetadata({
+	const heicMeta = await ensureHeicUploadMetadata({
 		fileUri: params.fileUri,
 		filename: params.filename,
 		mimeType: params.mimeType,
 	});
+	const mimeType = normalizeUploadMimeType(heicMeta.filename, heicMeta.mimeType);
 
 	return {
 		fileUri: params.fileUri,
-		filename,
+		filename: heicMeta.filename,
 		mimeType,
 		fileSize: fileInfo.size || 0,
 	};

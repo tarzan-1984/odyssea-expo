@@ -3,7 +3,7 @@ import { View, Text, StyleSheet } from 'react-native';
 import { colors, fonts, fp, rem } from '@/lib';
 import { Message } from '@/components/ChatListItem';
 import { stripMarkdown } from '@/utils/chatMarkdown';
-import { formatNyWallClockTime } from '@/utils/nyWallClock';
+import { formatNyWallClockDateTime } from '@/utils/nyWallClock';
 
 interface MessageReplyProps {
   replyData: Message['replyData'];
@@ -25,7 +25,7 @@ export default function MessageReply({ replyData, isSender }: MessageReplyProps)
           {replyData.senderName}
         </Text>
         <Text style={[styles.time, isSender && styles.timeSender]}>
-          {formatNyWallClockTime(replyData.time)}
+          {formatNyWallClockDateTime(replyData.time)}
         </Text>
       </View>
       <Text
