@@ -139,6 +139,7 @@ const ChatInputSection = React.forwardRef<ChatInputSectionRef, ChatInputSectionP
 
         <ChatFormatToolbar
           disabled={inputDisabled}
+          isConnected={isConnected}
           activeFormats={formatState}
           onAction={applyFormatAction}
         />
