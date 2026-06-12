@@ -10,6 +10,17 @@ import { normalizeChatParticipants } from '@/utils/normalizeChatParticipants';
 
 const OPENED_CHATS_KEY = '@chat_opened_rooms';
 
+/** Merge API unread with store. If API says 0, trust it (clears ghost badges after read). */
+const mergeSourcesUnreadCount = (
+  sourceUnread: number | undefined,
+  storeUnread: number | undefined,
+): number => {
+  const s = sourceUnread ?? 0;
+  const st = storeUnread ?? 0;
+  if (s === 0) return 0;
+  return Math.max(s, st);
+};
+
 /** One initial fetch for the whole app — avoids duplicate API work per screen/nav mount. */
 let globalHasLoadedOnce = false;
 let globalMountLoadScheduled = false;
@@ -237,17 +248,11 @@ export const useChatRooms = (): UseChatRoomsReturn => {
               const storeRoom = chatRooms.find(storeRoom => storeRoom.id === apiRoom.id);
               const cachedRoom = cachedRooms.find(cachedRoom => cachedRoom.id === apiRoom.id);
               
-              // Priority: store > cache > API for unreadCount
-              // This ensures real-time updates are preserved, then cached data, then API
-              let finalUnreadCount = 0;
-              if (storeRoom && storeRoom.unreadCount !== undefined && storeRoom.unreadCount !== null) {
-                finalUnreadCount = storeRoom.unreadCount;
-              } else if (cachedRoom && cachedRoom.unreadCount !== undefined && cachedRoom.unreadCount !== null) {
-                finalUnreadCount = cachedRoom.unreadCount;
-              } else if (apiRoom.unreadCount !== undefined && apiRoom.unreadCount !== null) {
-                finalUnreadCount = apiRoom.unreadCount;
-              }
-              
+              const finalUnreadCount = mergeSourcesUnreadCount(
+                apiRoom.unreadCount,
+                storeRoom?.unreadCount ?? cachedRoom?.unreadCount,
+              );
+
               return {
                 ...apiRoom,
                 unreadCount: finalUnreadCount,

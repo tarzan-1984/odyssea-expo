@@ -434,40 +434,10 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
     }
   }, [chatRoomId]);
 
-  /**
-   * Calculate and update unreadCount based on loaded messages
-   * Counts messages that are not from current user and not read by current user
-   */
-  const recalculateUnreadCount = useCallback((messagesToCheck: Message[]) => {
-    if (!chatRoomId || !authState.user?.id) {
-      return;
-    }
-
-    const currentUserId = authState.user.id;
-    
-    // Count unread messages: messages not from current user AND not read by current user
-    const unreadCount = messagesToCheck.filter(msg => {
-      // Skip messages from current user
-      if (msg.senderId === currentUserId) {
-        return false;
-      }
-      
-      // Check if message is read by current user
-      const readBy = msg.readBy || [];
-      const isReadByCurrentUser = readBy.includes(currentUserId);
-      
-      return !isReadByCurrentUser;
-    }).length;
-    
-    // Update unreadCount through eventBus with absolute value
-    // This ensures unreadCount matches the actual number of unread messages
-    eventBus.emit(AppEvents.ChatRoomUpdated, {
-      chatRoomId,
-      updates: {
-        unreadCount: unreadCount, // Set absolute value, not increment/decrement
-      },
-    });
-  }, [chatRoomId, authState.user?.id]);
+  /** Unread count comes from API/WS (chat_room_participants.unreadCount), not from message scan. */
+  const recalculateUnreadCount = useCallback((_messagesToCheck: Message[]) => {
+    // no-op: server-maintained unreadCount via chatUnreadCountUpdated
+  }, []);
 
   const replaceMessagesFromApi = useCallback(async (limit: number = 50) => {
     if (!chatRoomId) return;
@@ -1450,15 +1420,6 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
         // Mark message as read and update unreadCount OUTSIDE of setMessages
         // This matches Next.js implementation in WebSocketContext
         if (shouldMarkAsRead) {
-          // Optimistically decrease unreadCount immediately
-          // This provides instant UI feedback, matching Next.js behavior
-          eventBus.emit(AppEvents.ChatRoomUpdated, {
-            chatRoomId,
-            updates: {
-              unreadCountDecrement: 1,
-            },
-          });
-          
           // Send WebSocket event to mark message as read immediately
           // Use socket.emit directly, matching Next.js implementation in WebSocketContext
           // Server will confirm via messageRead event
@@ -1574,20 +1535,11 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
       // Update unreadCount only if this is for the current user
       // Compare userId from event with current user's ID
       if (currentUserId && data.userId === currentUserId) {
-        // Decrement unreadCount by the number of messages that were marked as read
-        const readCount = data.messageIds.length; // Number of messages that were read
-        const currentUnread = chatRoom?.unreadCount || 0;
-        const nextUnread = Math.max(0, currentUnread - readCount);
-        
-        console.log(`📉 [useChatRoom] Decreasing unreadCount for ${chatRoomId}: ${currentUnread} - ${readCount} = ${nextUnread}`);
-        
-        // Update chat room's unreadCount through eventBus
-        // Use setTimeout to ensure state is updated before emitting event
         setTimeout(() => {
           eventBus.emit(AppEvents.ChatRoomUpdated, {
             chatRoomId,
             updates: {
-              unreadCount: nextUnread, // Decrement by readCount
+              unreadCount: 0,
             },
           });
         }, 0);
@@ -1682,19 +1634,6 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
           previousIsRead: message.isRead,
           previousReadBy: message.readBy,
         });
-
-        // If current user just read this message (and wasn't read before), decrease unreadCount
-        // This matches Next.js behavior in chatStore.updateMessage
-        // Note: If we optimistically marked it as read, wasReadByCurrentUser will be true,
-        // so we won't decrement unreadCount again
-        if (currentUserId && !wasReadByCurrentUser && isNowReadByCurrentUser) {
-          eventBus.emit(AppEvents.ChatRoomUpdated, {
-            chatRoomId,
-            updates: {
-              unreadCountDecrement: 1,
-            },
-          });
-        }
 
         // Save to cache asynchronously
         messagesCacheService.saveMessages(chatRoomId, updatedMessages).catch((error) => {

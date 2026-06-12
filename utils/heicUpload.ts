@@ -1,4 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
+import ReactNativeBlobUtil from 'react-native-blob-util';
 import { normalizeUploadMimeType } from '@/utils/mimeTypeUpload';
 
 const HEIC_FTYP_BRANDS = new Set([
@@ -106,6 +107,92 @@ export async function ensureHeicUploadMetadata(params: {
 	return {
 		filename,
 		mimeType: 'image/heic',
+	};
+}
+
+export type PreparedHeicUploadFile = {
+	fileUri: string;
+	filename: string;
+	mimeType: string;
+	fileSize: number;
+};
+
+/**
+ * Convert HEIC/HEIF to JPEG via backend before uploading to object storage.
+ * Non-HEIC files are returned unchanged.
+ */
+export async function convertHeicAttachmentForUpload(params: {
+	fileUri: string;
+	filename: string;
+	mimeType?: string;
+	accessToken: string;
+}): Promise<PreparedHeicUploadFile> {
+	const fileInfo = await FileSystem.getInfoAsync(params.fileUri);
+	if (!fileInfo.exists) {
+		throw new Error('Selected file is missing or could not be read');
+	}
+
+	const isHeic = await isHeicAttachment(params);
+	if (!isHeic) {
+		return {
+			fileUri: params.fileUri,
+			filename: params.filename,
+			mimeType: normalizeUploadMimeType(params.filename, params.mimeType),
+			fileSize: fileInfo.size || 0,
+		};
+	}
+
+	const uploadName = /\.(heic|heif)$/i.test(params.filename)
+		? params.filename
+		: params.filename.includes('.')
+			? params.filename.replace(/\.[^.]+$/, '.heic')
+			: `${params.filename}.heic`;
+
+	const base = process.env.EXPO_PUBLIC_API_BASE_URL;
+	if (!base) {
+		throw new Error('API base URL is not configured');
+	}
+
+	const response = await ReactNativeBlobUtil.config({
+		fileCache: true,
+		appendExt: 'jpg',
+	})
+		.fetch(
+			'POST',
+			`${base}/v1/storage/convert-heic`,
+			{
+				Authorization: `Bearer ${params.accessToken}`,
+				'Content-Type': 'multipart/form-data',
+			},
+			[
+				{
+					name: 'file',
+					filename: uploadName,
+					type: 'image/heic',
+					data: ReactNativeBlobUtil.wrap(params.fileUri),
+				},
+			],
+		)
+		.catch((error: unknown) => {
+			throw new Error(
+				error instanceof Error ? error.message : 'Failed to convert HEIC image',
+			);
+		});
+
+	const status = response.info().status;
+	if (status < 200 || status >= 300) {
+		throw new Error(`Failed to convert HEIC image (${status})`);
+	}
+
+	const jpegUri = response.path();
+	const jpegInfo = await FileSystem.getInfoAsync(jpegUri);
+	const jpegFilename = toJpegFilename(params.filename);
+
+	return {
+		fileUri: jpegUri.startsWith('file://') ? jpegUri : `file://${jpegUri}`,
+		filename: jpegFilename,
+		mimeType: 'image/jpeg',
+		fileSize: jpegInfo.exists && 'size' in jpegInfo ? jpegInfo.size : fileInfo.size || 0,
 	};
 }
 

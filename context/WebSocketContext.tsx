@@ -12,6 +12,7 @@ import { messagesCacheService } from '@/services/MessagesCacheService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { syncAppLocationSettingsFromBackend } from '@/utils/appLocationSettings';
 import { normalizeChatParticipants } from '@/utils/normalizeChatParticipants';
+import { proactiveRefreshFromSecureStorage } from '@/utils/accessTokenRefresh';
 
 // WebSocket context interface
 interface WebSocketContextType {
@@ -73,7 +74,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   const reconnectTimeoutRef = useRef<number | null>(null);
   const periodicRetryIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttempts = useRef(0);
-  const maxReconnectAttempts = 5;
+  const maxReconnectAttempts = 20;
   const isConnectingRef = useRef(false);
   const hasConnectedOnceRef = useRef(false);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
@@ -100,9 +101,18 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       return;
     }
 
-    if (socket || isConnectingRef.current) {
+    if (isConnectingRef.current) {
       return;
     }
+
+    if (socket?.connected) {
+      return;
+    }
+
+    if (socket && !socket.connected && socket.active) {
+      return;
+    }
+
     isConnectingRef.current = true;
     // Only connect if we have a current user
     if (!currentUser) {
@@ -110,28 +120,34 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       return;
     }
 
-    // Disconnect existing connection if any
+    // Disconnect stale socket if any
     if (socket) {
+      (socket as Socket).removeAllListeners();
       (socket as Socket).disconnect();
       setSocket(null);
     }
+
+    await proactiveRefreshFromSecureStorage();
 
     // Get token from secure storage
     const token = await getAuthToken();
 
     if (!token) {
       console.warn('⚠️ [WebSocket] No access token available');
+      isConnectingRef.current = false;
       return;
     }
 
     // Validate WebSocket URL
     if (!WS_URL) {
       console.error('❌ [WebSocket] WS_URL is not defined');
+      isConnectingRef.current = false;
       return;
     }
 
     if (WS_URL.includes('https/')) {
       console.error('❌ [WebSocket] Invalid WebSocket URL:', WS_URL);
+      isConnectingRef.current = false;
       return;
     }
 
@@ -142,15 +158,13 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       auth: {
         token: token,
       },
-      transports: ['websocket', 'polling'], // Fallback to polling if websocket fails
+      transports: ['websocket', 'polling'],
       timeout: 20000,
-      forceNew: true,
-      // Enable automatic reconnection with exponential backoff
       reconnection: true,
-      reconnectionAttempts: maxReconnectAttempts,
-      reconnectionDelay: 1000, // Initial delay
-      reconnectionDelayMax: 30000, // Max delay
-      randomizationFactor: 0.5, // Add randomness to prevent thundering herd
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 30000,
+      randomizationFactor: 0.5,
     });
 
     // Connection event handlers
@@ -201,29 +215,22 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       }
     });
 
+    newSocket.io.on('reconnect_attempt', () => {
+      void proactiveRefreshFromSecureStorage().then(async () => {
+        const freshToken = await getAuthToken();
+        if (freshToken) {
+          newSocket.auth = { token: freshToken };
+        }
+      });
+    });
+
     newSocket.on('disconnect', (reason) => {
       setIsConnected(false);
       isConnectingRef.current = false;
 
       console.log('🔌 [WebSocket] Disconnected, reason:', reason);
 
-      // Attempt to reconnect if disconnected unexpectedly
-      // Handle various disconnect reasons:
-      // - 'io server disconnect': Server closed connection
-      // - 'transport close': Network issue or connection lost
-      // - 'io client disconnect': Client manually disconnected (don't reconnect)
-      // - 'ping timeout': Server didn't respond to ping (network issue)
-      if (reason === 'io server disconnect' || 
-          reason === 'transport close' || 
-          reason === 'ping timeout' ||
-          reason === 'transport error') {
-        // Socket.IO will handle automatic reconnection, but we also track it manually
-        // Reset our counter to allow Socket.IO's built-in reconnection to work
-        // We'll only use manual reconnection if Socket.IO gives up
-        console.log(`🔄 [WebSocket] Disconnected (${reason}), Socket.IO will attempt automatic reconnection...`);
-      } else if (reason === 'io client disconnect') {
-        // Client manually disconnected, don't reconnect
-        console.log('ℹ️ [WebSocket] Client manually disconnected, not attempting reconnect');
+      if (reason === 'io client disconnect') {
         reconnectAttempts.current = 0;
       }
     });
@@ -232,26 +239,15 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       console.error('❌ [WebSocket] Connection error:', error.message);
       setIsConnected(false);
       isConnectingRef.current = false;
-      
-      // Attempt to reconnect on connection error
-      // This handles network issues, server unavailable, etc.
-      if (reconnectAttempts.current < maxReconnectAttempts) {
-        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
-        console.log(`🔄 [WebSocket] Connection error, attempting reconnect in ${delay}ms (attempt ${reconnectAttempts.current + 1}/${maxReconnectAttempts})`);
-        
-        // Clear any existing timeout
-        if (reconnectTimeoutRef.current) {
-          clearTimeout(reconnectTimeoutRef.current);
+
+      void proactiveRefreshFromSecureStorage().then(async (result) => {
+        if (result.outcome === 'refreshed' || result.outcome === 'skipped') {
+          const freshToken = await getAuthToken();
+          if (freshToken) {
+            newSocket.auth = { token: freshToken };
+          }
         }
-        
-        reconnectTimeoutRef.current = setTimeout(() => {
-          reconnectAttempts.current += 1;
-          console.log(`🔄 [WebSocket] Retrying connection (attempt ${reconnectAttempts.current}/${maxReconnectAttempts})...`);
-          connect();
-        }, delay);
-      } else {
-        console.error(`❌ [WebSocket] Max reconnection attempts (${maxReconnectAttempts}) reached. Stopping reconnection attempts.`);
-      }
+      });
     });
 
     // Handle Socket.IO reconnection events
@@ -270,32 +266,24 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       console.error(`❌ [WebSocket] Socket.IO reconnection error:`, error.message);
     });
 
-    newSocket.on('reconnect_failed', () => {
-      console.error(`❌ [WebSocket] Socket.IO reconnection failed after ${maxReconnectAttempts} attempts`);
-      reconnectAttempts.current = maxReconnectAttempts; // Mark as failed
-      
-      // Even after Socket.IO gives up, we should still try to reconnect periodically
-      // This allows recovery if network comes back later
-      console.log('💡 [WebSocket] Will retry connection periodically every 30 seconds...');
-      
-      // Clear any existing periodic retry
+    newSocket.io.on('reconnect_failed', () => {
+      console.error('❌ [WebSocket] Socket.IO reconnection failed');
+      isConnectingRef.current = false;
+
       if (periodicRetryIntervalRef.current) {
-        clearInterval(periodicRetryIntervalRef.current);
+        return;
       }
-      
+
       periodicRetryIntervalRef.current = setInterval(() => {
-        if (!isConnected && !isConnectingRef.current && currentUser) {
-          console.log('🔄 [WebSocket] Periodic retry: attempting to reconnect...');
-          reconnectAttempts.current = 0; // Reset attempts for periodic retry
-          connect();
-        } else if (isConnected) {
-          // Connection succeeded, clear interval
-          if (periodicRetryIntervalRef.current) {
-            clearInterval(periodicRetryIntervalRef.current);
-            periodicRetryIntervalRef.current = null;
-          }
+        if (!currentUser) {
+          return;
         }
-      }, 30000); // Retry every 30 seconds
+        if (isConnected || isConnectingRef.current) {
+          return;
+        }
+        reconnectAttempts.current = 0;
+        connect();
+      }, 30000);
     });
 
     // Handle server's connected event
@@ -439,28 +427,13 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           });
         }
 
-        // Update unreadCount based on whether chat is active:
-        // 1. If chat is active and message is marked as read immediately -> unreadCount doesn't change
-        //    (message never counts as unread)
-        // 2. If chat is NOT active and message is NOT from current user -> increment unreadCount
-        //    (message counts as unread)
-        if (!isMessageFromCurrentUser && !shouldMarkAsRead) {
-          // Chat is not active, message is not from current user -> increment unreadCount
-          updates.unreadCountIncrement = 1;
-        }
-        // If shouldMarkAsRead is true, we don't update unreadCount because message is immediately marked as read
-        // and never counts as unread
-
-        // Update chat room in store (unreadCount increment if needed)
+        // Unread badge: chatUnreadCountUpdated from server (authoritative)
         try {
-          const { chatRooms: updatedRooms, updateChatRoom: updateRoom } = useChatStore.getState();
-          let patch: any = { lastMessage: updates.lastMessage, updatedAt: updates.updatedAt };
-          if (updates.unreadCountIncrement) {
-            const room = updatedRooms.find((r: ChatRoom) => r.id === messageData.chatRoomId);
-            const currentUnread = room?.unreadCount || 0;
-            patch.unreadCount = currentUnread + updates.unreadCountIncrement;
-          }
-          updateRoom(messageData.chatRoomId, patch);
+          const { updateChatRoom: updateRoom } = useChatStore.getState();
+          updateRoom(messageData.chatRoomId, {
+            lastMessage: updates.lastMessage,
+            updatedAt: updates.updatedAt,
+          });
         } catch {}
       }
     });
@@ -1000,47 +973,33 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       }
     });
 
+    newSocket.on(
+      'chatUnreadCountUpdated',
+      (data: { chatRoomId: string; unreadCount: number }) => {
+        if (!data?.chatRoomId) return;
+        try {
+          const unreadCount = Math.max(0, data.unreadCount ?? 0);
+          const { updateChatRoom } = useChatStore.getState();
+          updateChatRoom(data.chatRoomId, { unreadCount });
+          const { chatCacheService } = require('@/services/ChatCacheService');
+          chatCacheService
+            .updateChatRoom(data.chatRoomId, { unreadCount })
+            .catch(() => {});
+        } catch (error) {
+          console.error('❌ [WebSocket] Failed to apply chatUnreadCountUpdated:', error);
+        }
+      }
+    );
+
     // Handle bulk messages marked as read (when markChatRoomAsRead is called)
-    // This updates unreadCount in the chat room list
     newSocket.on('messagesMarkedAsRead', (data: { chatRoomId: string; messageIds: string[]; userId: string }) => {
       console.log('✅ [WebSocket] Messages marked as read:', data);
       try {
         const { markMessagesRead } = useChatStore.getState();
         markMessagesRead(data.chatRoomId, data.messageIds, data.userId);
-        
-        // Only update unreadCount if this is for the current user
-        // Compare userId from event with current user's ID
-        if (data.userId === currentUser?.id) {
-          try {
-            const { chatRooms, updateChatRoom } = useChatStore.getState();
-            const room = chatRooms.find((r: ChatRoom) => r.id === data.chatRoomId);
-            if (room) {
-              // Decrement unreadCount by the number of messages that were marked as read
-              const currentUnread = room.unreadCount || 0;
-              const readCount = data.messageIds.length; // Number of messages that were read
-              const nextUnread = Math.max(0, currentUnread - readCount);
-              
-              console.log(`📉 [WebSocket] Decreasing unreadCount for ${data.chatRoomId}: ${currentUnread} - ${readCount} = ${nextUnread}`);
-              
-              // Update unreadCount for this chat room
-              updateChatRoom(data.chatRoomId, { unreadCount: nextUnread });
-              
-              // Also update cache to ensure persistence
-              const { chatCacheService } = require('@/services/ChatCacheService');
-              chatCacheService.updateChatRoom(data.chatRoomId, { unreadCount: nextUnread }).catch(() => {});
-            }
-          } catch (error) {
-            console.error('❌ [WebSocket] Failed to update unreadCount:', error);
-          }
-        } else {
-          // userId doesn't match current user - this is for read receipts only
-          // Don't update unreadCount for current user
-          console.log(`ℹ️ [WebSocket] messagesMarkedAsRead for different user (${data.userId}), skipping unreadCount update`);
-        }
       } catch {}
 
       // Emit event through eventBus so useChatRoom can handle it
-      // This ensures proper handling for GROUP and LOAD chats
       const { eventBus, AppEvents } = require('@/services/EventBus');
       eventBus.emit(AppEvents.MessagesMarkedAsRead, data);
     });
@@ -1132,9 +1091,14 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   }, [socket, isConnected]);
 
   const markChatRoomAsRead = useCallback((chatRoomId: string) => {
-    if (socket && isConnected && String(appStateRef.current).match(/active/)) {
-      socket.emit('markChatRoomAsRead', { chatRoomId });
+    if (!socket || !isConnected || !String(appStateRef.current).match(/active/)) {
+      return;
     }
+    const room = useChatStore.getState().chatRooms.find((r: ChatRoom) => r.id === chatRoomId);
+    if ((room?.unreadCount ?? 0) > 0) {
+      useChatStore.getState().updateChatRoom(chatRoomId, { unreadCount: 0 });
+    }
+    socket.emit('markChatRoomAsRead', { chatRoomId });
   }, [socket, isConnected]);
 
   // Offer lists / detail — same server event as Next.js (OffersRealtimeService.emitOfferUpdated)
@@ -1157,15 +1121,13 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   // Auto-connect when user is available
   useEffect(() => {
     if (currentUser) {
-      if (!isConnected && !socket && !isConnectingRef.current) {
+      if (!socket?.connected && !socket?.active && !isConnectingRef.current) {
         connect();
       }
-    } else {
-      if (isConnected) {
-        disconnect();
-      }
+    } else if (isConnected || socket) {
+      disconnect();
     }
-  }, [currentUser, isConnected, socket]);
+  }, [currentUser, isConnected, socket, connect, disconnect]);
 
   // Disconnect event via EventBus is no longer used; call disconnect directly where needed
 
@@ -1195,17 +1157,15 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           wasInBackgroundRef.current = false;
         }
 
-        // If we are truly disconnected, try to reconnect
-        if (!isConnected && !socket && !isConnectingRef.current) {
-          console.log('📱 [WebSocket] App became active, resetting reconnection attempts and attempting to reconnect...');
+        if (!socket?.connected && !socket?.active && !isConnectingRef.current) {
+          console.log('📱 [WebSocket] App became active, attempting to reconnect...');
           reconnectAttempts.current = 0;
-          
-          // Clear any existing timeout
+
           if (reconnectTimeoutRef.current) {
             clearTimeout(reconnectTimeoutRef.current);
             reconnectTimeoutRef.current = null;
           }
-          
+
           connect();
         } else if (isConnected && wasInBackground) {
           console.log('✅ [WebSocket] App became active, WebSocket already connected');

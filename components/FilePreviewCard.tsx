@@ -13,9 +13,10 @@ import { imageCacheService } from '@/services/ImageCacheService';
 import { secureStorage } from '@/utils/secureStorage';
 import { getHeicConvertApiUrl, toJpegFilename } from '@/utils/heicUpload';
 import {
-	ensureChatImageThumbnail,
+	prefetchChatImageThumbnail,
 	getChatImageThumbnailUrl,
 	isChatImageThumbnailUrl,
+	isChatImageThumbnailCandidate,
 } from '@/utils/chatImageThumbnail';
 import ChatMediaPreviewPlaceholder from '@/components/chat/ChatMediaPreviewPlaceholder';
 
@@ -203,15 +204,13 @@ export default function FilePreviewCard({
 		let cancelled = false;
 
 		const loadPreview = async () => {
+			const thumbUrl = getChatImageThumbnailUrl(fileUrl, name);
+
 			if (needsLocalImageOpen) {
-				try {
-					const thumbUrl = await ensureChatImageThumbnail(fileUrl, name);
-					if (cancelled) return;
-					thumbEnsureAttemptedRef.current = true;
+				if (thumbUrl) {
 					setPreviewImageUri(thumbUrl);
+					prefetchChatImageThumbnail(fileUrl, name);
 					return;
-				} catch {
-					if (cancelled) return;
 				}
 
 				const accessToken = await secureStorage.getItemAsync('accessToken').catch(() => null);
@@ -221,10 +220,19 @@ export default function FilePreviewCard({
 					uri: getHeicConvertApiUrl(fileUrl),
 					headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
 				});
+				prefetchChatImageThumbnail(fileUrl, name);
 				return;
 			}
 
-			setPreviewImageUri(getChatImageThumbnailUrl(fileUrl, name) ?? fileUrl);
+			if (thumbUrl && isChatImageThumbnailCandidate(name)) {
+				setPreviewImageUri(thumbUrl);
+				prefetchChatImageThumbnail(fileUrl, name);
+			} else {
+				setPreviewImageUri(fileUrl);
+				if (isChatImageThumbnailCandidate(name)) {
+					prefetchChatImageThumbnail(fileUrl, name);
+				}
+			}
 		};
 
 		loadPreview().catch(() => {
@@ -533,20 +541,16 @@ export default function FilePreviewCard({
 			!thumbEnsureAttemptedRef.current
 		) {
 			thumbEnsureAttemptedRef.current = true;
-			ensureChatImageThumbnail(fileUrl, name)
-				.then((url) => {
-					setPreviewImageUri(url);
-				})
-				.catch(() => {
-					if (needsLocalImageOpen && tryHeicConvertPreview()) {
-						return;
-					}
-					if (failedUri !== fileUrl) {
-						setPreviewImageUri(fileUrl);
-						return;
-					}
-					setLoadError('Failed to load image preview');
-				});
+			prefetchChatImageThumbnail(fileUrl, name);
+
+			if (needsLocalImageOpen && tryHeicConvertPreview()) {
+				return;
+			}
+			if (failedUri !== fileUrl) {
+				setPreviewImageUri(fileUrl);
+				return;
+			}
+			setLoadError('Failed to load image preview');
 			return;
 		}
 

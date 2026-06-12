@@ -110,3 +110,11 @@ export async function ensureChatImageThumbnail(
 
 	return data.thumbnailUrl;
 }
+
+/** Fire-and-forget thumbnail generation after upload or when scrolling into view. */
+export function prefetchChatImageThumbnail(fileUrl: string, fileName: string): void {
+	if (!fileUrl || !isChatImageThumbnailCandidate(fileName)) {
+		return;
+	}
+	void ensureChatImageThumbnail(fileUrl, fileName).catch(() => {});
+}

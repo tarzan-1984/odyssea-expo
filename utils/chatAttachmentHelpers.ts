@@ -4,8 +4,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { secureStorage } from '@/utils/secureStorage';
 import { uploadChatFilesBatch } from '@/app-api/upload';
-import { ensureHeicUploadMetadata } from '@/utils/heicUpload';
-import { formatUploadErrorMessage } from '@/utils/mimeTypeUpload';
+import { normalizeUploadMimeType, formatUploadErrorMessage } from '@/utils/mimeTypeUpload';
 
 export interface FileData {
   uri: string;
@@ -31,18 +30,12 @@ export type ChatSendMessageFn = (
   attachments?: ChatSendFileAttachment[],
 ) => Promise<void>;
 
-/** Normalize iOS gallery/camera metadata so HEIC uploads use the correct name and MIME. */
+/** Normalize attachment metadata before upload (HEIC conversion happens in upload.ts). */
 export async function normalizeAttachmentForUpload(file: FileData): Promise<FileData> {
-  const meta = await ensureHeicUploadMetadata({
-    fileUri: file.uri,
-    filename: file.name,
-    mimeType: file.mimeType,
-  });
-  return {
-    ...file,
-    name: meta.filename,
-    mimeType: meta.mimeType,
-  };
+	return {
+		...file,
+		mimeType: normalizeUploadMimeType(file.name, file.mimeType),
+	};
 }
 
 export async function uploadAttachmentFile(file: FileData): Promise<{ fileUrl: string; fileName: string; fileSize: number }> {

@@ -1,6 +1,6 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import { ensureHeicUploadMetadata } from '@/utils/heicUpload';
-import { normalizeUploadMimeType } from '@/utils/mimeTypeUpload';
+import { convertHeicAttachmentForUpload } from '@/utils/heicUpload';
+import { prefetchChatImageThumbnail, isChatImageThumbnailCandidate } from '@/utils/chatImageThumbnail';
 
 type PresignResponse = {
 	uploadUrl: string;
@@ -118,25 +118,14 @@ async function prepareUploadFile(params: {
 	fileUri: string;
 	filename: string;
 	mimeType?: string;
+	accessToken: string;
 }): Promise<PreparedUploadFile> {
-	const fileInfo = await FileSystem.getInfoAsync(params.fileUri);
-	if (!fileInfo.exists) {
-		throw new Error('Selected file is missing or could not be read');
-	}
-
-	const heicMeta = await ensureHeicUploadMetadata({
+	return convertHeicAttachmentForUpload({
 		fileUri: params.fileUri,
 		filename: params.filename,
 		mimeType: params.mimeType,
+		accessToken: params.accessToken,
 	});
-	const mimeType = normalizeUploadMimeType(heicMeta.filename, heicMeta.mimeType);
-
-	return {
-		fileUri: params.fileUri,
-		filename: heicMeta.filename,
-		mimeType,
-		fileSize: fileInfo.size || 0,
-	};
 }
 
 async function runWithConcurrency<T>(
@@ -175,7 +164,16 @@ export async function uploadChatFilesBatch(params: {
 	if (files.length === 0) return [];
 
 	const concurrency = params.concurrency ?? DEFAULT_UPLOAD_CONCURRENCY;
-	const prepared = await Promise.all(files.map((f) => prepareUploadFile(f)));
+	const prepared = await Promise.all(
+		files.map((f) =>
+			prepareUploadFile({
+				fileUri: f.fileUri,
+				filename: f.filename,
+				mimeType: f.mimeType,
+				accessToken,
+			}),
+		),
+	);
 
 	const presigned = await getPresignedUploadBatch({
 		files: prepared.map((f) => ({ filename: f.filename, mimeType: f.mimeType })),
@@ -224,12 +222,19 @@ export async function uploadChatFilesBatch(params: {
 		throw new Error(message);
 	}
 
-	return outcomes.map((o) => (o as Extract<UploadOutcome, { ok: true }>).file);
+	const uploaded = outcomes.map((o) => (o as Extract<UploadOutcome, { ok: true }>).file);
+	for (const item of uploaded) {
+		if (isChatImageThumbnailCandidate(item.fileName)) {
+			prefetchChatImageThumbnail(item.fileUrl, item.fileName);
+		}
+	}
+
+	return uploaded;
 }
 
 /**
  * Upload a chat attachment via presigned URL.
- * HEIC/HEIF files are stored as-is; conversion happens on the server when viewing/downloading.
+ * HEIC/HEIF files are converted to JPEG on the server before upload.
  */
 export async function uploadChatFileViaPresign(params: {
 	fileUri: string;
