@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { View, Text, StyleSheet, Image, useWindowDimensions, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Image, useWindowDimensions, Pressable, TouchableOpacity, ActivityIndicator } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { colors, fonts, fp, rem } from '@/lib';
 import FilePreviewCard from '@/components/FilePreviewCard';
@@ -13,6 +13,8 @@ import { getIncomingMessageMeta } from '@/utils/chatMessageMeta';
 import MessageReactions, { MessageReactionAnchor, MessageReactionPicker } from '@/components/MessageReactions';
 import { Message } from '@/components/ChatListItem';
 import { getMessageMultiAttachments } from '@/utils/messageAttachments';
+import { isOptimisticMessageId } from '@/utils/optimisticChatMessage';
+import PendingOutgoingMedia from '@/components/chat/PendingOutgoingMedia';
 import { formatNyWallClockDateTime } from '@/utils/nyWallClock';
 
 type Props = {
@@ -23,6 +25,7 @@ type Props = {
 	shouldLoadMedia?: boolean;
 	onReplyPress?: (message: Message) => void;
 	onDeletePress?: (message: Message) => void;
+	onRetryPress?: (message: Message) => void;
 };
 
 export default function MessageItem({
@@ -33,6 +36,7 @@ export default function MessageItem({
 	shouldLoadMedia = true,
 	onReplyPress,
 	onDeletePress,
+	onRetryPress,
 }: Props) {
 	const { width: windowWidth } = useWindowDimensions();
 	const bubbleRef = useRef<View>(null);
@@ -117,11 +121,25 @@ export default function MessageItem({
 		() => (isSender ? null : getIncomingMessageMeta(message, chatType)),
 		[isSender, message, chatType]
 	);
-	const canDeleteMessage = isSender && normalizedCurrentUserRole.length > 0 && normalizedCurrentUserRole !== 'DRIVER';
-	const multiAttachments = getMessageMultiAttachments(message);
-	const showSingleFile = Boolean(!multiAttachments && message.fileUrl);
-	const hasFiles = Boolean(multiAttachments || showSingleFile);
-	const showMessageMenu = !isSender || canDeleteMessage;
+	const canDeleteMessage =
+		isSender &&
+		!isOptimisticMessageId(message.id) &&
+		normalizedCurrentUserRole.length > 0 &&
+		normalizedCurrentUserRole !== 'DRIVER';
+	const multiAttachments = message.pendingOutgoing ? null : getMessageMultiAttachments(message);
+	const pendingAttachmentCount = message.pendingOutgoing?.localAttachments.length ?? 0;
+	const isPendingMultiAttach = pendingAttachmentCount >= 2;
+	const isMultiAttachLayout = Boolean(multiAttachments) || isPendingMultiAttach;
+	const showSingleFile = Boolean(!multiAttachments && !message.pendingOutgoing && message.fileUrl);
+	const hasFiles = Boolean(message.pendingOutgoing || multiAttachments || showSingleFile);
+	const showMessageMenu = (!isSender || canDeleteMessage) && !message.pendingOutgoing;
+	const pendingStatus = message.pendingOutgoing?.status;
+	const isPendingFailed = pendingStatus === 'failed';
+	const isPendingSending =
+		pendingStatus === 'uploading' || pendingStatus === 'sending';
+	const isPendingMedia =
+		message.pendingOutgoing?.kind === 'media' &&
+		(message.pendingOutgoing.localAttachments.length ?? 0) > 0;
 
 	/** Same visual budget as two single-file previews (rem(260) each) + padding/menu. */
 	const multiAttachBubbleWidth = useMemo(() => {
@@ -138,7 +156,13 @@ export default function MessageItem({
 
 	const messageBody = (
 		<>
-			{multiAttachments ? (
+			{isPendingMedia && message.pendingOutgoing ? (
+				<PendingOutgoingMedia
+					localAttachments={message.pendingOutgoing.localAttachments}
+					status={message.pendingOutgoing.status}
+					isSender={isSender}
+				/>
+			) : multiAttachments ? (
 				<View style={styles.multiAttachGrid}>
 					{multiAttachments.map((item, idx) => (
 						<View key={`${item.fileUrl}-${idx}`} style={styles.multiAttachCell}>
@@ -174,17 +198,76 @@ export default function MessageItem({
 				</View>
 			)}
 			{isSender ? (
-				<View style={styles.bubbleFooterRowSender}>
-					<View style={styles.bubbleFooterReadStatusIcon}>
-						{message.isRead ? (
-							<ReadCheckIcon width={rem(14)} height={rem(14)} color="rgba(255, 255, 255, 0.85)" />
-						) : (
-							<UnreadCheckIcon width={rem(14)} height={rem(14)} color="rgba(255, 255, 255, 0.85)" />
-						)}
-					</View>
-					<Text style={[styles.bubbleTimeText, styles.bubbleTimeTextSender]}>
-						{formatNyWallClockDateTime(message.createdAt)}
-					</Text>
+				<View
+					style={[
+						styles.bubbleFooterRowSender,
+						message.pendingOutgoing ? styles.bubbleFooterRowSenderPending : null,
+					]}
+				>
+					{message.pendingOutgoing ? (
+						<View style={styles.pendingFooterColumn}>
+							{isPendingSending ? (
+								<View style={styles.pendingStatusRow}>
+									<ActivityIndicator
+										size="small"
+										color={isSender ? colors.neutral.white : colors.primary.violet}
+									/>
+									<Text
+										numberOfLines={1}
+										style={[
+											styles.pendingStatusText,
+											isSender ? styles.pendingStatusTextSender : styles.pendingStatusTextOther,
+										]}
+									>
+										{pendingStatus === 'uploading' ? 'Uploading...' : 'Sending...'}
+									</Text>
+								</View>
+							) : null}
+							{isPendingFailed ? (
+								<View style={styles.pendingFailedRow}>
+									<Text
+										numberOfLines={1}
+										style={[
+											styles.pendingFailedLabel,
+											isSender ? styles.pendingStatusTextSender : styles.pendingStatusTextOther,
+										]}
+									>
+										Not sent
+									</Text>
+									<TouchableOpacity
+										style={[
+											styles.retryButton,
+											isSender ? styles.retryButtonSender : styles.retryButtonOther,
+										]}
+										onPress={() => onRetryPress?.(message)}
+										activeOpacity={0.8}
+									>
+										<Text
+											style={[
+												styles.retryButtonText,
+												isSender ? styles.retryButtonTextSender : styles.retryButtonTextOther,
+											]}
+										>
+											Retry
+										</Text>
+									</TouchableOpacity>
+								</View>
+							) : null}
+						</View>
+					) : (
+						<>
+							<View style={styles.bubbleFooterReadStatusIcon}>
+								{message.isRead ? (
+									<ReadCheckIcon width={rem(14)} height={rem(14)} color="rgba(255, 255, 255, 0.85)" />
+								) : (
+									<UnreadCheckIcon width={rem(14)} height={rem(14)} color="rgba(255, 255, 255, 0.85)" />
+								)}
+							</View>
+							<Text style={[styles.bubbleTimeText, styles.bubbleTimeTextSender]}>
+								{formatNyWallClockDateTime(message.createdAt)}
+							</Text>
+						</>
+					)}
 				</View>
 			) : (
 				<View style={styles.bubbleFooterRowIncoming}>
@@ -238,14 +321,20 @@ export default function MessageItem({
 						style={[
 							styles.messageBubble,
 							isSender ? styles.messageBubbleSender : styles.messageBubbleOther,
-							multiAttachments ? { width: multiAttachBubbleWidth, maxWidth: '100%' } : null,
+							isSender ? styles.messageBubbleOutgoing : null,
+							isPendingFailed && isSender ? styles.messageBubbleFailedSender : null,
+							isPendingFailed && !isSender ? styles.messageBubbleFailedOther : null,
+							isMultiAttachLayout ? { width: multiAttachBubbleWidth, maxWidth: '100%' } : null,
 						]}
 				>
+					{isPendingFailed ? (
+						<View style={styles.failedTintOverlay} pointerEvents="none" />
+					) : null}
 					<View
 						style={[
 							styles.bubbleContent,
 							showMessageMenu && styles.bubbleContentWithMenu,
-							multiAttachments && styles.bubbleContentMultiAttach,
+							isMultiAttachLayout && styles.bubbleContentMultiAttach,
 						]}
 					>
 						{messageBody}
@@ -420,9 +509,80 @@ const styles = StyleSheet.create({
 		backgroundColor: colors.primary.blue,
 		borderBottomRightRadius: 0,
 	},
+	messageBubbleOutgoing: {
+		alignSelf: 'flex-end',
+	},
 	messageBubbleOther: {
 		backgroundColor: colors.neutral.white,
 		borderBottomLeftRadius: 0,
+	},
+	messageBubbleFailedSender: {
+		borderWidth: 1,
+		borderColor: 'rgba(252, 165, 165, 0.45)',
+	},
+	messageBubbleFailedOther: {
+		borderWidth: 1,
+		borderColor: 'rgba(248, 113, 113, 0.35)',
+	},
+	failedTintOverlay: {
+		...StyleSheet.absoluteFillObject,
+		backgroundColor: 'rgba(239, 68, 68, 0.14)',
+		borderRadius: rem(10),
+		borderBottomRightRadius: 0,
+	},
+	pendingFooterColumn: {
+		alignSelf: 'flex-start',
+		gap: rem(6),
+	},
+	pendingStatusRow: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		alignSelf: 'flex-start',
+		gap: rem(6),
+		flexShrink: 0,
+	},
+	pendingFailedRow: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		alignSelf: 'flex-start',
+		gap: rem(8),
+		flexShrink: 0,
+	},
+	pendingFailedLabel: {
+		fontSize: fp(11),
+		fontFamily: fonts['400'],
+	},
+	pendingStatusText: {
+		fontSize: fp(11),
+		fontFamily: fonts['400'],
+		flexShrink: 0,
+	},
+	pendingStatusTextSender: {
+		color: 'rgba(255, 255, 255, 0.85)',
+	},
+	pendingStatusTextOther: {
+		color: 'rgba(41, 41, 102, 0.7)',
+	},
+	retryButton: {
+		paddingHorizontal: rem(12),
+		paddingVertical: rem(5),
+		borderRadius: rem(14),
+	},
+	retryButtonSender: {
+		backgroundColor: 'rgba(255, 255, 255, 0.18)',
+	},
+	retryButtonOther: {
+		backgroundColor: 'rgba(248, 113, 113, 0.15)',
+	},
+	retryButtonText: {
+		fontSize: fp(11),
+		fontFamily: fonts['700'],
+	},
+	retryButtonTextSender: {
+		color: colors.neutral.white,
+	},
+	retryButtonTextOther: {
+		color: colors.primary.blue,
 	},
 	messageText: {
 		fontSize: fp(17),
@@ -492,6 +652,10 @@ const styles = StyleSheet.create({
 		justifyContent: 'space-between',
 		marginTop: rem(10),
 		gap: rem(6),
+	},
+	bubbleFooterRowSenderPending: {
+		justifyContent: 'flex-end',
+		marginTop: rem(6),
 	},
 	bubbleFooterRowIncoming: {
 		flexDirection: 'row',

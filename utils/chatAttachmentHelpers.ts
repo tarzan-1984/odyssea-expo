@@ -5,12 +5,25 @@ import * as ImagePicker from 'expo-image-picker';
 import { secureStorage } from '@/utils/secureStorage';
 import { uploadChatFilesBatch } from '@/app-api/upload';
 import { normalizeUploadMimeType, formatUploadErrorMessage } from '@/utils/mimeTypeUpload';
+import { CHAT_IMAGE_PICKER_FAST_OPTIONS } from '@/utils/chatImagePickerOptions';
+import {
+  beginImageAttachmentFlow,
+  cancelImageAttachmentFlow,
+  completeDeviceImagePrepareFlow,
+  completeDevicePickerExportFlow,
+} from '@/utils/chatImageFlowTiming';
+import { prepareChatImageForUpload, prepareChatImagesForUpload } from '@/utils/chatImagePrepare';
+import { toJpegFilename, logPickerImageResult } from '@/utils/heicUpload';
 
 export interface FileData {
   uri: string;
   name: string;
   mimeType?: string;
   size?: number;
+  /** Original asset filename before JPEG rename (e.g. IMG_1234.HEIC). */
+  originalName?: string;
+  width?: number;
+  height?: number;
 }
 
 export interface UploadQueueItem {
@@ -30,7 +43,18 @@ export type ChatSendMessageFn = (
   attachments?: ChatSendFileAttachment[],
 ) => Promise<void>;
 
-/** Normalize attachment metadata before upload (HEIC conversion happens in upload.ts). */
+export type AttachmentPickCallbacks = {
+  onProcessingChange?: (processing: boolean) => void;
+};
+
+/** Lets React paint a processing overlay before a blocking native picker call. */
+async function yieldToUi(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
+
+/** Normalize attachment metadata before upload (HEIC → JPEG on device, server batch fallback). */
 export async function normalizeAttachmentForUpload(file: FileData): Promise<FileData> {
 	return {
 		...file,
@@ -65,6 +89,7 @@ export async function uploadAttachmentFiles(
       fileUri: f.uri,
       filename: f.name,
       mimeType: f.mimeType,
+      originalName: f.originalName,
     })),
     accessToken: token,
     onFileComplete: (index, success) => {
@@ -98,48 +123,105 @@ async function sendUploadedAttachments(
 /**
  * Pick files with DocumentPicker.
  */
-export async function pickFiles(): Promise<FileData[]> {
-  const result = await DocumentPicker.getDocumentAsync({
-    multiple: true,
-    copyToCacheDirectory: true,
-    type: '*/*',
-  });
-  if (result.canceled) return [];
-  const files = (result.assets || []).map((a) => ({
-    uri: a.uri,
-    name: a.name || 'file',
-    mimeType: a.mimeType || undefined,
-    size: a.size || undefined,
-  }));
-  return files;
+export async function pickFiles(callbacks?: AttachmentPickCallbacks): Promise<FileData[]> {
+  try {
+    const result = await DocumentPicker.getDocumentAsync({
+      multiple: true,
+      copyToCacheDirectory: true,
+      type: '*/*',
+    });
+    if (result.canceled) return [];
+    return (result.assets || []).map((a) => ({
+      uri: a.uri,
+      name: a.name || 'file',
+      mimeType: a.mimeType || undefined,
+      size: a.size || undefined,
+    }));
+  } finally {
+    callbacks?.onProcessingChange?.(false);
+  }
 }
 
 /**
  * Capture a photo using device camera and return as a single-file array.
  */
-export async function capturePhoto(): Promise<FileData[]> {
-  const { status } = await ImagePicker.requestCameraPermissionsAsync();
-  if (status !== 'granted') {
-    Alert.alert('Camera permission', 'Camera permission is required to take photos.');
+export async function capturePhoto(
+  callbacks?: AttachmentPickCallbacks,
+): Promise<FileData[]> {
+  beginImageAttachmentFlow('camera');
+  callbacks?.onProcessingChange?.(true);
+  await yieldToUi();
+  try {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Camera permission', 'Camera permission is required to take photos.');
+      cancelImageAttachmentFlow('canceled');
+      return [];
+    }
+    const pickerStartedAt = Date.now();
+    const result = await ImagePicker.launchCameraAsync({
+      ...CHAT_IMAGE_PICKER_FAST_OPTIONS,
+    });
+    if (result.canceled) {
+      cancelImageAttachmentFlow('canceled');
+      return [];
+    }
+    const asset = result.assets?.[0];
+    if (!asset) {
+      cancelImageAttachmentFlow('empty');
+      return [];
+    }
+    const pickerDurationMs = Date.now() - pickerStartedAt;
+    const mimeType = asset.mimeType || 'image/jpeg';
+    const rawName = asset.fileName || `photo_${Date.now()}.jpg`;
+    const filename =
+      mimeType === 'image/jpeg' && /\.(heic|heif)$/i.test(rawName)
+        ? toJpegFilename(rawName)
+        : rawName;
+    const rawFile: FileData = {
+      uri: asset.uri,
+      name: filename,
+      mimeType,
+      size: asset.fileSize || undefined,
+      originalName: rawName !== filename ? rawName : undefined,
+    };
+
+    completeDevicePickerExportFlow({
+      fileCount: 1,
+      fileNames: [rawFile.name],
+      exportDurationMs: pickerDurationMs,
+      includesGallerySelection: false,
+    });
+
+    const prepareStartedAt = Date.now();
+    const prepared = await prepareChatImageForUpload({
+      ...rawFile,
+      width: asset.width,
+      height: asset.height,
+    });
+    completeDeviceImagePrepareFlow({
+      fileCount: 1,
+      fileNames: [prepared.name],
+      prepareDurationMs: Date.now() - prepareStartedAt,
+      pickerDurationMs,
+    });
+
+    await logPickerImageResult({
+      stage: 'Camera',
+      originalFilename: rawName,
+      originalMimeType: asset.mimeType,
+      resultUri: prepared.uri,
+      resultFilename: prepared.name,
+      resultMimeType: prepared.mimeType,
+      sizeBytes: prepared.size,
+    });
+    return [prepared];
+  } catch {
+    cancelImageAttachmentFlow('error');
     return [];
+  } finally {
+    callbacks?.onProcessingChange?.(false);
   }
-  const result = await ImagePicker.launchCameraAsync({
-    quality: 0.9,
-    allowsEditing: false,
-    exif: false,
-  });
-  if (result.canceled) return [];
-  const asset = result.assets?.[0];
-  if (!asset) return [];
-  const filename = asset.fileName || `photo_${Date.now()}.jpg`;
-  const mimeType = asset.mimeType || 'image/jpeg';
-  const file: FileData = {
-    uri: asset.uri,
-    name: filename,
-    mimeType,
-    size: asset.fileSize || undefined,
-  };
-  return [await normalizeAttachmentForUpload(file)];
 }
 
 function fileDataFromGalleryAsset(
@@ -148,32 +230,49 @@ function fileDataFromGalleryAsset(
 ): FileData {
   const fileName = asset.fileName || (asset as any).filename || '';
   const fileExtension = fileName.split('.').pop()?.toLowerCase() || '';
-  const fallbackExt = fileExtension || 'jpg';
-  const filename =
-    fileName ||
-    `photo_${Date.now()}_${uniqueIndex}.${fallbackExt}`;
   const mimeType = asset.mimeType || (fileExtension ? undefined : 'image/jpeg');
+  const isJpegMime = mimeType === 'image/jpeg' || mimeType === 'image/jpg';
+
+  let filename =
+    fileName ||
+    `photo_${Date.now()}_${uniqueIndex}.${isJpegMime ? 'jpg' : fileExtension || 'jpg'}`;
+
+  // Picker may transcode to JPEG while keeping a .heic filename from the asset.
+  if (isJpegMime && /\.(heic|heif)$/i.test(filename)) {
+    filename = toJpegFilename(filename);
+  }
 
   return {
     uri: asset.uri,
     name: filename,
     mimeType,
     size: asset.fileSize || undefined,
+    originalName:
+      fileName && (fileName !== filename || /\.(heic|heif)$/i.test(fileName))
+        ? fileName
+        : undefined,
+    width: asset.width,
+    height: asset.height,
   };
 }
 
 /**
  * Pick photo(s) from device gallery (multi-select when supported by the OS).
  */
-export async function pickPhotoFromGallery(): Promise<FileData[]> {
+export async function pickPhotoFromGallery(
+  callbacks?: AttachmentPickCallbacks,
+): Promise<FileData[]> {
+  beginImageAttachmentFlow('gallery');
+  callbacks?.onProcessingChange?.(true);
+  await yieldToUi();
   try {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (status !== 'granted') {
       Alert.alert('Photo library permission', 'Photo library permission is required to select photos.');
+      cancelImageAttachmentFlow('canceled');
       return [];
     }
 
-    // Cross-version support for API (legacy MediaTypeOptions vs new MediaType)
     let mediaTypes: any;
     const MP: any = (ImagePicker as any).MediaType;
     if (MP && (MP.Images || MP.images || MP.image)) {
@@ -184,37 +283,72 @@ export async function pickPhotoFromGallery(): Promise<FileData[]> {
       mediaTypes = ['images'];
     }
 
-    console.log('[chatAttachmentHelpers] Opening image library with mediaTypes:', mediaTypes);
+    const pickerStartedAt = Date.now();
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes,
       allowsMultipleSelection: true,
       selectionLimit: 20,
-      quality: 0.9,
-      allowsEditing: false,
-      exif: false,
+      ...CHAT_IMAGE_PICKER_FAST_OPTIONS,
     });
 
     if (result.canceled) {
-      console.log('[chatAttachmentHelpers] User canceled image selection');
+      cancelImageAttachmentFlow('canceled');
       return [];
     }
 
     const assets = result.assets || [];
     if (assets.length === 0) {
-      console.warn('[chatAttachmentHelpers] No assets returned from image picker');
+      cancelImageAttachmentFlow('empty');
       return [];
     }
 
-    const files = await Promise.all(
-      assets.map(async (asset, i) =>
-        normalizeAttachmentForUpload(fileDataFromGalleryAsset(asset, i))
-      )
+    const pickerDurationMs = Date.now() - pickerStartedAt;
+    const rawFiles = assets.map((asset, i) => fileDataFromGalleryAsset(asset, i));
+
+    completeDevicePickerExportFlow({
+      fileCount: rawFiles.length,
+      fileNames: rawFiles.map((f) => f.name),
+      exportDurationMs: pickerDurationMs,
+      includesGallerySelection: true,
+    });
+
+    const prepareStartedAt = Date.now();
+    const files = await prepareChatImagesForUpload(rawFiles);
+    const prepareDurationMs = Date.now() - prepareStartedAt;
+
+    completeDeviceImagePrepareFlow({
+      fileCount: files.length,
+      fileNames: files.map((f) => f.name),
+      prepareDurationMs,
+      pickerDurationMs,
+    });
+
+    await Promise.all(
+      assets.map((asset, i) => {
+        const file = files[i];
+        const originalFilename =
+          asset.fileName || (asset as { filename?: string }).filename || file.name;
+        return logPickerImageResult({
+          stage: 'Gallery',
+          index: i,
+          originalFilename,
+          originalMimeType: asset.mimeType,
+          resultUri: file.uri,
+          resultFilename: file.name,
+          resultMimeType: file.mimeType,
+          sizeBytes: file.size,
+        });
+      }),
     );
+
     return files;
   } catch (error) {
     console.error('[chatAttachmentHelpers] Error picking photo from gallery:', error);
+    cancelImageAttachmentFlow('error');
     Alert.alert('Error', 'Failed to select photo from gallery. Please try again.');
     return [];
+  } finally {
+    callbacks?.onProcessingChange?.(false);
   }
 }
 
@@ -372,7 +506,10 @@ export function useAttachmentHandler(
   return handler;
 }
 
-export function useAttachmentPicker(onFilesSelected: (files: FileData[]) => void) {
+export function useAttachmentPicker(
+  onFilesSelected: (files: FileData[]) => void,
+  callbacks?: AttachmentPickCallbacks,
+) {
   const handler = useCallback(async () => {
     Alert.alert(
       'Attach',
@@ -381,21 +518,21 @@ export function useAttachmentPicker(onFilesSelected: (files: FileData[]) => void
         {
           text: 'Take photo',
           onPress: async () => {
-            const files = await capturePhoto();
+            const files = await capturePhoto(callbacks);
             if (files.length > 0) onFilesSelected(files);
           },
         },
         {
           text: 'Choose from gallery',
           onPress: async () => {
-            const files = await pickPhotoFromGallery();
+            const files = await pickPhotoFromGallery(callbacks);
             if (files.length > 0) onFilesSelected(files);
           },
         },
         {
           text: 'Pick files',
           onPress: async () => {
-            const files = await pickFiles();
+            const files = await pickFiles(callbacks);
             if (files.length > 0) onFilesSelected(files);
           },
         },
@@ -403,7 +540,7 @@ export function useAttachmentPicker(onFilesSelected: (files: FileData[]) => void
       ],
       { cancelable: true }
     );
-  }, [onFilesSelected]);
+  }, [callbacks, onFilesSelected]);
 
   return handler;
 }

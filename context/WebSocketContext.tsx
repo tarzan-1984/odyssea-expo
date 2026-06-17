@@ -10,7 +10,7 @@ import { chatApi } from '@/app-api/chatApi';
 import { ChatRoom, Message } from '@/components/ChatListItem';
 import { messagesCacheService } from '@/services/MessagesCacheService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { syncAppLocationSettingsFromBackend } from '@/utils/appLocationSettings';
+import { syncAppLocationSettingsWithDeviceContext } from '@/utils/appLocationSettings';
 import { normalizeChatParticipants } from '@/utils/normalizeChatParticipants';
 import { proactiveRefreshFromSecureStorage } from '@/utils/accessTokenRefresh';
 
@@ -36,6 +36,7 @@ interface WebSocketContextType {
 interface SendMessageData {
   chatRoomId: string;
   content: string;
+  clientMessageId?: string;
   fileUrl?: string;
   fileName?: string;
   fileSize?: number;
@@ -208,7 +209,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       try {
         const token = await AsyncStorage.getItem('@user_access_token');
         if (token) {
-          await syncAppLocationSettingsFromBackend(token);
+          await syncAppLocationSettingsWithDeviceContext(token);
         }
       } catch (e) {
         console.warn('[WebSocket] Failed to sync app location settings:', e);

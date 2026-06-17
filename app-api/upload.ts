@@ -1,5 +1,5 @@
 import * as FileSystem from 'expo-file-system/legacy';
-import { convertHeicAttachmentForUpload } from '@/utils/heicUpload';
+import { prepareHeicAttachmentsForUpload } from '@/utils/heicUpload';
 import { prefetchChatImageThumbnail, isChatImageThumbnailCandidate } from '@/utils/chatImageThumbnail';
 
 type PresignResponse = {
@@ -21,7 +21,7 @@ type PreparedUploadFile = {
 	fileSize: number;
 };
 
-const DEFAULT_UPLOAD_CONCURRENCY = 3;
+const DEFAULT_UPLOAD_CONCURRENCY = 4;
 
 async function getPresignedUpload(params: {
 	filename: string;
@@ -114,16 +114,17 @@ async function uploadLocalFileToPresignedUrl(params: {
 	}
 }
 
-async function prepareUploadFile(params: {
-	fileUri: string;
-	filename: string;
-	mimeType?: string;
+async function prepareUploadFiles(params: {
+	files: { fileUri: string; filename: string; mimeType?: string; originalName?: string }[];
 	accessToken: string;
-}): Promise<PreparedUploadFile> {
-	return convertHeicAttachmentForUpload({
-		fileUri: params.fileUri,
-		filename: params.filename,
-		mimeType: params.mimeType,
+}): Promise<PreparedUploadFile[]> {
+	return prepareHeicAttachmentsForUpload({
+		files: params.files.map((f) => ({
+			fileUri: f.fileUri,
+			filename: f.filename,
+			mimeType: f.mimeType,
+			originalFilename: f.originalName,
+		})),
 		accessToken: params.accessToken,
 	});
 }
@@ -155,7 +156,7 @@ async function runWithConcurrency<T>(
  * Falls back to per-file presign if the batch endpoint is unavailable (older backend).
  */
 export async function uploadChatFilesBatch(params: {
-	files: { fileUri: string; filename: string; mimeType?: string }[];
+	files: { fileUri: string; filename: string; mimeType?: string; originalName?: string }[];
 	accessToken: string;
 	concurrency?: number;
 	onFileComplete?: (index: number, success: boolean) => void;
@@ -164,16 +165,10 @@ export async function uploadChatFilesBatch(params: {
 	if (files.length === 0) return [];
 
 	const concurrency = params.concurrency ?? DEFAULT_UPLOAD_CONCURRENCY;
-	const prepared = await Promise.all(
-		files.map((f) =>
-			prepareUploadFile({
-				fileUri: f.fileUri,
-				filename: f.filename,
-				mimeType: f.mimeType,
-				accessToken,
-			}),
-		),
-	);
+	const prepared = await prepareUploadFiles({
+		files,
+		accessToken,
+	});
 
 	const presigned = await getPresignedUploadBatch({
 		files: prepared.map((f) => ({ filename: f.filename, mimeType: f.mimeType })),
@@ -234,7 +229,8 @@ export async function uploadChatFilesBatch(params: {
 
 /**
  * Upload a chat attachment via presigned URL.
- * HEIC/HEIF files are converted to JPEG on the server before upload.
+ * HEIC/HEIF from gallery/camera are transcoded to JPEG on device in chatImagePrepare;
+ * server batch is fallback for DocumentPicker.
  */
 export async function uploadChatFileViaPresign(params: {
 	fileUri: string;

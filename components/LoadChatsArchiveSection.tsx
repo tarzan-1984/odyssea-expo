@@ -223,10 +223,12 @@ export default function LoadChatsArchiveSection({
     return () => void off();
   }, [queryClient]);
 
+  const isArchiveSearchActive = debouncedArchiveSearch.trim().length > 0;
+
   const handleEndReached = useCallback(() => {
-    if (!hasNextPage || isFetchingNextPage) return;
+    if (!hasNextPage || isFetchingNextPage || isArchiveSearchActive) return;
     void fetchNextPage();
-  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
+  }, [fetchNextPage, hasNextPage, isArchiveSearchActive, isFetchingNextPage]);
 
   /** Search row + padded outer (~archiveSearchOuter vertical padding). */
   const archiveFlatListHeight = useMemo(() => {

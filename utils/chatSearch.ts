@@ -59,8 +59,13 @@ export function chatRoomMatchesSearchQuery(
   const q = query.trim();
   if (!q) return true;
 
-  const qLower = q.toLowerCase();
+	const qLower = q.toLowerCase();
   if (getDisplayName(chatRoom).toLowerCase().includes(qLower)) {
+    return true;
+  }
+
+  const loadId = chatRoom.loadId?.trim();
+  if (loadId && loadId.toLowerCase().includes(qLower)) {
     return true;
   }
 

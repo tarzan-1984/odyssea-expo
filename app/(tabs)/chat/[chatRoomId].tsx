@@ -13,8 +13,10 @@ import EmojiPicker from '@/components/EmojiPicker';
 import MessageItem from '@/components/MessageItem';
 import ChatHeaderDropdown from '@/components/ChatHeaderDropdown';
 import { setActiveChatRoomId } from '@/services/ActiveChatService';
-import { type FileData, type UploadQueueItem, uploadAttachmentFiles, useAttachmentPicker } from '@/utils/chatAttachmentHelpers';
-import { formatUploadErrorMessage } from '@/utils/mimeTypeUpload';
+import { type FileData, type UploadQueueItem, useAttachmentPicker } from '@/utils/chatAttachmentHelpers';
+import { messageReplacesOptimistic } from '@/utils/optimisticChatMessage';
+import { useChatStore } from '@/stores/chatStore';
+import { useChatOutboxSend } from '@/hooks/useChatOutboxSend';
 import FilesModal from '@/components/modals/FilesModal';
 import ChatInputSection, {
   type ChatInputSectionRef,
@@ -52,8 +54,10 @@ export default function ChatRoomScreen() {
   const chatInputRef = useRef<ChatInputSectionRef>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isProcessingAttachments, setIsProcessingAttachments] = useState(false);
   const [uploadQueue, setUploadQueue] = useState<UploadQueueItem[]>([]);
   const [pendingAttachments, setPendingAttachments] = useState<FileData[]>([]);
+  const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
   const [replyingTo, setReplyingTo] = useState<Message['replyData'] | null>(null);
   const [isTemplatesModalOpen, setIsTemplatesModalOpen] = useState(false);
   const [viewableMessageIds, setViewableMessageIds] = useState<Set<string>>(() => new Set());
@@ -70,7 +74,6 @@ export default function ChatRoomScreen() {
     loadMoreMessages,
     sendMessage,
     deleteMessage,
-    isSendingMessage,
   } = useChatRoom(chatRoomId);
   const handleFilesSelected = useCallback((files: FileData[]) => {
     if (files.length === 0) return;
@@ -85,10 +88,54 @@ export default function ChatRoomScreen() {
       }))
     );
   }, []);
-  const handleAttachmentPress = useAttachmentPicker(handleFilesSelected);
+  const attachmentPickCallbacks = useMemo(
+    () => ({ onProcessingChange: setIsProcessingAttachments }),
+    [],
+  );
+  const handleAttachmentPress = useAttachmentPicker(handleFilesSelected, attachmentPickCallbacks);
   
   // Get WebSocket connection status
-  const { isConnected, sendTyping, typingByRoom } = useWebSocket();
+  const { isConnected, sendTyping, typingByRoom, socket } = useWebSocket();
+
+  const storeRoomMessages =
+    useChatStore(
+      useCallback(
+        (s) => (chatRoomId ? (s.messagesByRoom[chatRoomId] as Message[] | undefined) : undefined),
+        [chatRoomId],
+      ),
+    ) ?? [];
+
+  const serverMessagesForOptimistic = useMemo(() => {
+    const byId = new Map<string, Message>();
+    for (const message of messages) byId.set(message.id, message);
+    for (const message of storeRoomMessages) byId.set(message.id, message);
+    return Array.from(byId.values());
+  }, [messages, storeRoomMessages]);
+
+  const outgoingSender = useMemo(() => {
+    if (!authState.user) return undefined;
+    return {
+      id: authState.user.id,
+      firstName: authState.user.firstName ?? '',
+      lastName: authState.user.lastName ?? '',
+      avatar: authState.user.profilePhoto,
+      profilePhoto: authState.user.profilePhoto,
+      role: authState.user.role,
+    };
+  }, [authState.user]);
+
+  const { sendTextMessage, sendMediaMessage, retryOptimisticMessage } = useChatOutboxSend({
+    chatRoomId,
+    sender: outgoingSender,
+    isConnected,
+    socket,
+    sendMessage,
+    optimisticMessages,
+    setOptimisticMessages,
+    serverMessages: serverMessagesForOptimistic,
+    currentUserId: authState.user?.id,
+    onUploadStateChange: setIsUploading,
+  });
 
   // Get chat room display name
   const getChatDisplayName = (): string => {
@@ -139,6 +186,24 @@ export default function ChatRoomScreen() {
     );
   };
 
+  // Merge server messages with in-flight optimistic outgoing photo messages.
+  const displayMessages = useMemo(() => {
+    const userId = authState.user?.id;
+    const activeOptimistic = optimisticMessages.filter(
+      (opt) =>
+        opt.chatRoomId === chatRoomId &&
+        !messageReplacesOptimistic(opt, serverMessagesForOptimistic, userId),
+    );
+    if (activeOptimistic.length === 0) return messages;
+    return [...messages, ...activeOptimistic].sort(
+      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    );
+  }, [messages, optimisticMessages, authState.user?.id, serverMessagesForOptimistic]);
+
+  useEffect(() => {
+    setOptimisticMessages([]);
+  }, [chatRoomId]);
+
   // Group messages with date separators
   const messagesWithSeparators = useMemo(() => {
     // Entire useChatRoom hook keeps messages ordered by
@@ -146,8 +211,8 @@ export default function ChatRoomScreen() {
     // additional sorting here is not necessary.
     const result: Array<{ type: 'message' | 'date'; data: Message | string }> = [];
     
-    messages.forEach((message, index) => {
-      const previousMessage = index > 0 ? messages[index - 1] : undefined;
+    displayMessages.forEach((message, index) => {
+      const previousMessage = index > 0 ? displayMessages[index - 1] : undefined;
       
       if (shouldShowDateSeparator(message, previousMessage)) {
         result.push({
@@ -163,25 +228,28 @@ export default function ChatRoomScreen() {
     });
     
     return result;
-  }, [messages]);
+  }, [displayMessages]);
 
   // Lightweight key for re-rendering FlatList; it changes when
   // message count or main read-status fields change, but does not build
   // long strings with join over readBy.
   const messagesRenderVersion = useMemo(() => {
-    return messages.reduce((acc, m) => {
+    return displayMessages.reduce((acc, m) => {
       const readFlag = m.isRead ? 1 : 0;
       const readByCount = m.readBy ? m.readBy.length : 0;
+      const pendingFlag = m.pendingOutgoing?.status ? 1 : 0;
+      const pendingDone =
+        m.pendingOutgoing?.localAttachments.filter((a) => a.uploadStatus === 'done').length ?? 0;
       const reactionCount = (m.reactions ?? []).reduce(
         (sum, group) => sum + group.users.length + (group.hasCurrentUser ? 1 : 0),
         0,
       );
-      return acc + readFlag + readByCount + reactionCount;
-    }, messages.length);
-  }, [messages]);
+      return acc + readFlag + readByCount + reactionCount + pendingFlag + pendingDone;
+    }, displayMessages.length);
+  }, [displayMessages]);
 
   const messagesReady = !isLoadingMessages && !isInitialFullLoad;
-  const listExtraData = `${messagesRenderVersion}:${viewableMessageIds.size}:${messagesReady ? 1 : 0}`;
+  const listExtraData = `${messagesRenderVersion}:${optimisticMessages.length}:${viewableMessageIds.size}:${messagesReady ? 1 : 0}`;
 
   type ChatListRow = { type: 'message' | 'date'; data: Message | string };
 
@@ -273,6 +341,23 @@ export default function ChatRoomScreen() {
   const isReceivingNewMessageRef = useRef(false); // Track if we're receiving a new message via WebSocket
   const isProgrammaticScrollRef = useRef(false); // Track if scroll is programmatic (automatic) vs user-initiated
 
+  const scrollToLatestMessage = useCallback(() => {
+    if (!flatListRef.current || flatListData.length === 0) return;
+    isProgrammaticScrollRef.current = true;
+    try {
+      flatListRef.current.scrollToOffset({ offset: 0, animated: true });
+    } catch {
+      try {
+        flatListRef.current.scrollToIndex({ index: 0, animated: true, viewPosition: 0 });
+      } catch {
+        // ignore
+      }
+    }
+    setTimeout(() => {
+      isProgrammaticScrollRef.current = false;
+    }, 100);
+  }, [flatListData.length]);
+
   const dismissKeyboard = useCallback(() => {
     Keyboard.dismiss();
   }, []);
@@ -295,67 +380,45 @@ export default function ChatRoomScreen() {
 
     if (
       (!trimmedMessage && pendingAttachments.length === 0) ||
-      isSendingMessage ||
       isUploading ||
-      !chatRoomId
+      !chatRoomId ||
+      !authState.user
     ) {
       return;
     }
 
+    const filesToSend = [...pendingAttachments];
+    const replySnapshot = replyingTo;
+    const hasFiles = filesToSend.length > 0;
+
+    setMessageText('');
+    setComposeResetKey((k) => k + 1);
+    setReplyingTo(null);
+    clearPendingAttachments();
+    sendTyping(chatRoomId as string, false);
+    requestAnimationFrame(() => scrollToLatestMessage());
+
     try {
-      const hasFiles = pendingAttachments.length > 0;
-      setIsUploading(hasFiles);
-      const uploaded: { fileUrl: string; fileName: string; fileSize: number }[] = [];
-
       if (hasFiles) {
-        setUploadQueue((queue) =>
-          queue.map((item) => ({ ...item, status: 'uploading' as const })),
-        );
-        try {
-          const batchUploaded = await uploadAttachmentFiles(
-            pendingAttachments,
-            (index, status) => {
-              setUploadQueue((queue) =>
-                queue.map((item, i) => (i === index ? { ...item, status } : item)),
-              );
-            },
-          );
-          uploaded.push(...batchUploaded);
-        } catch (uploadError) {
-          Alert.alert('Send failed', formatUploadErrorMessage(uploadError));
-          return;
-        }
-      }
-
-      if (uploaded.length >= 2) {
-        await sendMessage(trimmedMessage, undefined, replyingTo || undefined, uploaded);
-      } else if (uploaded.length === 1) {
-        await sendMessage(trimmedMessage, uploaded[0], replyingTo || undefined);
+        await sendMediaMessage(trimmedMessage, filesToSend, replySnapshot || undefined);
       } else {
-        await sendMessage(trimmedMessage, undefined, replyingTo || undefined);
+        await sendTextMessage(trimmedMessage, replySnapshot || undefined);
       }
-
-      setMessageText('');
-      setComposeResetKey((k) => k + 1);
-      setReplyingTo(null);
-      clearPendingAttachments();
-      sendTyping(chatRoomId as string, false);
     } catch (error) {
       console.error('Failed to send message:', error);
-      Alert.alert('Send failed', 'Failed to send message. Please try again.');
-    } finally {
-      setIsUploading(false);
     }
   }, [
     messageText,
     pendingAttachments,
-    isSendingMessage,
     isUploading,
     chatRoomId,
-    sendMessage,
+    authState.user,
+    sendTextMessage,
+    sendMediaMessage,
     replyingTo,
     clearPendingAttachments,
     sendTyping,
+    scrollToLatestMessage,
   ]);
 
   // Reset scroll flags when chat room changes
@@ -811,7 +874,8 @@ export default function ChatRoomScreen() {
                 const isSender = message.senderId === authState.user?.id;
                 
                 const shouldLoadMedia =
-                  messagesReady && viewableMessageIds.has(message.id);
+                  !!message.pendingOutgoing ||
+                  (messagesReady && viewableMessageIds.has(message.id));
 
                 return (
                   <MessageItem
@@ -845,6 +909,11 @@ export default function ChatRoomScreen() {
                         time: msg.createdAt,
                         content: msg.content || '',
                         senderName: `${msg.sender.firstName} ${msg.sender.lastName}`,
+                      });
+                    }}
+                    onRetryPress={(msg) => {
+                      retryOptimisticMessage(msg).catch((error) => {
+                        console.error('Failed to retry message:', error);
                       });
                     }}
                   />
@@ -903,6 +972,16 @@ export default function ChatRoomScreen() {
             </View>
           </View>
         ) : null}
+
+        {isProcessingAttachments ? (
+          <View style={styles.loadingOverlay} pointerEvents="auto">
+            <BlurView intensity={20} tint="light" style={StyleSheet.absoluteFill} />
+            <View style={styles.loadingOverlayContent}>
+              <ActivityIndicator size="large" color={colors.primary.violet} />
+              <Text style={styles.loadingOverlayText}>Processing photos...</Text>
+            </View>
+          </View>
+        ) : null}
         
         <ChatInputSection
           ref={chatInputRef}
@@ -917,12 +996,16 @@ export default function ChatRoomScreen() {
           onSendPress={handleSendPress}
           onEmojiPress={() => setShowEmojiPicker(!showEmojiPicker)}
           onTemplatesPress={() => setIsTemplatesModalOpen(true)}
-          onAttachmentPress={() => handleAttachmentPress().catch(() => {})}
+          onAttachmentPress={() => {
+            if (isProcessingAttachments) return;
+            handleAttachmentPress().catch(() => {});
+          }}
           replyingTo={replyingTo}
           onCancelReply={() => setReplyingTo(null)}
           uploadQueue={uploadQueue}
           onRemoveUploadItem={removeUploadItemAt}
-          isSendingMessage={isSendingMessage || isUploading}
+          isSendingMessage={isUploading}
+          isProcessingAttachments={isProcessingAttachments}
           isConnected={isConnected}
           showTemplatesButton={canUseMessageTemplates}
           onLayout={setSendSectionHeight}

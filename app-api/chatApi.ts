@@ -213,6 +213,51 @@ class ChatApiClient {
     };
   }
 
+  async syncMessagesBatch(
+    rooms: { chatRoomId: string; lastMessageId?: string | null }[],
+  ): Promise<{
+    rooms: Array<{
+      chatRoomId: string;
+      messages: Message[];
+      unreadCount: number;
+      lastMessage: Message | null;
+      upToDate: boolean;
+      hasMore?: boolean;
+      skipped?: boolean;
+    }>;
+  }> {
+    type SyncBatchResponse = {
+      rooms: Array<{
+        chatRoomId: string;
+        messages: Message[];
+        unreadCount: number;
+        lastMessage: Message | null;
+        upToDate: boolean;
+        hasMore?: boolean;
+        skipped?: boolean;
+      }>;
+    };
+
+    const response = await this.request<SyncBatchResponse | { data: SyncBatchResponse }>(
+      '/v1/messages/sync-batch',
+      {
+        method: 'POST',
+        body: JSON.stringify({ rooms }),
+      },
+    );
+
+    if (response && typeof response === 'object' && 'rooms' in response) {
+      return response as SyncBatchResponse;
+    }
+
+    if (response && typeof response === 'object' && 'data' in response) {
+      const wrapped = response as { data?: SyncBatchResponse };
+      return wrapped.data ?? { rooms: [] };
+    }
+
+    return { rooms: [] };
+  }
+
   /**
    * Get files (messages with fileUrl) from chat room
    * Mirrors Next.js chatApi.getFiles implementation

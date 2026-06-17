@@ -18,7 +18,7 @@ import {
   USER_DEACTIVATE_ACCOUNT_STORAGE_KEY,
   type DriverProfileSyncPayload,
 } from '@/utils/driverProfileSync';
-import { syncAppLocationSettingsFromBackend } from '@/utils/appLocationSettings';
+import { syncAppLocationSettingsWithDeviceContext } from '@/utils/appLocationSettings';
 import { syncNotificationPreferencesFromBackend } from '@/utils/userNotificationPreferences';
 import { eventBus } from '@/services/EventBus';
 import { fileLogger } from '@/utils/fileLogger';
@@ -31,6 +31,7 @@ import {
   persistAccessTokenToAllStorages,
 } from '@/utils/accessTokenRefresh';
 import { ensureBackgroundLocationTrackingForAutoupdate } from '@/utils/backgroundLocationTracking';
+import { cacheMobileDeviceContextForBackground } from '@/utils/mobileDeviceIdentity';
 
 // User interface
 export interface User {
@@ -272,6 +273,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               console.warn('⚠️ [AuthContext] Failed to cache user role:', cacheError);
             }
           }
+          try {
+            await cacheMobileDeviceContextForBackground();
+          } catch (deviceCacheError) {
+            console.warn('⚠️ [AuthContext] Failed to cache device context:', deviceCacheError);
+          }
           // Save driverStatus, zip, statusDate for DRIVER role users (used by DriverContent and background location)
           if (userRole === 'DRIVER') {
             try {
@@ -311,7 +317,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         if (user?.id) {
           void (async () => {
             try {
-              await syncAppLocationSettingsFromBackend(accessToken);
+              await syncAppLocationSettingsWithDeviceContext(accessToken);
               if (userRole !== 'DRIVER') {
                 await syncNotificationPreferencesFromBackend(user.id);
                 return;
@@ -590,6 +596,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             console.warn('⚠️ [AuthContext] Failed to cache user role:', cacheError);
           }
         }
+        try {
+          await cacheMobileDeviceContextForBackground();
+        } catch (deviceCacheError) {
+          console.warn('⚠️ [AuthContext] Failed to cache device context on restore:', deviceCacheError);
+        }
         // Restore zip, statusDate for DRIVER when AsyncStorage is empty (first load after login; don't overwrite if locationTask or status update already wrote newer data)
         if ((user?.role ?? '').toUpperCase() === 'DRIVER') {
           try {
@@ -634,7 +645,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         if (user?.id) {
           void (async () => {
             try {
-              await syncAppLocationSettingsFromBackend(finalAccessToken);
+              await syncAppLocationSettingsWithDeviceContext(finalAccessToken);
               if ((user?.role ?? '').toUpperCase() !== 'DRIVER') {
                 await syncNotificationPreferencesFromBackend(user.id);
                 return;
@@ -781,6 +792,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const { messagesCacheService } = await import('@/services/MessagesCacheService');
       await messagesCacheService.clearAllMessages();
       console.log('💾 [AuthContext] Cleared messages cache');
+
+      const { chatOutboxService } = await import('@/services/chatOutboxService');
+      await chatOutboxService.clearAll();
+      console.log('💾 [AuthContext] Cleared chat outbox');
       
       // Clear chat rooms cache
       const { chatCacheService } = await import('@/services/ChatCacheService');
@@ -945,28 +960,24 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     const isDriver = authState.user.role?.trim().toUpperCase() === 'DRIVER';
 
     let appState: AppStateStatus = AppState.currentState;
-    let wasInBackground = false;
 
     const subscription = AppState.addEventListener('change', async (nextAppState: AppStateStatus) => {
-      // Track when app goes to background/inactive
       if (appState.match(/active/) && nextAppState.match(/inactive|background/)) {
-        wasInBackground = true;
         console.log('📱 [AuthContext] App went to background/inactive');
       }
 
-      // When app becomes active again after being in background
-      if (nextAppState === 'active' && wasInBackground) {
-        wasInBackground = false;
+      // When app becomes active (from background, inactive, or cold resume)
+      if (nextAppState === 'active' && appState !== 'active') {
         console.log(
           '═══════════════════════════════════════════════════════════',
         );
         console.log(
-          '📱 [AppActive] App became ACTIVE (returned from background/inactive)',
+          '📱 [AppActive] App became ACTIVE',
         );
         try {
           const token = await AsyncStorage.getItem('@user_access_token');
           if (token) {
-            await syncAppLocationSettingsFromBackend(token);
+            await syncAppLocationSettingsWithDeviceContext(token);
           }
 
           if (isDriver) {

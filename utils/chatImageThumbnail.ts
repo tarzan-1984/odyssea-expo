@@ -1,7 +1,7 @@
 import { secureStorage } from '@/utils/secureStorage';
 
-export const CHAT_IMAGE_PREVIEW_MAX_WIDTH = 640;
-export const CHAT_IMAGE_PREVIEW_QUALITY = 72;
+export const CHAT_IMAGE_PREVIEW_MAX_WIDTH = 400;
+export const CHAT_IMAGE_PREVIEW_QUALITY = 50;
 
 const THUMBNAIL_EXTENSIONS = new Set([
 	'jpg',

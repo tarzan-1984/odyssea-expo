@@ -2,6 +2,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL } from '@/lib/config';
 import { fileLogger } from '@/utils/fileLogger';
 import { eventBus, AppEvents } from '@/services/EventBus';
+import { buildMobileDeviceQueryString } from '@/utils/mobileDevicePayload';
+import { cacheMobileDeviceContextForBackground } from '@/utils/mobileDeviceIdentity';
+import { secureStorage } from '@/utils/secureStorage';
 
 /** Defaults aligned with `locationSendThrottle.ts` (used when API/storage not yet loaded). */
 const FALLBACK_INTERVAL_MS = 60 * 1000;
@@ -99,11 +102,21 @@ export async function persistAppLocationSettingsLocally(
 }
 
 export async function fetchAppLocationSettingsFromBackend(
-  accessToken: string
+  accessToken: string,
+  extra?: { pushToken?: string | null },
 ): Promise<AppLocationSettingsStored | null> {
   if (!API_BASE_URL) return null;
   try {
-    const response = await fetch(`${API_BASE_URL}/v1/app-settings`, {
+    try {
+      await cacheMobileDeviceContextForBackground();
+    } catch {
+      // Legacy builds without stable device id must still fetch settings.
+    }
+    const query = await buildMobileDeviceQueryString(extra);
+    const url = query
+      ? `${API_BASE_URL}/v1/app-settings?${query}`
+      : `${API_BASE_URL}/v1/app-settings`;
+    const response = await fetch(url, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
@@ -158,12 +171,24 @@ export async function fetchAppLocationSettingsFromBackend(
 
 /**
  * Fetches global app location thresholds from backend, persists to AsyncStorage.
+ * Also records users.lastActiveApp and user_devices (deviceId + lastActiveAt, NY time) on the server.
+ */
+export async function syncAppLocationSettingsWithDeviceContext(
+  accessToken: string,
+): Promise<boolean> {
+  const pushToken = await secureStorage.getItemAsync('expoPushToken').catch(() => null);
+  return syncAppLocationSettingsFromBackend(accessToken, { pushToken });
+}
+
+/**
+ * Fetches global app location thresholds from backend, persists to AsyncStorage.
  * Emits APP_LOCATION_SETTINGS_SYNCED when values differ from stored (so UI can restart tracking).
  */
 export async function syncAppLocationSettingsFromBackend(
-  accessToken: string
+  accessToken: string,
+  extra?: { pushToken?: string | null },
 ): Promise<boolean> {
-  const remote = await fetchAppLocationSettingsFromBackend(accessToken);
+  const remote = await fetchAppLocationSettingsFromBackend(accessToken, extra);
   if (!remote) return false;
 
   const prev = await getResolvedAppLocationSettings();

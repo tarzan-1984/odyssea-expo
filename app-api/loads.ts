@@ -44,6 +44,10 @@ export type DriverTrackingPoint = {
   latitude: number | string;
   longitude: number | string;
   placeLabel?: string | null;
+  deviceId?: string | null;
+  deviceModel?: string | null;
+  deviceName?: string | null;
+  devicePlatform?: string | null;
   createdAt?: string | null;
   updatedAt?: string | null;
 };

@@ -35,6 +35,7 @@ interface ChatInputSectionProps {
   uploadQueue: UploadQueueItem[];
   onRemoveUploadItem?: (index: number) => void;
   isSendingMessage: boolean;
+  isProcessingAttachments?: boolean;
   isConnected: boolean;
   showTemplatesButton?: boolean;
   composeResetKey?: number;
@@ -56,6 +57,7 @@ const ChatInputSection = React.forwardRef<ChatInputSectionRef, ChatInputSectionP
       uploadQueue,
       onRemoveUploadItem,
       isSendingMessage,
+      isProcessingAttachments = false,
       isConnected,
       showTemplatesButton = false,
       composeResetKey = 0,
@@ -65,7 +67,7 @@ const ChatInputSection = React.forwardRef<ChatInputSectionRef, ChatInputSectionP
   ) {
     const editorRef = React.useRef<ChatRichComposeInputRef>(null);
     const [formatState, setFormatState] = useState<EditorFormatState>(EMPTY_EDITOR_FORMAT_STATE);
-    const inputDisabled = isSendingMessage || !isConnected;
+    const inputDisabled = isSendingMessage || isProcessingAttachments || !isConnected;
 
     const canSend =
       (!!messageText.trim() || uploadQueue.length > 0) && !isSendingMessage && isConnected;
@@ -154,9 +156,10 @@ const ChatInputSection = React.forwardRef<ChatInputSectionRef, ChatInputSectionP
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.attachmentButton}
+            style={[styles.attachmentButton, isProcessingAttachments && styles.disabledIconButton]}
             onPress={onAttachmentPress}
             activeOpacity={0.7}
+            disabled={isProcessingAttachments}
           >
             <AttachmentIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} />
           </TouchableOpacity>
@@ -224,6 +227,9 @@ const styles = StyleSheet.create({
   attachmentButton: {
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  disabledIconButton: {
+    opacity: 0.5,
   },
   templateButton: {
     justifyContent: 'center',

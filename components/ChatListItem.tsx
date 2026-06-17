@@ -17,6 +17,7 @@ import {
   getLoadChatDispatcherInitials,
 } from '@/utils/loadChatAvatar';
 import { formatChatRelativeTimeNy } from '@/utils/nyWallClock';
+import type { PendingOutgoingMeta } from '@/utils/optimisticChatMessage';
 
 // Types for chat data
 export interface User {
@@ -66,6 +67,10 @@ export interface Message {
   sender: User;
   receiver?: User;
   reactions?: MessageReactionGroup[];
+  /** Client-generated id echoed by server for idempotent send. */
+  clientMessageId?: string;
+  /** Client-only bubble shown while upload/send is in progress. */
+  pendingOutgoing?: PendingOutgoingMeta;
 }
 
 export interface ChatRoomParticipant {

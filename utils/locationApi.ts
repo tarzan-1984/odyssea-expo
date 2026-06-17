@@ -5,7 +5,8 @@ import { secureStorage } from '@/utils/secureStorage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { fileLogger } from '@/utils/fileLogger';
 import { reverseGeocodeAsync, resolveCityForApi } from '@/utils/geocoding';
-import { toBackendStateDisplayName } from '@/utils/stateDisplayName';
+import { toLocationDeviceFields } from '@/utils/mobileDevicePayload';
+import { loadMobileDeviceContextForBackground } from '@/utils/mobileDeviceIdentity';
 
 /**
  * Format date and time for TMS API
@@ -410,6 +411,10 @@ export async function sendLocationUpdateToBackendUser(params: {
   isBackgroundTaskLocationUpdate?: boolean;
   /** True only for status form submit or Share location — server logs as manual. */
   isManualDriverLocationAction?: boolean;
+  deviceId?: string;
+  deviceModel?: string;
+  deviceName?: string;
+  devicePlatform?: string;
 }): Promise<SendLocationToBackendResult> {
   try {
     if (!API_BASE_URL) {
@@ -496,6 +501,29 @@ export async function sendLocationUpdateToBackendUser(params: {
     if (params.isManualDriverLocationAction === true) {
       body.isManualDriverLocationAction = true;
     }
+
+    let deviceFields = toLocationDeviceFields(
+      params.deviceId
+        ? {
+            deviceId: params.deviceId,
+            model: params.deviceModel,
+            deviceName: params.deviceName,
+            platform: params.devicePlatform,
+          }
+        : null,
+    );
+    if (!deviceFields.deviceId) {
+      try {
+        const cachedDevice = await loadMobileDeviceContextForBackground();
+        deviceFields = toLocationDeviceFields(cachedDevice);
+      } catch {
+        // Legacy clients without device id must still send location updates.
+      }
+    }
+    if (deviceFields.deviceId) body.deviceId = deviceFields.deviceId;
+    if (deviceFields.deviceModel) body.deviceModel = deviceFields.deviceModel;
+    if (deviceFields.deviceName) body.deviceName = deviceFields.deviceName;
+    if (deviceFields.devicePlatform) body.devicePlatform = deviceFields.devicePlatform;
 
     try {
       const isImmediateBackground =

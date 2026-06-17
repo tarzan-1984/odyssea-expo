@@ -9,6 +9,7 @@ import { useWebSocket } from '@/context/WebSocketContext';
 import { useAuth } from '@/context/AuthContext';
 import { eventBus, AppEvents } from '@/services/EventBus';
 import { useChatStore } from '@/stores/chatStore';
+import { tryCompleteImageFlowOnMessage } from '@/utils/chatImageFlowTiming';
 
 const OPENED_CHATS_KEY = '@chat_opened_rooms';
 
@@ -69,7 +70,8 @@ interface UseChatRoomReturn {
     content: string,
     fileData?: { fileUrl: string; fileName: string; fileSize: number },
     replyData?: Message['replyData'],
-    attachments?: { fileUrl: string; fileName: string; fileSize?: number }[]
+    attachments?: { fileUrl: string; fileName: string; fileSize?: number }[],
+    clientMessageId?: string,
   ) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   isSendingMessage: boolean;
@@ -96,6 +98,11 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
   const hasLoadedMessagesOnceRef = useRef<Record<string, boolean>>({});
   const isLoadingMoreRef = useRef(false); // Prevent multiple simultaneous loadMoreMessages calls
   const openedChatsRef = useRef<Set<string> | null>(null);
+  const loadMessagesRef = useRef<(page?: number, limit?: number, forceRefresh?: boolean) => Promise<void>>(
+    async () => {},
+  );
+  const loadChatRoomRef = useRef<() => Promise<void>>(async () => {});
+  const tryLoadNextArchivePageRef = useRef<() => Promise<void>>(async () => {});
   
   // Keep chatRoom UI in sync with global store updates (participants/avatar/name/etc).
   // This is important for cases like ChatInfoModal where updates arrive via WebSocket.
@@ -110,7 +117,18 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
   useEffect(() => {
     if (!chatRoomId) return;
     if (!roomFromStore) return;
-    setChatRoom(roomFromStore);
+    setChatRoom((prev) => {
+      if (
+        prev &&
+        prev.id === roomFromStore.id &&
+        prev.updatedAt === roomFromStore.updatedAt &&
+        prev.unreadCount === roomFromStore.unreadCount &&
+        prev.lastMessage?.id === roomFromStore.lastMessage?.id
+      ) {
+        return prev;
+      }
+      return roomFromStore;
+    });
   }, [chatRoomId, roomFromStore]);
   
   // Archive-related state
@@ -143,33 +161,44 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
   // Keep local messages in sync with store when store changes (no optimistic writes here)
   useEffect(() => {
     if (!chatRoomId) return;
-    if (!storeMessages || storeMessages.length === 0) return;
     setMessages((prev) => {
-      // If different length, read state, or reactions differ, replace with store.
-      if (prev.length !== storeMessages.length) return [...storeMessages];
-      const changed = storeMessages.some((m) => {
-        const p = prev.find((pm) => pm.id === m.id);
-        if (!p) return true;
-        if (p.isRead !== m.isRead) return true;
-        const a = (p.readBy || []).join(',');
-        const b = (m.readBy || []).join(',');
+      const nextStore = storeMessages ?? EMPTY_MESSAGES;
+      if (prev.length === 0 && nextStore.length === 0) return prev;
+      if (nextStore.length === 0) return prev.length === 0 ? prev : [];
+
+      const storeById = new Map(nextStore.map((message) => [message.id, message]));
+      const localOnly = prev.filter((message) => !storeById.has(message.id));
+      const merged = [...nextStore, ...localOnly].sort(
+        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+      );
+
+      if (prev.length !== merged.length) return merged;
+
+      const changed = merged.some((message) => {
+        const previous = prev.find((item) => item.id === message.id);
+        if (!previous) return true;
+        if (previous.isRead !== message.isRead) return true;
+        const a = (previous.readBy || []).join(',');
+        const b = (message.readBy || []).join(',');
         if (a !== b) return true;
-        return getReactionsSignature(p) !== getReactionsSignature(m);
+        return getReactionsSignature(previous) !== getReactionsSignature(message);
       });
-      return changed ? [...storeMessages] : prev;
+      return changed ? merged : prev;
     });
   }, [chatRoomId, storeMessages]);
 
   const removeMessageLocally = useCallback((messageId: string) => {
     if (!chatRoomId) return;
 
-    setMessages((prev) => {
-      const updatedMessages = prev.filter((message) => message.id !== messageId);
-      messagesCacheService.removeMessage(chatRoomId, messageId).catch((error) => {
-        console.error('Failed to remove deleted message from cache:', error);
-      });
+    setMessages((prev) => prev.filter((message) => message.id !== messageId));
+
+    messagesCacheService.removeMessage(chatRoomId, messageId).catch((error) => {
+      console.error('Failed to remove deleted message from cache:', error);
+    });
+
+    // Never update Zustand inside setMessages updater — defer to avoid setState-during-render.
+    queueMicrotask(() => {
       useChatStore.getState().removeMessage(chatRoomId, messageId);
-      return updatedMessages;
     });
   }, [chatRoomId]);
 
@@ -387,6 +416,10 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
       await loadArchivedMessages(nextArchive.year, nextArchive.month, nextArchive.day);
     }
   }, [ensureAvailableArchiveDays, getNextAvailableArchive, loadArchivedMessages]);
+
+  useEffect(() => {
+    tryLoadNextArchivePageRef.current = tryLoadNextArchivePage;
+  }, [tryLoadNextArchivePage]);
 
   /**
    * Load chat room data
@@ -1085,13 +1118,18 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
         setIsLoadingMessages(false);
         setTimeout(() => {
           if (!hasMoreMessagesRef.current && messagesCountRef.current === 0) {
-            tryLoadNextArchivePage().catch(() => {});
+            tryLoadNextArchivePageRef.current().catch(() => {});
           }
         }, 0);
       }
     },
-    [chatRoomId, recalculateUnreadCount, isConnected, smartSyncMissingMessages, replaceMessagesFromApi, tryLoadNextArchivePage]
+    [chatRoomId, recalculateUnreadCount, isConnected, smartSyncMissingMessages, replaceMessagesFromApi]
   );
+
+  useEffect(() => {
+    loadMessagesRef.current = loadMessages;
+    loadChatRoomRef.current = loadChatRoom;
+  }, [loadMessages, loadChatRoom]);
 
   /**
    * Load more messages (pagination)
@@ -1223,7 +1261,8 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
       content: string,
       fileData?: { fileUrl: string; fileName: string; fileSize: number },
       replyData?: Message['replyData'],
-      attachments?: { fileUrl: string; fileName: string; fileSize?: number }[]
+      attachments?: { fileUrl: string; fileName: string; fileSize?: number }[],
+      clientMessageId?: string,
     ) => {
       if (!chatRoomId) {
         throw new Error('Cannot send message: no chat room selected');
@@ -1249,6 +1288,7 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
         wsSendMessage({
           chatRoomId,
           content,
+          clientMessageId,
           fileUrl: multi ? multi[0].fileUrl : fileData?.fileUrl,
           fileName: multi ? multi[0].fileName : fileData?.fileName,
           fileSize: multi ? multi[0].fileSize : fileData?.fileSize,
@@ -1346,6 +1386,9 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
         }
         const newMessage = messageData.message;
         const isMessageFromCurrentUser = newMessage.senderId === authState.user?.id;
+        if (isMessageFromCurrentUser) {
+          tryCompleteImageFlowOnMessage(newMessage, { isFromCurrentUser: true });
+        }
         const currentUserId = authState.user?.id || '';
         const currentReadBy = newMessage.readBy || [];
         const shouldMarkAsRead = !isMessageFromCurrentUser && !currentReadBy.includes(currentUserId);
@@ -1455,19 +1498,17 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
   useEffect(() => {
     const off = eventBus.on(AppEvents.WebSocketReconnected, () => {
       if (chatRoomId) {
-        // Reset flag to force refresh from API
-        // This ensures we get messages that arrived while device was offline
         delete hasLoadedMessagesOnceRef.current[chatRoomId];
-        // Force reload messages from API to get any that arrived while offline
-        // This ensures we don't miss messages even if cache appears fresh
-        loadMessages(1, 50, true).catch((error) => {
+        loadMessagesRef.current(1, 50, true).catch((error) => {
           console.error('Failed to refresh messages after reconnection:', error);
         });
       }
     });
-    
-    return () => { off(); };
-  }, [chatRoomId, loadMessages]);
+
+    return () => {
+      off();
+    };
+  }, [chatRoomId]);
 
   // Handle pending archive load when archives finish loading
   useEffect(() => {
@@ -1670,11 +1711,9 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (nextAppState: AppStateStatus) => {
       if (nextAppState === 'active') {
-        // App came to foreground, reset flags to force refresh on next load
-        // This ensures hard-deleted messages missed while inactive are removed locally.
         hasLoadedMessagesOnceRef.current = {};
         if (chatRoomId) {
-          loadMessages(1, 50, true).catch((error) => {
+          loadMessagesRef.current(1, 50, true).catch((error) => {
             console.error('Failed to refresh messages after app became active:', error);
           });
         }
@@ -1684,19 +1723,16 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
     return () => {
       subscription.remove();
     };
-  }, [chatRoomId, loadMessages]);
+  }, [chatRoomId]);
 
   // Load chat room and messages on mount
   // Load chat room and messages immediately when chat room is opened
   // This is the entry point when user navigates to a chat room
   useEffect(() => {
-    if (chatRoomId) {
-      loadChatRoom(); // Loads chat room data (participants, name, etc.)
-      loadMessages(); // Loads initial messages from database/cache
-      // Note: Available archive days will be loaded automatically after chatRoom is set
-      // (see useEffect below that depends on chatRoom)
-    }
-  }, [chatRoomId, loadChatRoom, loadMessages]);
+    if (!chatRoomId) return;
+    loadChatRoomRef.current();
+    loadMessagesRef.current();
+  }, [chatRoomId]);
 
   return {
     chatRoom,

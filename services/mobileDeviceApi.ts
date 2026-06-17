@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { API_BASE_URL } from '@/lib/config';
 import {
-	buildMobileDevicePayload,
+	tryBuildMobileDevicePayload,
 	getMobileDeviceAppFingerprint,
 } from '@/utils/mobileDevicePayload';
 
@@ -29,7 +29,7 @@ async function submitMobileDeviceSnapshot(
 	}
 
 	const body = {
-		...buildMobileDevicePayload(),
+		...(await tryBuildMobileDevicePayload()),
 		...(extra?.pushToken ? { pushToken: extra.pushToken } : {}),
 	};
 

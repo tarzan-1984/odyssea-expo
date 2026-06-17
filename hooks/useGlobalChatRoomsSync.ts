@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react';
 import { AppState, AppStateStatus } from 'react-native';
 import { useAuth } from '@/context/AuthContext';
 import { forceSyncChatRoomsFromApi } from '@/services/chatRoomsForegroundSync';
+import { catchUpChatsOnReconnect } from '@/services/chatReconnectSync';
+import { eventBus, AppEvents } from '@/services/EventBus';
 
 /**
  * Keeps chat list + unread badge in sync app-wide (not only on Messages screen).
@@ -12,17 +14,32 @@ export function useGlobalChatRoomsSync(): void {
 	const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 	const wasInBackgroundRef = useRef(false);
 	const initialLoadDoneRef = useRef(false);
+	const isCatchUpRunningRef = useRef(false);
+
+	const syncOptions = {
+		userId: authState.user?.id,
+		userRole: authState.user?.role,
+	};
+
+	const runCatchUp = () => {
+		if (!authState.isAuthenticated || isCatchUpRunningRef.current) {
+			return;
+		}
+		isCatchUpRunningRef.current = true;
+		void catchUpChatsOnReconnect(syncOptions)
+			.catch((error) => {
+				console.error('[GlobalChatRoomsSync] Catch-up sync failed:', error);
+			})
+			.finally(() => {
+				isCatchUpRunningRef.current = false;
+			});
+	};
 
 	useEffect(() => {
 		if (!authState.isAuthenticated) {
 			initialLoadDoneRef.current = false;
 			return;
 		}
-
-		const syncOptions = {
-			userId: authState.user?.id,
-			userRole: authState.user?.role,
-		};
 
 		if (!initialLoadDoneRef.current) {
 			initialLoadDoneRef.current = true;
@@ -38,14 +55,19 @@ export function useGlobalChatRoomsSync(): void {
 
 			if (nextAppState === 'active' && wasInBackgroundRef.current) {
 				wasInBackgroundRef.current = false;
-				void forceSyncChatRoomsFromApi(syncOptions).catch((error) => {
-					console.error('[GlobalChatRoomsSync] Foreground sync failed:', error);
-				});
+				runCatchUp();
 			}
 
 			appStateRef.current = nextAppState;
 		});
 
-		return () => subscription.remove();
+		const offReconnect = eventBus.on(AppEvents.WebSocketReconnected, () => {
+			runCatchUp();
+		});
+
+		return () => {
+			subscription.remove();
+			offReconnect();
+		};
 	}, [authState.isAuthenticated, authState.user?.id, authState.user?.role]);
 }
