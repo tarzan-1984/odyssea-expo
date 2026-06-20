@@ -218,6 +218,17 @@ export const CHAT_RICH_EDITOR_HTML = `<!DOCTYPE html>
     return serializeSegments(segments).replace(/\\n{3,}/g, '\\n\\n').trim();
   }
 
+  function plainTextToEditorHtml(text) {
+    return String(text || '')
+      .split('\\n')
+      .map(function (line) {
+        var div = document.createElement('div');
+        div.textContent = line || '\\u00a0';
+        return div.innerHTML;
+      })
+      .join('<br>');
+  }
+
   function getFormatState() {
     try {
       return {
@@ -270,6 +281,18 @@ export const CHAT_RICH_EDITOR_HTML = `<!DOCTYPE html>
     if (!text) return;
     editor.focus();
     document.execCommand('insertText', false, text);
+    notify();
+  };
+
+  window.setEditorPlainText = function (text) {
+    editor.innerHTML = plainTextToEditorHtml(text);
+    editor.focus();
+    var range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(false);
+    var selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
     notify();
   };
 

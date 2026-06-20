@@ -20,6 +20,8 @@ import {
 
 export type ChatInputSectionRef = {
   insertText: (text: string) => void;
+  setText: (text: string) => void;
+  clear: () => void;
 };
 
 interface ChatInputSectionProps {
@@ -32,6 +34,8 @@ interface ChatInputSectionProps {
   onAttachmentPress: () => void;
   replyingTo: Message['replyData'] | null;
   onCancelReply: () => void;
+  editingMessage?: Message | null;
+  onCancelEdit?: () => void;
   uploadQueue: UploadQueueItem[];
   onRemoveUploadItem?: (index: number) => void;
   isSendingMessage: boolean;
@@ -54,6 +58,8 @@ const ChatInputSection = React.forwardRef<ChatInputSectionRef, ChatInputSectionP
       onAttachmentPress,
       replyingTo,
       onCancelReply,
+      editingMessage,
+      onCancelEdit,
       uploadQueue,
       onRemoveUploadItem,
       isSendingMessage,
@@ -77,6 +83,12 @@ const ChatInputSection = React.forwardRef<ChatInputSectionRef, ChatInputSectionP
       () => ({
         insertText: (text: string) => {
           editorRef.current?.insertText(text);
+        },
+        setText: (text: string) => {
+          editorRef.current?.setPlainText(text);
+        },
+        clear: () => {
+          editorRef.current?.clear();
         },
       }),
       []
@@ -110,6 +122,24 @@ const ChatInputSection = React.forwardRef<ChatInputSectionRef, ChatInputSectionP
             <ReplyPreview replyData={replyingTo} onCancel={onCancelReply} />
           </View>
         )}
+
+        {editingMessage ? (
+          <View style={styles.editPreviewContainer}>
+            <View style={styles.editPreviewTextWrap}>
+              <Text style={styles.editPreviewTitle}>Editing message</Text>
+              <Text style={styles.editPreviewText} numberOfLines={1}>
+                {editingMessage.content || ''}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={onCancelEdit}
+              hitSlop={{ top: 8, right: 8, bottom: 8, left: 8 }}
+              style={styles.editCancelButton}
+            >
+              <Text style={styles.editCancelButtonText}>×</Text>
+            </TouchableOpacity>
+          </View>
+        ) : null}
 
         {uploadQueue.length > 0 && (
           <View style={styles.uploadRow}>
@@ -156,15 +186,18 @@ const ChatInputSection = React.forwardRef<ChatInputSectionRef, ChatInputSectionP
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.attachmentButton, isProcessingAttachments && styles.disabledIconButton]}
+            style={[
+              styles.attachmentButton,
+              (isProcessingAttachments || editingMessage) && styles.disabledIconButton,
+            ]}
             onPress={onAttachmentPress}
             activeOpacity={0.7}
-            disabled={isProcessingAttachments}
+            disabled={isProcessingAttachments || !!editingMessage}
           >
             <AttachmentIcon width={rem(28)} height={rem(28)} color={colors.primary.greyIcon} />
           </TouchableOpacity>
 
-          {showTemplatesButton ? (
+          {showTemplatesButton && !editingMessage ? (
             <TouchableOpacity
               style={styles.templateButton}
               onPress={onTemplatesPress}
@@ -214,6 +247,46 @@ const styles = StyleSheet.create({
   },
   replyPreviewContainer: {
     marginBottom: rem(12),
+  },
+  editPreviewContainer: {
+    marginBottom: rem(12),
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary.violet,
+    backgroundColor: 'rgba(96, 102, 197, 0.08)',
+    borderRadius: rem(10),
+    paddingHorizontal: rem(12),
+    paddingVertical: rem(8),
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rem(10),
+  },
+  editPreviewTextWrap: {
+    flex: 1,
+    minWidth: 0,
+  },
+  editPreviewTitle: {
+    fontSize: fp(12),
+    fontFamily: fonts['700'],
+    color: colors.primary.violet,
+    marginBottom: rem(2),
+  },
+  editPreviewText: {
+    fontSize: fp(12),
+    fontFamily: fonts['400'],
+    color: colors.primary.blue,
+  },
+  editCancelButton: {
+    width: rem(24),
+    height: rem(24),
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: rem(12),
+  },
+  editCancelButtonText: {
+    fontSize: fp(20),
+    lineHeight: fp(22),
+    fontFamily: fonts['400'],
+    color: colors.primary.blue,
   },
   inputRow: {
     flexDirection: 'row',

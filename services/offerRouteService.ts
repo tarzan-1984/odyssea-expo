@@ -2,6 +2,7 @@
  * Fetches offer route: geocodes addresses and gets road route geometry from OSRM.
  * Used for displaying route on map.
  */
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { geocodeAsync } from '@/utils/geocoding';
 
 export interface RoutePoint {
@@ -21,9 +22,85 @@ export interface OfferRouteResult {
 }
 
 const NOMINATIM_DELAY_MS = 1100;
+const ROUTE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const GEOCODE_CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const ROUTE_CACHE_PREFIX = '@offer_route_cache_v1:';
+const GEOCODE_CACHE_PREFIX = '@offer_route_geocode_v1:';
+
+type CachedValue<T> = {
+  createdAt: number;
+  value: T;
+};
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function normalizeCacheKey(value: string): string {
+  return value.trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function routeCacheKey(locations: string[]): string {
+  return `${ROUTE_CACHE_PREFIX}${locations.map(normalizeCacheKey).join('|')}`;
+}
+
+function geocodeCacheKey(address: string): string {
+  return `${GEOCODE_CACHE_PREFIX}${normalizeCacheKey(address)}`;
+}
+
+function isRoutePoint(value: unknown): value is RoutePoint {
+  const point = value as RoutePoint;
+  return (
+    typeof point?.latitude === 'number' &&
+    typeof point?.longitude === 'number' &&
+    Number.isFinite(point.latitude) &&
+    Number.isFinite(point.longitude)
+  );
+}
+
+function isOfferRouteResult(value: unknown): value is OfferRouteResult {
+  const route = value as OfferRouteResult;
+  return (
+    Array.isArray(route?.markers) &&
+    route.markers.every(isRoutePoint) &&
+    Array.isArray(route?.polyline) &&
+    route.polyline.every(isRoutePoint) &&
+    typeof route?.bounds?.minLat === 'number' &&
+    typeof route?.bounds?.maxLat === 'number' &&
+    typeof route?.bounds?.minLng === 'number' &&
+    typeof route?.bounds?.maxLng === 'number'
+  );
+}
+
+async function readCache<T>(
+  key: string,
+  ttlMs: number,
+  isValid: (value: unknown) => value is T
+): Promise<T | null> {
+  try {
+    const raw = await AsyncStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CachedValue<unknown>;
+    if (!parsed || typeof parsed.createdAt !== 'number') return null;
+    if (Date.now() - parsed.createdAt > ttlMs) return null;
+    return isValid(parsed.value) ? parsed.value : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeCache<T>(key: string, value: T): Promise<void> {
+  try {
+    await AsyncStorage.setItem(
+      key,
+      JSON.stringify({
+        createdAt: Date.now(),
+        value,
+      } satisfies CachedValue<T>)
+    );
+  } catch {
+    // Cache failures should never block map rendering.
+  }
 }
 
 /**
@@ -32,12 +109,18 @@ function sleep(ms: number): Promise<void> {
 async function geocodeAddress(address: string): Promise<RoutePoint | null> {
   const trimmed = (address || '').trim();
   if (!trimmed) return null;
+
+  const cached = await readCache(geocodeCacheKey(trimmed), GEOCODE_CACHE_TTL_MS, isRoutePoint);
+  if (cached) return cached;
+
   const candidates = buildGeocodeCandidates(trimmed);
   for (const c of candidates) {
     const query = c.includes('USA') ? c : `${c}, USA`;
     const result = await geocodeAsync(query, 'us');
     if (result) {
-      return { latitude: result.latitude, longitude: result.longitude };
+      const point = { latitude: result.latitude, longitude: result.longitude };
+      await writeCache(geocodeCacheKey(trimmed), point);
+      return point;
     }
   }
   return null;
@@ -105,6 +188,20 @@ export async function fetchRouteForPoints(points: RoutePoint[]): Promise<OfferRo
   return { markers: validPoints, polyline, bounds };
 }
 
+export function createRoutePreviewFromPoints(points: RoutePoint[]): OfferRouteResult | null {
+  const validPoints = points.filter(
+    (point) => Number.isFinite(point.latitude) && Number.isFinite(point.longitude)
+  );
+  if (validPoints.length === 0) return null;
+
+  const previewPolyline = validPoints.length >= 2 ? validPoints : [];
+  return {
+    markers: validPoints,
+    polyline: previewPolyline,
+    bounds: computeBounds(validPoints, previewPolyline),
+  };
+}
+
 /**
  * Calculate bounds from markers and polyline
  */
@@ -150,6 +247,10 @@ export async function fetchOfferRoute(
   const unique = [...new Set(locations.map((l) => (l || '').trim()).filter(Boolean))];
   if (unique.length === 0) return null;
 
+  const key = routeCacheKey(unique);
+  const cached = await readCache(key, ROUTE_CACHE_TTL_MS, isOfferRouteResult);
+  if (cached) return cached;
+
   const markers: RoutePoint[] = [];
   for (let i = 0; i < unique.length; i++) {
     if (i > 0) await sleep(NOMINATIM_DELAY_MS);
@@ -169,5 +270,9 @@ export async function fetchOfferRoute(
     return null;
   }
 
-  return fetchRouteForPoints(markers);
+  const route = await fetchRouteForPoints(markers);
+  if (route) {
+    await writeCache(key, route);
+  }
+  return route;
 }

@@ -43,13 +43,8 @@ const SCREEN_WIDTH = Dimensions.get('window').width;
 
 const LOAD_DETAIL_TAB_ROWS = [
   [
-    { key: 'customer', label: 'Customer' },
     { key: 'load', label: 'Load' },
     { key: 'trip', label: 'Trip' },
-  ],
-  [
-    { key: 'documents', label: 'Documents' },
-    { key: 'billing', label: 'Billing' },
     { key: 'accounting', label: 'Accounting' },
   ],
 ] as const;
@@ -473,9 +468,7 @@ export default function LoadDetailScreen() {
   const { authState } = useAuth();
   const { socket, isConnected } = useWebSocket();
   const { id, loadJson } = useLocalSearchParams<{ id?: string; loadJson?: string }>();
-  const [contentTab, setContentTab] = useState<
-    'customer' | 'load' | 'trip' | 'documents' | 'billing' | 'accounting'
-  >('customer');
+  const [contentTab, setContentTab] = useState<'load' | 'trip' | 'accounting'>('load');
   const [isDriverInfoOpen, setIsDriverInfoOpen] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [selectedHistoryPointIndex, setSelectedHistoryPointIndex] = useState<number | null>(null);
@@ -483,6 +476,7 @@ export default function LoadDetailScreen() {
 
   const canAccess = canAccessWorkTab(authState.user?.role);
   const role = (authState.user?.role ?? '').trim().toUpperCase();
+  const isDriverRole = role === 'DRIVER';
   const showDriversTab = canAccessDriversAndOffers(role);
 
   useEffect(() => {
@@ -843,12 +837,7 @@ export default function LoadDetailScreen() {
   );
 
   const referenceNumber = cleanText(meta.reference_number);
-  const bookedRateRaw = cleanText(meta.booked_rate);
   const loadTypeRaw = cleanText(meta.load_type);
-  const bookedRateDisplay = useMemo(
-    () => formatMoneyFromString(bookedRateRaw),
-    [bookedRateRaw],
-  );
   const loadTypeDisplay = useMemo(() => {
     if (!loadTypeRaw) return '';
     return loadTypeRaw.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -1484,19 +1473,14 @@ export default function LoadDetailScreen() {
                     </Text>
                   </View>
 
-                  <View style={styles.loadInfoRow}>
-                    <Text style={styles.loadInfoLabel}>Booked rate</Text>
-                    <Text style={styles.loadInfoValue} numberOfLines={2}>
-                      {bookedRateDisplay || '—'}
-                    </Text>
-                  </View>
-
-                  <View style={styles.loadInfoRow}>
-                    <Text style={styles.loadInfoLabel}>Load type</Text>
-                    <Text style={styles.loadInfoValue} numberOfLines={2}>
-                      {loadTypeDisplay || '—'}
-                    </Text>
-                  </View>
+                  {!isDriverRole ? (
+                    <View style={styles.loadInfoRow}>
+                      <Text style={styles.loadInfoLabel}>Load type</Text>
+                      <Text style={styles.loadInfoValue} numberOfLines={2}>
+                        {loadTypeDisplay || '—'}
+                      </Text>
+                    </View>
+                  ) : null}
                 </View>
 
                 <View style={styles.loadInfoSection}>
@@ -1509,12 +1493,14 @@ export default function LoadDetailScreen() {
                     </Text>
                   </View>
 
-                  <View style={styles.loadInfoRow}>
-                    <Text style={styles.loadInfoLabel}>Source</Text>
-                    <Text style={styles.loadInfoValue} numberOfLines={2}>
-                      {sourceDisplay || sourceRaw || '—'}
-                    </Text>
-                  </View>
+                  {!isDriverRole ? (
+                    <View style={styles.loadInfoRow}>
+                      <Text style={styles.loadInfoLabel}>Source</Text>
+                      <Text style={styles.loadInfoValue} numberOfLines={2}>
+                        {sourceDisplay || sourceRaw || '—'}
+                      </Text>
+                    </View>
+                  ) : null}
 
                   <View style={styles.loadInfoRow}>
                     <Text style={styles.loadInfoLabel}>Dispatcher</Text>
@@ -1585,12 +1571,14 @@ export default function LoadDetailScreen() {
                     )}
                   </View>
 
-                  <View style={styles.loadInfoRow}>
-                    <Text style={styles.loadInfoLabel}>Profit</Text>
-                    <Text style={styles.loadInfoValue} numberOfLines={2}>
-                      {profitDisplay || '—'}
-                    </Text>
-                  </View>
+                  {!isDriverRole ? (
+                    <View style={styles.loadInfoRow}>
+                      <Text style={styles.loadInfoLabel}>Profit</Text>
+                      <Text style={styles.loadInfoValue} numberOfLines={2}>
+                        {profitDisplay || '—'}
+                      </Text>
+                    </View>
+                  ) : null}
                 </View>
 
                 {secondDriverMarked ? (

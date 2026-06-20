@@ -22,6 +22,8 @@ export interface OfferRoutePoint {
   type: 'pick_up_location' | 'delivery_location';
   location: string;
   time: string;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
 }
 
 export interface OfferRow {
@@ -125,6 +127,11 @@ export function routeSummary(
   const last =
     route.length > 1 ? route[route.length - 1]?.location ?? '' : first;
   return last ? `${first} → ${last}` : first;
+}
+
+export function buildExtendBidTimePushMessage(offer: Pick<OfferRow, 'id' | 'route'>): string {
+  const offerName = routeSummary(offer.route) || `Offer #${offer.id}`;
+  return `Please extend the bid time for the offer - ${offerName}`;
 }
 
 export interface DriverParticipationCountResponse {

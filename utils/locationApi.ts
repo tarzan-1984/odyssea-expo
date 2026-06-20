@@ -8,26 +8,27 @@ import { reverseGeocodeAsync, resolveCityForApi } from '@/utils/geocoding';
 import { toLocationDeviceFields } from '@/utils/mobileDevicePayload';
 import { loadMobileDeviceContextForBackground } from '@/utils/mobileDeviceIdentity';
 
+import { formatStatusDateNyDisplay } from './nyWallClock';
+
 /**
- * Format date and time for TMS API
+ * Format date and time for TMS API (America/New_York wall clock).
  * Output format: "01/15/2024 10:30 AM"
  */
 export function formatStatusDate(statusDate?: string): string {
-  const now = new Date();
-  const hours = now.getHours();
-  const minutes = String(now.getMinutes()).padStart(2, '0');
-  const ampm = hours >= 12 ? 'PM' : 'AM';
-  const displayHours = hours % 12 || 12;
+  const nowNy = formatStatusDateNyDisplay(new Date());
+  const nowTimeMatch = nowNy.match(/\s+(\d{1,2}:\d{2}\s*(?:AM|PM))/i);
+  const nowTimePart = nowTimeMatch?.[1] ?? '12:00 AM';
 
   if (!statusDate || statusDate.trim() === '') {
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const day = String(now.getDate()).padStart(2, '0');
-    const year = now.getFullYear();
-    return `${month}/${day}/${year} ${displayHours}:${minutes} ${ampm}`;
+    const dateMatch = nowNy.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2})\s+/);
+    if (dateMatch) {
+      const [, month, day, year2] = dateMatch;
+      return `${month}/${day}/20${year2} ${nowTimePart}`;
+    }
+    return nowNy;
   }
 
   const trimmed = statusDate.trim();
-  // If already contains time (e.g. "02/11/26 2:30 PM"), use it and ensure 4-digit year
   const timeMatch = trimmed.match(/(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(\d{1,2}:\d{2}\s*(?:AM|PM))/i);
   if (timeMatch) {
     const datePart = timeMatch[1];
@@ -39,8 +40,7 @@ export function formatStatusDate(statusDate?: string): string {
       return `${dateSegments[0]}/${dateSegments[1]}/${year} ${timePart}`;
     }
   }
-  // Date only (e.g. "11/24/25"), combine with current time
-  return `${trimmed} ${displayHours}:${minutes} ${ampm}`;
+  return `${trimmed} ${nowTimePart}`;
 }
 
 /**

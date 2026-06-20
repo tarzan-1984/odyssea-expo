@@ -20,6 +20,7 @@ export type ChatRichComposeInputRef = {
   insertText: (text: string) => void;
   focus: () => void;
   clear: () => void;
+  setPlainText: (text: string) => void;
   applyFormat: (command: EditorFormatCommand) => void;
 };
 
@@ -56,6 +57,10 @@ const ChatRichComposeInput = forwardRef<ChatRichComposeInputRef, ChatRichCompose
         },
         clear: () => {
           runInEditor('window.handleNativeCommand("clear")');
+        },
+        setPlainText: (text: string) => {
+          const escaped = JSON.stringify(text);
+          runInEditor(`window.setEditorPlainText(${escaped})`);
         },
         applyFormat: (command: EditorFormatCommand) => {
           const escaped = JSON.stringify(command);

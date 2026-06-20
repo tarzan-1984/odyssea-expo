@@ -177,6 +177,8 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
       const changed = merged.some((message) => {
         const previous = prev.find((item) => item.id === message.id);
         if (!previous) return true;
+        if (previous.content !== message.content) return true;
+        if (previous.updatedAt !== message.updatedAt) return true;
         if (previous.isRead !== message.isRead) return true;
         const a = (previous.readBy || []).join(',');
         const b = (message.readBy || []).join(',');
@@ -1752,4 +1754,3 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
     isSendingMessage,
   };
 };
-

@@ -11,31 +11,38 @@ import { Message } from '@/components/ChatListItem';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const SCREEN_HEIGHT = Dimensions.get('window').height;
 const DROPDOWN_WIDTH = rem(140); // Approximate width of dropdown
-const DROPDOWN_HEIGHT = rem(80); // Approximate height of dropdown (2 items: Reply and Copy)
+const MENU_ITEM_HEIGHT = rem(34);
 
 interface MessageDropdownProps {
   message: Message;
   isSender: boolean;
   canDelete?: boolean;
+  canEdit?: boolean;
   onReplyPress?: (message: Message) => void;
   onDeletePress?: (message: Message) => void;
+  onEditPress?: (message: Message) => void;
 }
 
 export default function MessageDropdown({
   message,
   isSender,
   canDelete = false,
+  canEdit = false,
   onReplyPress,
   onDeletePress,
+  onEditPress,
 }: MessageDropdownProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
   const triggerRef = useRef<View>(null);
 
   // Incoming messages can be replied to; own messages can be deleted when allowed by role.
-  if (isSender && !canDelete) {
+  if (isSender && !canDelete && !canEdit) {
     return null;
   }
+
+  const menuItemCount = (canEdit ? 1 : 0) + (canDelete || !isSender ? 1 : 0) + 1;
+  const dropdownHeight = MENU_ITEM_HEIGHT * menuItemCount + rem(8);
 
   const handleReplyPress = () => {
     if (onReplyPress) {
@@ -47,6 +54,13 @@ export default function MessageDropdown({
   const handleDeletePress = () => {
     if (onDeletePress) {
       onDeletePress(message);
+    }
+    setIsOpen(false);
+  };
+
+  const handleEditPress = () => {
+    if (onEditPress) {
+      onEditPress(message);
     }
     setIsOpen(false);
   };
@@ -82,9 +96,9 @@ export default function MessageDropdown({
         }
         
         // Check if dropdown goes beyond bottom edge of screen
-        if (top + DROPDOWN_HEIGHT > SCREEN_HEIGHT) {
+        if (top + dropdownHeight > SCREEN_HEIGHT) {
           // Position dropdown above the trigger button
-          top = y - DROPDOWN_HEIGHT - rem(4);
+          top = y - dropdownHeight - rem(4);
           // Ensure it doesn't go beyond top edge
           if (top < rem(10)) {
             top = rem(10);
@@ -133,6 +147,17 @@ export default function MessageDropdown({
           onPress={() => setIsOpen(false)}
         >
           <View style={[styles.dropdown, { top: dropdownPosition.top, left: dropdownPosition.left }]}>
+            {canEdit ? (
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={handleEditPress}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.menuItemIcon}>✎</Text>
+                <Text style={styles.menuItemText}>Edit</Text>
+              </TouchableOpacity>
+            ) : null}
+
             {canDelete ? (
               <TouchableOpacity
                 style={styles.menuItem}
@@ -201,6 +226,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: rem(12),
     paddingVertical: rem(6),
     gap: rem(6),
+    minHeight: MENU_ITEM_HEIGHT,
+  },
+  menuItemIcon: {
+    width: rem(18),
+    fontSize: fp(18),
+    lineHeight: fp(18),
+    fontFamily: fonts['400'],
+    color: colors.primary.blue,
+    textAlign: 'center',
   },
   menuItemText: {
     fontSize: fp(12),
@@ -208,4 +242,3 @@ const styles = StyleSheet.create({
     color: colors.primary.blue,
   },
 });
-

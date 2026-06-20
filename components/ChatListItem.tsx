@@ -64,6 +64,7 @@ export interface Message {
     senderName: string;
   };
   createdAt: string;
+  updatedAt?: string;
   sender: User;
   receiver?: User;
   reactions?: MessageReactionGroup[];
@@ -857,4 +858,3 @@ const styles = StyleSheet.create({
     // Container for individual corner icon
   },
 });
-

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useImperativeHandle, forwardRef } from 'react';
+import React, { useRef, useEffect, useImperativeHandle, forwardRef, useMemo } from 'react';
 import { View, StyleSheet, StyleProp, ViewStyle, Linking, Image } from 'react-native';
 import { WebView } from 'react-native-webview';
 import {
@@ -445,7 +445,8 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
       },
     }));
 
-    const htmlContent = `
+    const htmlContent = useMemo(
+      () => `
 <!DOCTYPE html>
 <html>
 <head>
@@ -678,13 +679,30 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
   </script>
 </body>
 </html>
-    `;
+    `,
+      [
+        cartoTile.maxZoom,
+        cartoTile.url,
+        cartoTileSubdomainsJs,
+        draggingJs,
+        initialRegion.latitude,
+        initialRegion.longitude,
+        initialRegion.longitudeDelta,
+        rasterTile.maxZoom,
+        rasterTile.url,
+        tileLayerSubdomainsJs,
+        useMapTilerWithFallback,
+        zoomJs,
+      ]
+    );
+
+    const webViewSource = useMemo(() => ({ html: htmlContent }), [htmlContent]);
 
     return (
       <View style={[styles.container, style]}>
         <WebView
           ref={webViewRef}
-          source={{ html: htmlContent }}
+          source={webViewSource}
           style={styles.webview}
           javaScriptEnabled={true}
           domStorageEnabled={true}
@@ -762,4 +780,3 @@ const styles = StyleSheet.create({
 });
 
 export default OSMMapView;
-

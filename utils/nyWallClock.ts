@@ -18,6 +18,21 @@ export function formatNyWallClockSqlString(instant: Date): string {
 	return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}:${get('second')}`;
 }
 
+/** Driver statusDate: MM/DD/YY h:mm AM/PM in America/New_York. */
+export function formatStatusDateNyDisplay(instant: Date = new Date()): string {
+	const parts = new Intl.DateTimeFormat('en-US', {
+		timeZone: NY_TZ,
+		month: '2-digit',
+		day: '2-digit',
+		year: '2-digit',
+		hour: 'numeric',
+		minute: '2-digit',
+		hour12: true,
+	}).formatToParts(instant);
+	const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+	return `${get('month')}/${get('day')}/${get('year')} ${get('hour')}:${get('minute')} ${get('dayPeriod')}`;
+}
+
 const NY_WALL_CLOCK_RE =
 	/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z)?$/;
 

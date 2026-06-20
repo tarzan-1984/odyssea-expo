@@ -31,6 +31,8 @@ import {
   formatNyWallClockDateSeparator,
   nyWallClockDateKey,
 } from '@/utils/nyWallClock';
+import { chatApi } from '@/app-api/chatApi';
+import { messagesCacheService } from '@/services/MessagesCacheService';
 
 /**
  * Chat Room Screen
@@ -59,6 +61,8 @@ export default function ChatRoomScreen() {
   const [pendingAttachments, setPendingAttachments] = useState<FileData[]>([]);
   const [optimisticMessages, setOptimisticMessages] = useState<Message[]>([]);
   const [replyingTo, setReplyingTo] = useState<Message['replyData'] | null>(null);
+  const [editingMessage, setEditingMessage] = useState<Message | null>(null);
+  const [isUpdatingMessage, setIsUpdatingMessage] = useState(false);
   const [isTemplatesModalOpen, setIsTemplatesModalOpen] = useState(false);
   const [viewableMessageIds, setViewableMessageIds] = useState<Set<string>>(() => new Set());
   
@@ -365,6 +369,11 @@ export default function ChatRoomScreen() {
   const canUseMessageTemplates =
     (authState.user?.role || '').trim().toUpperCase() !== 'DRIVER';
 
+  const canEditOwnMessages = useMemo(() => {
+    const normalizedRole = (authState.user?.role || '').trim().toUpperCase();
+    return normalizedRole === 'ADMINISTRATOR' || normalizedRole === 'DRIVER_UPDATES';
+  }, [authState.user?.role]);
+
   const clearPendingAttachments = useCallback(() => {
     setPendingAttachments([]);
     setUploadQueue([]);
@@ -375,15 +384,92 @@ export default function ChatRoomScreen() {
     setUploadQueue((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
+  const handleCancelEdit = useCallback(() => {
+    setEditingMessage(null);
+    setMessageText('');
+    setComposeResetKey((k) => k + 1);
+    chatInputRef.current?.clear();
+  }, []);
+
+  const handleEditMessage = useCallback((msg: Message) => {
+    if (!authState.user || msg.senderId !== authState.user.id || !canEditOwnMessages) {
+      return;
+    }
+
+    setEditingMessage(msg);
+    setReplyingTo(null);
+    clearPendingAttachments();
+    setMessageText(msg.content || '');
+    requestAnimationFrame(() => {
+      chatInputRef.current?.setText(msg.content || '');
+    });
+  }, [authState.user, canEditOwnMessages, clearPendingAttachments]);
+
   const handleSendPress = useCallback(async () => {
     const trimmedMessage = messageText.trim();
 
     if (
       (!trimmedMessage && pendingAttachments.length === 0) ||
       isUploading ||
+      isUpdatingMessage ||
       !chatRoomId ||
       !authState.user
     ) {
+      return;
+    }
+
+    if (editingMessage) {
+      if (editingMessage.senderId !== authState.user.id || !canEditOwnMessages) {
+        Alert.alert('Error', 'You can edit only your own messages');
+        return;
+      }
+
+      if (!trimmedMessage) {
+        Alert.alert('Error', 'Message cannot be empty');
+        return;
+      }
+
+      const previousMessage = editingMessage;
+      const optimisticUpdatedAt = new Date().toISOString();
+      const optimisticUpdate: Partial<Message> = {
+        content: trimmedMessage,
+        updatedAt: optimisticUpdatedAt,
+      };
+
+      setIsUpdatingMessage(true);
+      useChatStore.getState().updateMessage(chatRoomId as string, previousMessage.id, optimisticUpdate);
+      messagesCacheService
+        .updateMessage(previousMessage.id, chatRoomId as string, optimisticUpdate)
+        .catch((error) => {
+          console.error('Failed to update edited message in cache:', error);
+        });
+
+      try {
+        const updatedMessage = await chatApi.updateMessage(previousMessage.id, trimmedMessage);
+        useChatStore
+          .getState()
+          .updateMessage(updatedMessage.chatRoomId || (chatRoomId as string), updatedMessage.id, updatedMessage);
+        await messagesCacheService.updateMessage(
+          updatedMessage.id,
+          updatedMessage.chatRoomId || (chatRoomId as string),
+          updatedMessage,
+        );
+        setEditingMessage(null);
+        setMessageText('');
+        setComposeResetKey((k) => k + 1);
+        sendTyping(chatRoomId as string, false);
+      } catch (error) {
+        useChatStore.getState().updateMessage(chatRoomId as string, previousMessage.id, previousMessage);
+        messagesCacheService
+          .updateMessage(previousMessage.id, chatRoomId as string, previousMessage)
+          .catch(() => {});
+        setMessageText(previousMessage.content || '');
+        chatInputRef.current?.setText(previousMessage.content || '');
+        console.error('Failed to edit message:', error);
+        Alert.alert('Error', 'Failed to edit message');
+      } finally {
+        setIsUpdatingMessage(false);
+      }
       return;
     }
 
@@ -411,8 +497,11 @@ export default function ChatRoomScreen() {
     messageText,
     pendingAttachments,
     isUploading,
+    isUpdatingMessage,
     chatRoomId,
     authState.user,
+    editingMessage,
+    canEditOwnMessages,
     sendTextMessage,
     sendMediaMessage,
     replyingTo,
@@ -420,6 +509,13 @@ export default function ChatRoomScreen() {
     sendTyping,
     scrollToLatestMessage,
   ]);
+
+  useEffect(() => {
+    setEditingMessage(null);
+    setMessageText('');
+    setComposeResetKey((k) => k + 1);
+    clearPendingAttachments();
+  }, [chatRoomId, clearPendingAttachments]);
 
   // Reset scroll flags when chat room changes
   useEffect(() => {
@@ -904,6 +1000,7 @@ export default function ChatRoomScreen() {
                       );
                     }}
                     onReplyPress={(msg) => {
+                      setEditingMessage(null);
                       setReplyingTo({
                         avatar: msg.sender.avatar,
                         time: msg.createdAt,
@@ -911,6 +1008,7 @@ export default function ChatRoomScreen() {
                         senderName: `${msg.sender.firstName} ${msg.sender.lastName}`,
                       });
                     }}
+                    onEditPress={handleEditMessage}
                     onRetryPress={(msg) => {
                       retryOptimisticMessage(msg).catch((error) => {
                         console.error('Failed to retry message:', error);
@@ -997,14 +1095,16 @@ export default function ChatRoomScreen() {
           onEmojiPress={() => setShowEmojiPicker(!showEmojiPicker)}
           onTemplatesPress={() => setIsTemplatesModalOpen(true)}
           onAttachmentPress={() => {
-            if (isProcessingAttachments) return;
+            if (isProcessingAttachments || editingMessage) return;
             handleAttachmentPress().catch(() => {});
           }}
           replyingTo={replyingTo}
           onCancelReply={() => setReplyingTo(null)}
+          editingMessage={editingMessage}
+          onCancelEdit={handleCancelEdit}
           uploadQueue={uploadQueue}
           onRemoveUploadItem={removeUploadItemAt}
-          isSendingMessage={isUploading}
+          isSendingMessage={isUploading || isUpdatingMessage}
           isProcessingAttachments={isProcessingAttachments}
           isConnected={isConnected}
           showTemplatesButton={canUseMessageTemplates}
@@ -1293,5 +1393,3 @@ const styles = StyleSheet.create({
     color: '#8E8E93',
   },
 });
-
-

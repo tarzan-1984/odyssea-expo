@@ -20,9 +20,12 @@ import BottomNavigation, { BOTTOM_NAV_SCROLL_PADDING } from '@/components/naviga
 import ArrowLeft from '@/icons/ArrowLeft';
 import OSMMapView, { type Region, type OSMMapViewRef } from '@/components/maps/OSMMapView';
 import { useOfferRoute } from '@/hooks/useOfferRoute';
+import { createRoutePreviewFromPoints, type RoutePoint } from '@/services/offerRouteService';
 import {
   type OfferDriver,
+  type OfferRoutePoint,
   OfferRow,
+  buildExtendBidTimePushMessage,
   deactivateOffer,
   extendDriverTimeForOfferDriver,
   getOfferById,
@@ -34,15 +37,22 @@ import {
 } from '@/app-api/offers';
 import PhoneAppStatusActiveIcon from '@/icons/PhoneAppStatusActiveIcon';
 import PhoneAppStatusInactiveIcon from '@/icons/PhoneAppStatusInactiveIcon';
+import DeactivateOfferIcon from '@/icons/DeactivateOfferIcon';
+import ExtendBidTimeIcon from '@/icons/ExtendBidTimeIcon';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { DRIVER_PARTICIPATION_COUNT_QUERY_KEY } from '@/hooks/useDriverParticipationCount';
 import CreateRateModal from '@/components/offers/CreateRateModal';
 import ExtendTimeModal from '@/components/offers/ExtendTimeModal';
+import SendPushNotificationModal from '@/components/offers/SendPushNotificationModal';
 import { RectButton } from 'react-native-gesture-handler';
 import Swipeable from 'react-native-gesture-handler/Swipeable';
 
 const MAP_MAX_HEIGHT = Dimensions.get('window').height * 0.25;
+const DRIVER_TABLE_VISIBLE_ROWS = 20;
+const DRIVER_TABLE_ROW_HEIGHT = rem(16) * 2 + 24 + 1;
+const DRIVER_TABLE_LIST_MAX_HEIGHT = DRIVER_TABLE_ROW_HEIGHT * DRIVER_TABLE_VISIBLE_ROWS;
 const ROUTE_POINT_FOCUS_DELTA = 1.2;
+const ROUTE_MAP_BOUNDS_PADDING = 0.75;
 const ROUTE_POINT_COLORS = {
   initialPickup: '#1D4ED8',
   intermediatePickup: '#60A5FA',
@@ -170,6 +180,63 @@ function formatRateLabel(rate: number | null | undefined): string {
   })}`;
 }
 
+function getDriverBidSortPriority(driver: OfferDriver, nowUnixSeconds: number): number {
+  if (driver.active === false) return 3;
+
+  const actionTimeUnix = normalizeUnixSeconds(driver.action_time);
+  const hasActiveTimer =
+    driver.rate != null &&
+    actionTimeUnix != null &&
+    actionTimeUnix > nowUnixSeconds;
+
+  if (hasActiveTimer) return 0;
+
+  const hasExpiredTimer = actionTimeUnix != null && actionTimeUnix <= nowUnixSeconds;
+  if (hasExpiredTimer) return 1;
+
+  return 2;
+}
+
+function sortOfferDriversByBidStatus(
+  drivers: OfferDriver[],
+  nowUnixSeconds: number
+): OfferDriver[] {
+  return [...drivers].sort((a, b) => {
+    const priorityA = getDriverBidSortPriority(a, nowUnixSeconds);
+    const priorityB = getDriverBidSortPriority(b, nowUnixSeconds);
+    if (priorityA !== priorityB) return priorityA - priorityB;
+
+    const actionTimeA = normalizeUnixSeconds(a.action_time);
+    const actionTimeB = normalizeUnixSeconds(b.action_time);
+
+    if (priorityA === 0) {
+      return (actionTimeA ?? Number.MAX_SAFE_INTEGER) - (actionTimeB ?? Number.MAX_SAFE_INTEGER);
+    }
+
+    if (priorityA === 1) {
+      return (actionTimeB ?? 0) - (actionTimeA ?? 0);
+    }
+
+    return 0;
+  });
+}
+
+function canExtendDriverBidTime(offer: OfferRow, driver: OfferDriver): boolean {
+  return (
+    offer.active !== false &&
+    !offer.is_driver_selected &&
+    driver.active !== false &&
+    driver.rate != null
+  );
+}
+
+function routePointFromOfferPoint(point: OfferRoutePoint | null | undefined): RoutePoint | null {
+  const latitude = Number(point?.latitude);
+  const longitude = Number(point?.longitude);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+  return { latitude, longitude };
+}
+
 const DEFAULT_REGION: Region = {
   latitude: 39.0,
   longitude: -95.0,
@@ -205,6 +272,7 @@ export default function OfferDetailScreen() {
   const [isDecliningOffer, setIsDecliningOffer] = useState(false);
   const [isDeactivatingOffer, setIsDeactivatingOffer] = useState(false);
   const [driverActionKey, setDriverActionKey] = useState<string | null>(null);
+  const [pushModalDriver, setPushModalDriver] = useState<OfferDriver | null>(null);
 
   const initialOffer = useMemo(() => {
     if (!offerJson) return null;
@@ -299,33 +367,73 @@ export default function OfferDetailScreen() {
     return () => clearInterval(id);
   }, [isStaffOrAdmin, offer?.id, offer?.drivers?.length]);
 
-  const locations = (offer?.route ?? [])
-    .map((p) => (p.location || '').trim())
-    .filter(Boolean);
-  const { data: routeData, isLoading: routeLoading } = useOfferRoute(
-    locations.length > 0 ? locations : undefined
+  const nowUnixSeconds = useMemo(() => getCurrentUnixSeconds(), [driverTimerTick]);
+  const sortedOfferDrivers = useMemo(
+    () => (offer?.drivers ? sortOfferDriversByBidStatus(offer.drivers, nowUnixSeconds) : []),
+    [offer?.drivers, nowUnixSeconds]
   );
+
+  const routePoints = useMemo(() => offer?.route ?? [], [offer?.route]);
+  const routeCoordinatePoints = useMemo(() => {
+    if (routePoints.length === 0) return undefined;
+
+    const points = routePoints
+      .map(routePointFromOfferPoint)
+      .filter((point): point is RoutePoint => point != null);
+
+    return points.length === routePoints.length ? points : undefined;
+  }, [routePoints]);
+  const routePreviewData = useMemo(
+    () => (routeCoordinatePoints ? createRoutePreviewFromPoints(routeCoordinatePoints) : null),
+    [routeCoordinatePoints]
+  );
+
+  const locations = useMemo(
+    () =>
+      (offer?.route ?? [])
+        .map((p) => (p.location || '').trim())
+        .filter(Boolean),
+    [offer?.route]
+  );
+  const { data: routeData, isLoading: routeLoading } = useOfferRoute(
+    locations.length > 0 ? locations : undefined,
+    routeCoordinatePoints
+  );
+  const showRouteLoading = routeLoading && !routePreviewData;
   const showHazmatBanner = hasHazmatRequirement(offer?.special_requirements);
 
   const headerTitle = offer ? (routeSummary(offer.route) || '—') : 'Offer';
 
-  const routePoints = offer?.route ?? [];
-  const markers = (routeData?.markers ?? []).map((p, i) => ({
-    coordinate: { latitude: p.latitude, longitude: p.longitude },
-    markerColor: getRoutePointColor(routePoints, i),
-    tooltipType:
-      routePoints[i]?.type === 'pick_up_location'
-        ? 'Pick up'
-        : routePoints[i]?.type === 'delivery_location'
-          ? 'Delivery'
-          : '',
-    tooltipAddress: routePoints[i]?.location ?? '',
-    tooltipTime: routePoints[i]?.time ?? '',
-  }));
-  const polylineCoordinates = routeData?.polyline ?? undefined;
+  const displayRouteData = routeData ?? routePreviewData;
+  const markers = useMemo(
+    () =>
+      (displayRouteData?.markers ?? []).map((p, i) => {
+        const point = routePoints[i];
+        const isPickup = point?.type === 'pick_up_location';
+        const isDelivery = point?.type === 'delivery_location';
+
+        return {
+          coordinate: { latitude: p.latitude, longitude: p.longitude },
+          ...(isPickup
+            ? { kind: 'pickup' as const }
+            : isDelivery
+              ? { kind: 'delivery' as const }
+              : {}),
+          markerColor: getRoutePointColor(routePoints, i),
+          tooltipType: isPickup ? 'Pick up' : isDelivery ? 'Delivery' : '',
+          tooltipAddress: point?.location ?? '',
+          tooltipTime: point?.time ?? '',
+        };
+      }),
+    [displayRouteData?.markers, routePoints]
+  );
+  const polylineCoordinates = useMemo(
+    () => displayRouteData?.polyline ?? undefined,
+    [displayRouteData?.polyline]
+  );
 
   const focusRoutePointOnMap = (pointIndex: number) => {
-    const marker = routeData?.markers?.[pointIndex];
+    const marker = displayRouteData?.markers?.[pointIndex];
     if (!marker || !mapRef.current) return;
 
     mapRef.current.animateToRegion({
@@ -337,16 +445,17 @@ export default function OfferDetailScreen() {
   };
 
   useEffect(() => {
-    if (!routeData?.bounds || !mapRef.current) return;
-    const b = routeData.bounds;
-    const pad = 0.15;
+    if (!displayRouteData?.bounds || !mapRef.current) return;
+    const b = displayRouteData.bounds;
+    const latSpan = Math.max(b.maxLat - b.minLat, 0.3);
+    const lngSpan = Math.max(b.maxLng - b.minLng, 0.3);
     mapRef.current.animateToRegion({
       latitude: (b.minLat + b.maxLat) / 2,
       longitude: (b.minLng + b.maxLng) / 2,
-      latitudeDelta: b.maxLat - b.minLat + pad,
-      longitudeDelta: b.maxLng - b.minLng + pad,
+      latitudeDelta: latSpan + ROUTE_MAP_BOUNDS_PADDING,
+      longitudeDelta: lngSpan + ROUTE_MAP_BOUNDS_PADDING,
     });
-  }, [routeData?.bounds]);
+  }, [displayRouteData?.bounds]);
 
   return (
     <View
@@ -381,7 +490,7 @@ export default function OfferDetailScreen() {
               nestedScrollEnabled={Platform.OS === 'android'}
             >
               <View style={styles.mapWrap} collapsable={false}>
-                {routeLoading ? (
+                {showRouteLoading ? (
                   <View style={styles.loadingWrap}>
                     <ActivityIndicator size="large" color={colors.primary.blue} />
                     <Text style={styles.loadingText}>Loading route…</Text>
@@ -436,11 +545,7 @@ export default function OfferDetailScreen() {
                   disabled={isDeactivatingOffer}
                 >
                   <Text style={styles.deactivateOfferButtonText}>Deactivate offer</Text>
-                  <Image
-                    source={require('@/icons/deactivate_offer.png')}
-                    style={styles.deactivateOfferIcon}
-                    contentFit="contain"
-                  />
+                  <DeactivateOfferIcon width={fp(20)} height={fp(20)} />
                 </TouchableOpacity>
               ) : !isSelectedOfferDriver && isDriver ? (
                 <TouchableOpacity
@@ -463,7 +568,7 @@ export default function OfferDetailScreen() {
                       ? isBidExpired
                         ? 'BID TIME EXPIRED'
                         : formatCountdown(remainingSeconds)
-                      : 'CREATE RATE'}
+                      : 'Place bid'}
                   </Text>
                 </TouchableOpacity>
               ) : null}
@@ -556,7 +661,7 @@ export default function OfferDetailScreen() {
                         <Text style={[styles.driversSwipeHintChevron, { color: colors.semantic.error }]}>
                           {'<'}
                         </Text>
-                        <Text style={styles.driversSwipeHintText}>Swipe</Text>
+                        <Text style={styles.driversSwipeHintText}>Swipe drivers</Text>
                         <Text style={[styles.driversSwipeHintChevron, { color: colors.semantic.success }]}>
                           {'>'}
                         </Text>
@@ -568,7 +673,13 @@ export default function OfferDetailScreen() {
                     <Text style={[styles.driversTableHeader, styles.driversTableHeaderRate]}>Rate</Text>
                     <Text style={[styles.driversTableHeader, styles.driversTableHeaderTimer]}>Bid timer</Text>
                   </View>
-                  {offer.drivers.map((driver: OfferDriver, driverIdx: number) => {
+                  <ScrollView
+                    style={styles.driversTableList}
+                    contentContainerStyle={styles.driversTableListContent}
+                    nestedScrollEnabled
+                    showsVerticalScrollIndicator={sortedOfferDrivers.length > DRIVER_TABLE_VISIBLE_ROWS}
+                  >
+                  {sortedOfferDrivers.map((driver: OfferDriver, driverIdx: number) => {
                     const actionTimeUnix = normalizeUnixSeconds(driver.action_time);
                     const driverRemainingSeconds =
                       actionTimeUnix != null
@@ -583,6 +694,9 @@ export default function OfferDetailScreen() {
                       (isRemovedDriver || (!driver.is_selected && !isRemovedDriver));
                     const canAssignDriver = !hasAcceptedDriver && !isRemovedDriver && !driver.is_selected;
                     const canReturnDriver = !hasAcceptedDriver && isRemovedDriver;
+                    const canExtendBid =
+                      canExtendDriverBidTime(offer, driver) &&
+                      Boolean(driver.externalId ?? driver.driver_id);
 
                     const rowContent = (
                       <View
@@ -619,12 +733,22 @@ export default function OfferDetailScreen() {
                                 {formatCountdown(driverRemainingSeconds)}
                               </Text>
                             </View>
+                          ) : canExtendBid ? (
+                            <TouchableOpacity
+                              onPress={() => setPushModalDriver(driver)}
+                              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                              activeOpacity={0.7}
+                              accessibilityRole="button"
+                              accessibilityLabel="Send push notification"
+                            >
+                              <ExtendBidTimeIcon
+                                width={fp(24)}
+                                height={fp(24)}
+                                color={colors.neutral.darkGrey}
+                              />
+                            </TouchableOpacity>
                           ) : (
-                            <Image
-                              source={require('@/icons/OfferTime.png')}
-                              style={styles.driversTableExpiredIcon}
-                              contentFit="contain"
-                            />
+                            <Text style={styles.driversTableTimerDash}>—</Text>
                           )}
                         </View>
                       </View>
@@ -759,6 +883,7 @@ export default function OfferDetailScreen() {
                       </Swipeable>
                     );
                   })}
+                  </ScrollView>
                 </View>
               )}
 
@@ -941,6 +1066,12 @@ export default function OfferDetailScreen() {
           }
         }}
       />
+      <SendPushNotificationModal
+        visible={pushModalDriver != null}
+        onClose={() => setPushModalDriver(null)}
+        driver={pushModalDriver}
+        defaultMessage={offer ? buildExtendBidTimePushMessage(offer) : ''}
+      />
     </View>
   );
 }
@@ -1065,10 +1196,6 @@ const styles = StyleSheet.create({
     fontSize: fp(20),
     fontFamily: fonts['600'],
     color: '#DC2626',
-  },
-  deactivateOfferIcon: {
-    width: rem(40),
-    height: rem(40),
   },
   declineOfferButtonDisabled: {
     opacity: 0.7,
@@ -1256,6 +1383,12 @@ const styles = StyleSheet.create({
   driversTableHeaderTimer: {
     width: rem(90),
   },
+  driversTableList: {
+    maxHeight: DRIVER_TABLE_LIST_MAX_HEIGHT,
+  },
+  driversTableListContent: {
+    flexGrow: 0,
+  },
   driversTableDataRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1316,10 +1449,6 @@ const styles = StyleSheet.create({
     fontSize: fp(12),
     fontFamily: fonts['600'],
     color: colors.neutral.white,
-  },
-  driversTableExpiredIcon: {
-    width: rem(68),
-    height: rem(40),
   },
   driversSwipeActionWrap: {
     width: rem(90),

@@ -430,6 +430,13 @@ class ChatApiClient {
     });
   }
 
+  async updateMessage(messageId: string, content: string): Promise<Message> {
+    return this.request<Message>(`/v1/messages/${messageId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ content }),
+    });
+  }
+
   /**
    * Mark all messages in a chat room as read
    * Mirrors Next.js chatApi.markChatRoomAsRead
@@ -611,4 +618,3 @@ class ChatApiClient {
 
 // Create singleton instance
 export const chatApi = new ChatApiClient();
-

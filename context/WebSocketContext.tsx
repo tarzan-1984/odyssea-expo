@@ -466,6 +466,37 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       }
     });
 
+    newSocket.on('messageUpdated', async (data: any) => {
+      const payload = Array.isArray(data) ? data[0] : data;
+      const updatedMessage: Message | undefined = payload?.message;
+      const chatRoomId = payload?.chatRoomId || updatedMessage?.chatRoomId;
+      if (!chatRoomId || !updatedMessage?.id) return;
+
+      try {
+        const { updateMessage, chatRooms } = useChatStore.getState();
+        updateMessage(chatRoomId, updatedMessage.id, updatedMessage);
+
+        await messagesCacheService
+          .updateMessage(updatedMessage.id, chatRoomId, updatedMessage)
+          .catch((err) => {
+            console.error('❌ [WebSocket] Failed to update edited message in cache:', err);
+          });
+
+        const room = chatRooms.find((item) => item.id === chatRoomId);
+        if (room?.lastMessage?.id === updatedMessage.id) {
+          const { chatCacheService } = await import('@/services/ChatCacheService');
+          await chatCacheService
+            .updateChatRoom(chatRoomId, {
+              lastMessage: { ...room.lastMessage, ...updatedMessage } as Message,
+              updatedAt: updatedMessage.updatedAt || room.updatedAt,
+            })
+            .catch(() => {});
+        }
+      } catch (error) {
+        console.error('❌ [WebSocket] Failed to handle updated message:', error);
+      }
+    });
+
     newSocket.on('messageReactionsUpdated', async (data: any) => {
       const payload = Array.isArray(data) ? data[0] : data;
       if (!payload?.chatRoomId || !payload?.messageId) return;
@@ -1216,4 +1247,3 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
   return <WebSocketContext.Provider value={value}>{children}</WebSocketContext.Provider>;
 };
-

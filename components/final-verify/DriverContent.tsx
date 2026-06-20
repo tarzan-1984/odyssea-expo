@@ -29,6 +29,7 @@ import {
   persistResolvedUserLocationToCache,
   buildLocationDisplayLabel,
 } from '@/utils/locationApi';
+import { formatStatusDateNyDisplay } from '@/utils/nyWallClock';
 import { fileLogger } from '@/utils/fileLogger';
 import { eventBus } from '@/services/EventBus';
 import type { DriverProfileSyncPayload } from '@/utils/driverProfileSync';
@@ -193,16 +194,8 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
     return `${m}/${day}/${y}`;
   };
 
-  /** Format as MM/DD/YY h:mm AM/PM for statusDate in DB */
-  const formatDateWithTime = (d: Date) => {
-    const datePart = formatDate(d);
-    const hours = d.getHours();
-    const minutes = d.getMinutes();
-    const ampm = hours >= 12 ? 'PM' : 'AM';
-    const h12 = hours % 12 || 12;
-    const m = String(minutes).padStart(2, '0');
-    return `${datePart} ${h12}:${m} ${ampm}`;
-  };
+  /** Format as MM/DD/YY h:mm AM/PM for statusDate in DB (America/New_York). */
+  const formatDateWithTime = (d: Date) => formatStatusDateNyDisplay(d);
 
   /** Parse statusDate from DB (MM/DD/YY h:mm AM/PM or YYYY-MM-DD HH:mm:ss) to display string */
   const parseStatusDateForDisplay = useCallback((value: string | null | undefined): string => {

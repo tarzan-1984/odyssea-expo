@@ -25,6 +25,7 @@ type Props = {
 	shouldLoadMedia?: boolean;
 	onReplyPress?: (message: Message) => void;
 	onDeletePress?: (message: Message) => void;
+	onEditPress?: (message: Message) => void;
 	onRetryPress?: (message: Message) => void;
 };
 
@@ -36,6 +37,7 @@ export default function MessageItem({
 	shouldLoadMedia = true,
 	onReplyPress,
 	onDeletePress,
+	onEditPress,
 	onRetryPress,
 }: Props) {
 	const { width: windowWidth } = useWindowDimensions();
@@ -126,13 +128,19 @@ export default function MessageItem({
 		!isOptimisticMessageId(message.id) &&
 		normalizedCurrentUserRole.length > 0 &&
 		normalizedCurrentUserRole !== 'DRIVER';
+	const canEditMessage =
+		isSender &&
+		!isOptimisticMessageId(message.id) &&
+		Boolean(message.content?.trim()) &&
+		(normalizedCurrentUserRole === 'ADMINISTRATOR' ||
+			normalizedCurrentUserRole === 'DRIVER_UPDATES');
 	const multiAttachments = message.pendingOutgoing ? null : getMessageMultiAttachments(message);
 	const pendingAttachmentCount = message.pendingOutgoing?.localAttachments.length ?? 0;
 	const isPendingMultiAttach = pendingAttachmentCount >= 2;
 	const isMultiAttachLayout = Boolean(multiAttachments) || isPendingMultiAttach;
 	const showSingleFile = Boolean(!multiAttachments && !message.pendingOutgoing && message.fileUrl);
 	const hasFiles = Boolean(message.pendingOutgoing || multiAttachments || showSingleFile);
-	const showMessageMenu = (!isSender || canDeleteMessage) && !message.pendingOutgoing;
+	const showMessageMenu = (!isSender || canDeleteMessage || canEditMessage) && !message.pendingOutgoing;
 	const pendingStatus = message.pendingOutgoing?.status;
 	const isPendingFailed = pendingStatus === 'failed';
 	const isPendingSending =
@@ -345,8 +353,10 @@ export default function MessageItem({
 								message={message}
 								isSender={isSender}
 								canDelete={canDeleteMessage}
+								canEdit={canEditMessage}
 								onReplyPress={onReplyPress}
 								onDeletePress={onDeletePress}
+								onEditPress={onEditPress}
 							/>
 						</View>
 					) : null}
