@@ -72,6 +72,8 @@ export interface Message {
   clientMessageId?: string;
   /** Client-only bubble shown while upload/send is in progress. */
   pendingOutgoing?: PendingOutgoingMeta;
+  /** TMS dispatch message from create_load_chat (Odysseia Team, no avatar). */
+  isSystemMessage?: boolean;
 }
 
 export interface ChatRoomParticipant {

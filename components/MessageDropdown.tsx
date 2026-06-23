@@ -36,12 +36,11 @@ export default function MessageDropdown({
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
   const triggerRef = useRef<View>(null);
 
-  // Incoming messages can be replied to; own messages can be deleted when allowed by role.
-  if (isSender && !canDelete && !canEdit) {
-    return null;
-  }
-
-  const menuItemCount = (canEdit ? 1 : 0) + (canDelete || !isSender ? 1 : 0) + 1;
+  const menuItemCount =
+    (canEdit ? 1 : 0) +
+    (canDelete ? 1 : 0) +
+    (!isSender ? 1 : 0) +
+    1;
   const dropdownHeight = MENU_ITEM_HEIGHT * menuItemCount + rem(8);
 
   const handleReplyPress = () => {
@@ -158,6 +157,17 @@ export default function MessageDropdown({
               </TouchableOpacity>
             ) : null}
 
+            {!isSender ? (
+              <TouchableOpacity
+                style={styles.menuItem}
+                onPress={handleReplyPress}
+                activeOpacity={0.7}
+              >
+                <ReplyIcon width={rem(18)} height={rem(18)} color={colors.primary.blue} />
+                <Text style={styles.menuItemText}>Reply</Text>
+              </TouchableOpacity>
+            ) : null}
+
             {canDelete ? (
               <TouchableOpacity
                 style={styles.menuItem}
@@ -167,16 +177,7 @@ export default function MessageDropdown({
                 <DeletedFileIcon width={rem(18)} height={rem(18)} color={colors.primary.blue} />
                 <Text style={styles.menuItemText}>Delete</Text>
               </TouchableOpacity>
-            ) : (
-              <TouchableOpacity
-                style={styles.menuItem}
-                onPress={handleReplyPress}
-                activeOpacity={0.7}
-              >
-                <ReplyIcon width={rem(18)} height={rem(18)} color={colors.primary.blue} />
-                <Text style={styles.menuItemText}>Reply</Text>
-              </TouchableOpacity>
-            )}
+            ) : null}
 
             <TouchableOpacity
               style={styles.menuItem}

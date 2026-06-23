@@ -369,6 +369,9 @@ export default function ChatRoomScreen() {
   const canUseMessageTemplates =
     (authState.user?.role || '').trim().toUpperCase() !== 'DRIVER';
 
+  const isLoadArchivedReadOnlyChat =
+    chatRoom?.type === 'LOAD' && chatRoom.isLoadArchived === true;
+
   const canEditOwnMessages = useMemo(() => {
     const normalizedRole = (authState.user?.role || '').trim().toUpperCase();
     return normalizedRole === 'ADMINISTRATOR' || normalizedRole === 'DRIVER_UPDATES';
@@ -406,6 +409,10 @@ export default function ChatRoomScreen() {
   }, [authState.user, canEditOwnMessages, clearPendingAttachments]);
 
   const handleSendPress = useCallback(async () => {
+    if (isLoadArchivedReadOnlyChat) {
+      return;
+    }
+
     const trimmedMessage = messageText.trim();
 
     if (
@@ -494,6 +501,7 @@ export default function ChatRoomScreen() {
       console.error('Failed to send message:', error);
     }
   }, [
+    isLoadArchivedReadOnlyChat,
     messageText,
     pendingAttachments,
     isUploading,
@@ -1081,35 +1089,37 @@ export default function ChatRoomScreen() {
           </View>
         ) : null}
         
-        <ChatInputSection
-          ref={chatInputRef}
-          messageText={messageText}
-          composeResetKey={composeResetKey}
-          onMessageTextChange={setMessageText}
-          onPlainTextChange={(plain) => {
-            if (chatRoomId) {
-              sendTyping(chatRoomId as string, plain.trim().length > 0);
-            }
-          }}
-          onSendPress={handleSendPress}
-          onEmojiPress={() => setShowEmojiPicker(!showEmojiPicker)}
-          onTemplatesPress={() => setIsTemplatesModalOpen(true)}
-          onAttachmentPress={() => {
-            if (isProcessingAttachments || editingMessage) return;
-            handleAttachmentPress().catch(() => {});
-          }}
-          replyingTo={replyingTo}
-          onCancelReply={() => setReplyingTo(null)}
-          editingMessage={editingMessage}
-          onCancelEdit={handleCancelEdit}
-          uploadQueue={uploadQueue}
-          onRemoveUploadItem={removeUploadItemAt}
-          isSendingMessage={isUploading || isUpdatingMessage}
-          isProcessingAttachments={isProcessingAttachments}
-          isConnected={isConnected}
-          showTemplatesButton={canUseMessageTemplates}
-          onLayout={setSendSectionHeight}
-        />
+        {!isLoadArchivedReadOnlyChat ? (
+          <ChatInputSection
+            ref={chatInputRef}
+            messageText={messageText}
+            composeResetKey={composeResetKey}
+            onMessageTextChange={setMessageText}
+            onPlainTextChange={(plain) => {
+              if (chatRoomId) {
+                sendTyping(chatRoomId as string, plain.trim().length > 0);
+              }
+            }}
+            onSendPress={handleSendPress}
+            onEmojiPress={() => setShowEmojiPicker(!showEmojiPicker)}
+            onTemplatesPress={() => setIsTemplatesModalOpen(true)}
+            onAttachmentPress={() => {
+              if (isProcessingAttachments || editingMessage) return;
+              handleAttachmentPress().catch(() => {});
+            }}
+            replyingTo={replyingTo}
+            onCancelReply={() => setReplyingTo(null)}
+            editingMessage={editingMessage}
+            onCancelEdit={handleCancelEdit}
+            uploadQueue={uploadQueue}
+            onRemoveUploadItem={removeUploadItemAt}
+            isSendingMessage={isUploading || isUpdatingMessage}
+            isProcessingAttachments={isProcessingAttachments}
+            isConnected={isConnected}
+            showTemplatesButton={canUseMessageTemplates}
+            onLayout={setSendSectionHeight}
+          />
+        ) : null}
         
         {/* Typing indicator (absolute above input bar) */}
         {chatRoomId ? (() => {
@@ -1138,28 +1148,32 @@ export default function ChatRoomScreen() {
           );
         })() : null}
         
-        <EmojiPicker
-          isOpen={showEmojiPicker}
-          onClose={() => setShowEmojiPicker(false)}
-          onEmojiSelect={(emoji) => {
-            chatInputRef.current?.insertText(emoji);
-          }}
-        />
+        {!isLoadArchivedReadOnlyChat ? (
+          <>
+            <EmojiPicker
+              isOpen={showEmojiPicker}
+              onClose={() => setShowEmojiPicker(false)}
+              onEmojiSelect={(emoji) => {
+                chatInputRef.current?.insertText(emoji);
+              }}
+            />
 
-        <MessageTemplatesModal
-          visible={isTemplatesModalOpen}
-          currentUser={authState.user}
-          onClose={() => setIsTemplatesModalOpen(false)}
-          onInsertContent={(content) => {
-            const text = content.trim();
-            if (!text) return;
-            const prefix = messageText.trim() ? '\n' : '';
-            chatInputRef.current?.insertText(`${prefix}${text}`);
-            if (chatRoomId) {
-              sendTyping(chatRoomId as string, true);
-            }
-          }}
-        />
+            <MessageTemplatesModal
+              visible={isTemplatesModalOpen}
+              currentUser={authState.user}
+              onClose={() => setIsTemplatesModalOpen(false)}
+              onInsertContent={(content) => {
+                const text = content.trim();
+                if (!text) return;
+                const prefix = messageText.trim() ? '\n' : '';
+                chatInputRef.current?.insertText(`${prefix}${text}`);
+                if (chatRoomId) {
+                  sendTyping(chatRoomId as string, true);
+                }
+              }}
+            />
+          </>
+        ) : null}
         
         {/* Files Modal */}
         {chatRoomId && (

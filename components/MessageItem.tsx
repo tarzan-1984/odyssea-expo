@@ -108,6 +108,7 @@ export default function MessageItem({
 		return 'rgba(96, 102, 197, 0.15)';
 	};
 	
+	const isSystemMessage = Boolean(message.isSystemMessage);
 	const senderFirstName = message.sender?.firstName?.trim() || '';
 	const senderRoleRaw = message.sender?.role?.trim() || '';
 	const senderLastName = message.sender?.lastName?.trim() || '';
@@ -118,16 +119,17 @@ export default function MessageItem({
 	const senderInitials = `${senderFirstName?.[0] || ''}${senderLastName?.[0] || senderFirstName?.[1] || ''}`.toUpperCase();
 	const normalizedChatType = (chatType || '').trim().toUpperCase();
 	const normalizedCurrentUserRole = (currentUserRole || '').trim().toUpperCase();
-	const shouldShowSenderAvatar = !isSender && (normalizedChatType === 'GROUP' || normalizedChatType === 'LOAD');
+	const shouldShowSenderAvatar =
+		!isSender &&
+		!isSystemMessage &&
+		(normalizedChatType === 'GROUP' || normalizedChatType === 'LOAD');
 	const incomingMeta = useMemo(
 		() => (isSender ? null : getIncomingMessageMeta(message, chatType)),
 		[isSender, message, chatType]
 	);
 	const canDeleteMessage =
-		isSender &&
-		!isOptimisticMessageId(message.id) &&
-		normalizedCurrentUserRole.length > 0 &&
-		normalizedCurrentUserRole !== 'DRIVER';
+		normalizedCurrentUserRole === 'ADMINISTRATOR' &&
+		!isOptimisticMessageId(message.id);
 	const canEditMessage =
 		isSender &&
 		!isOptimisticMessageId(message.id) &&
@@ -140,7 +142,10 @@ export default function MessageItem({
 	const isMultiAttachLayout = Boolean(multiAttachments) || isPendingMultiAttach;
 	const showSingleFile = Boolean(!multiAttachments && !message.pendingOutgoing && message.fileUrl);
 	const hasFiles = Boolean(message.pendingOutgoing || multiAttachments || showSingleFile);
-	const showMessageMenu = (!isSender || canDeleteMessage || canEditMessage) && !message.pendingOutgoing;
+	const canCopyMessage = Boolean(message.content?.trim());
+	const showMessageMenu =
+		!message.pendingOutgoing &&
+		(!isSender || canDeleteMessage || canEditMessage || canCopyMessage);
 	const pendingStatus = message.pendingOutgoing?.status;
 	const isPendingFailed = pendingStatus === 'failed';
 	const isPendingSending =
@@ -279,7 +284,7 @@ export default function MessageItem({
 				</View>
 			) : (
 				<View style={styles.bubbleFooterRowIncoming}>
-					{senderRoleRaw ? (
+					{!isSystemMessage && senderRoleRaw ? (
 						<View
 							style={[
 								styles.roleTag,
