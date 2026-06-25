@@ -46,6 +46,7 @@ import ExtendTimeModal from '@/components/offers/ExtendTimeModal';
 import SendPushNotificationModal from '@/components/offers/SendPushNotificationModal';
 import { RectButton } from 'react-native-gesture-handler';
 import Swipeable from 'react-native-gesture-handler/Swipeable';
+import { formatOfferRouteTimeForDriver } from '@/utils/offerDateTimeDisplay';
 
 const MAP_MAX_HEIGHT = Dimensions.get('window').height * 0.25;
 const DRIVER_TABLE_VISIBLE_ROWS = 20;
@@ -73,6 +74,16 @@ function hasHazmatRequirement(sr: unknown): boolean {
     return sr.some((value) => String(value).trim().toLowerCase() === 'hazmat');
   }
   return String(sr).toLowerCase().includes('hazmat');
+}
+
+function formatOfferWeight(weight: unknown, forDriver: boolean): string {
+  if (weight == null || String(weight).trim() === '') return '—';
+  if (!forDriver) return String(weight);
+
+  const numeric = Number(String(weight).replace(/[^\d.-]/g, ''));
+  if (!Number.isFinite(numeric)) return String(weight);
+
+  return `${numeric.toLocaleString('en-US')} lbs`;
 }
 
 function getRoutePointColor(
@@ -342,6 +353,7 @@ export default function OfferDetailScreen() {
 
   const hasSubmittedRate = hasDriverRate(driverRate);
   const isBidExpired = hasSubmittedRate && remainingSeconds <= 0;
+  const isDeclineBlockedByActiveBidTimer = hasSubmittedRate && remainingSeconds > 0;
 
   useEffect(() => {
     if (!hasSubmittedRate) {
@@ -592,10 +604,16 @@ export default function OfferDetailScreen() {
 
               {canDeclineOffer ? (
                 <TouchableOpacity
-                  style={[styles.declineOfferButton, isDecliningOffer && styles.declineOfferButtonDisabled]}
-                  activeOpacity={0.75}
-                  disabled={isDecliningOffer}
+                  style={[
+                    styles.declineOfferButton,
+                    isDeclineBlockedByActiveBidTimer && styles.declineOfferButtonBlocked,
+                    isDecliningOffer && styles.declineOfferButtonDisabled,
+                  ]}
+                  activeOpacity={isDeclineBlockedByActiveBidTimer ? 1 : 0.75}
+                  disabled={isDecliningOffer || isDeclineBlockedByActiveBidTimer}
                   onPress={() => {
+                    if (isDeclineBlockedByActiveBidTimer) return;
+
                     Alert.alert(
                       'Decline offer',
                       'Are you sure you want to decline this offer?',
@@ -630,7 +648,12 @@ export default function OfferDetailScreen() {
                     );
                   }}
                 >
-                  <Text style={styles.declineOfferButtonText}>
+                  <Text
+                    style={[
+                      styles.declineOfferButtonText,
+                      isDeclineBlockedByActiveBidTimer && styles.declineOfferButtonTextBlocked,
+                    ]}
+                  >
                     {isDecliningOffer ? 'Declining…' : 'Decline Offer'}
                   </Text>
                 </TouchableOpacity>
@@ -920,12 +943,36 @@ export default function OfferDetailScreen() {
                             {point.location || '—'}
                           </Text>
                         </TouchableOpacity>
-                        <Text style={styles.routeStopTime}>{point.time || '—'}</Text>
+                        {isDriver ? (
+                          (() => {
+                            const formatted = formatOfferRouteTimeForDriver(point.time);
+                            if (!formatted) {
+                              return <Text style={styles.routeStopTime}>—</Text>;
+                            }
+                            return (
+                              <View style={styles.routeStopTimeColumn}>
+                                <Text style={styles.routeStopTimeDate}>{formatted.dateLine}</Text>
+                                <Text style={styles.routeStopTimeRange}>{formatted.timeLine}</Text>
+                              </View>
+                            );
+                          })()
+                        ) : (
+                          <Text style={styles.routeStopTime}>{point.time || '—'}</Text>
+                        )}
                       </View>
                     </View>
                   ))}
                 </View>
               )}
+
+              {offer.offered_rate != null && Number.isFinite(Number(offer.offered_rate)) ? (
+                <View style={styles.offeredRateBlock}>
+                  <Text style={styles.offeredRateTitle}>Offered Rate</Text>
+                  <Text style={styles.offeredRateValue}>
+                    ${Number(offer.offered_rate).toLocaleString('en-US')}
+                  </Text>
+                </View>
+              ) : null}
 
               {isDriver && (
                 <View style={styles.distanceTable}>
@@ -961,17 +1008,10 @@ export default function OfferDetailScreen() {
                     <View style={styles.infoBlockWeight}>
                       <Text style={styles.infoBlockTitle}>Weight</Text>
                       <Text style={styles.infoBlockText}>
-                        {offer.weight != null ? String(offer.weight) : '—'}
+                        {formatOfferWeight(offer.weight, isDriver)}
                       </Text>
                     </View>
                   </View>
-                </View>
-              ) : null}
-
-              {offer.notes && String(offer.notes).trim() ? (
-                <View style={styles.infoBlock}>
-                  <Text style={styles.infoBlockTitle}>Notes</Text>
-                  <Text style={styles.infoBlockText}>{String(offer.notes).trim()}</Text>
                 </View>
               ) : null}
 
@@ -987,6 +1027,13 @@ export default function OfferDetailScreen() {
                   </View>
                 );
               })()}
+
+              {offer.notes && String(offer.notes).trim() ? (
+                <View style={styles.infoBlock}>
+                  <Text style={styles.infoBlockTitle}>Notes</Text>
+                  <Text style={styles.infoBlockText}>{String(offer.notes).trim()}</Text>
+                </View>
+              ) : null}
             </ScrollView>
           )}
         </View>
@@ -996,6 +1043,7 @@ export default function OfferDetailScreen() {
         visible={createRateModalVisible && !isSelectedOfferDriver}
         onClose={() => setCreateRateModalVisible(false)}
         isSubmitting={isSubmittingRate}
+        offeredRate={offer?.offered_rate ?? null}
         onCreate={async (data) => {
           if (!offer || !isDriver) {
             setCreateRateModalVisible(false);
@@ -1021,7 +1069,7 @@ export default function OfferDetailScreen() {
             setDriverRate(result.rate ?? (Number.isNaN(rateNumber) ? 0 : rateNumber));
             setDriverActionTime(nextActionTime);
             console.log('[OfferDetailScreen] Driver rate saved', result);
-            Alert.alert('Success', 'Your rate has been submitted.');
+            Alert.alert('', 'Your rate has been submitted.');
             setCreateRateModalVisible(false);
           } catch (err) {
             console.error('[OfferDetailScreen] Failed to save driver rate', err);
@@ -1200,10 +1248,16 @@ const styles = StyleSheet.create({
   declineOfferButtonDisabled: {
     opacity: 0.7,
   },
+  declineOfferButtonBlocked: {
+    backgroundColor: colors.neutral.lightGrey,
+  },
   declineOfferButtonText: {
     fontSize: fp(16),
     fontFamily: fonts['700'],
     color: colors.neutral.white,
+  },
+  declineOfferButtonTextBlocked: {
+    color: colors.neutral.darkGrey,
   },
   createRateButton: {
     ...typography.buttonGreen,
@@ -1322,6 +1376,24 @@ const styles = StyleSheet.create({
   routeStopTime: {
     flexShrink: 0,
     maxWidth: '42%',
+    fontSize: fp(13),
+    fontFamily: fonts['500'],
+    color: colors.neutral.darkGrey,
+    textAlign: 'right',
+  },
+  routeStopTimeColumn: {
+    flexShrink: 0,
+    maxWidth: '46%',
+    alignItems: 'flex-end',
+    gap: rem(2),
+  },
+  routeStopTimeDate: {
+    fontSize: fp(13),
+    fontFamily: fonts['500'],
+    color: colors.neutral.darkGrey,
+    textAlign: 'right',
+  },
+  routeStopTimeRange: {
     fontSize: fp(13),
     fontFamily: fonts['500'],
     color: colors.neutral.darkGrey,
@@ -1485,6 +1557,26 @@ const styles = StyleSheet.create({
     padding: rem(16),
     borderWidth: 1,
     borderColor: colors.neutral.lightGrey,
+  },
+  offeredRateBlock: {
+    marginTop: rem(16),
+    marginHorizontal: rem(20),
+    backgroundColor: 'rgba(112, 255, 174, 0.28)',
+    borderRadius: rem(12),
+    padding: rem(16),
+    borderWidth: 1,
+    borderColor: 'rgba(112, 255, 174, 0.55)',
+  },
+  offeredRateTitle: {
+    fontSize: fp(14),
+    fontFamily: fonts['700'],
+    color: colors.neutral.black,
+    marginBottom: rem(6),
+  },
+  offeredRateValue: {
+    fontSize: fp(18),
+    fontFamily: fonts['700'],
+    color: '#166534',
   },
   distanceTableTitle: {
     fontSize: fp(16),

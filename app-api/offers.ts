@@ -35,6 +35,7 @@ export interface OfferRow {
   update_time: string;
   route?: OfferRoutePoint[] | null;
   loaded_miles: number | null;
+  offered_rate: number | null;
   weight: number | null;
   commodity: string | null;
   special_requirements: unknown;

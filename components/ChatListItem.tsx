@@ -18,6 +18,12 @@ import {
 } from '@/utils/loadChatAvatar';
 import { formatChatRelativeTimeNy } from '@/utils/nyWallClock';
 import type { PendingOutgoingMeta } from '@/utils/optimisticChatMessage';
+import { useAuth } from '@/context/AuthContext';
+import { canShowOfferId } from '@/utils/offerDisplay';
+import {
+  getDriverOfferChatTitle,
+  isDriverViewer,
+} from '@/utils/offerChatDisplay';
 
 // Types for chat data
 export interface User {
@@ -80,6 +86,7 @@ export interface ChatRoomParticipant {
   id: string;
   userId: string;
   user: User;
+  hideParticipant?: boolean;
 }
 
 export interface ChatRoom {
@@ -127,6 +134,8 @@ export default function ChatListItem({
   onDropdownToggle,
   onCloseAllDropdowns,
 }: ChatListItemProps) {
+  const { authState } = useAuth();
+  const isDriver = isDriverViewer(authState.user?.role);
   const [internalDropdownOpen, setInternalDropdownOpen] = useState(false);
   const isDropdownOpen = controlledDropdownOpen !== undefined ? controlledDropdownOpen : internalDropdownOpen;
   const [isMuted, setIsMuted] = useState(chatRoom.isMuted || false);
@@ -270,13 +279,17 @@ export default function ChatListItem({
   // Chat name format: "DriverName (id: offerId)\npickUp - delivery"
   const getOfferSubtitle = (): string | null => {
     if (chatRoom.type !== 'OFFER' || !chatRoom.name) return null;
-    const lines = chatRoom.name.trim().split('\n');
+
+    const routeLine = getDriverOfferChatTitle(chatRoom.name);
+    if (isDriver) {
+      return routeLine;
+    }
+
     const idMatch = chatRoom.name.match(/\(id:\s*(\d+)\)/);
     const offerIdVal = chatRoom.offerId ?? (idMatch ? parseInt(idMatch[1], 10) : null);
-    const routeStr = lines.length > 1 ? lines[1].trim() : '';
-    const offerName = routeStr || 'Offer';
-    const idPart = offerIdVal != null ? ` (id: ${offerIdVal})` : '';
-    return `"${offerName}${idPart}"`;
+    const idPart =
+      offerIdVal != null && canShowOfferId(authState.user) ? ` (id: ${offerIdVal})` : '';
+    return `"${routeLine}${idPart}"`;
   };
 
   // Get role from the participant
@@ -446,14 +459,17 @@ export default function ChatListItem({
   const role = getRole();
   const avatarSource = getAvatarSource();
   const loadDispatcher =
-    chatRoom.type === 'LOAD' ? findLoadChatDispatcherParticipant(chatRoom) : undefined;
+    chatRoom.type === 'LOAD'
+      ? findLoadChatDispatcherParticipant(chatRoom, currentUserId)
+      : undefined;
   const initials =
     chatRoom.type === 'LOAD'
-      ? getLoadChatDispatcherInitials(chatRoom) || getInitials()
+      ? getLoadChatDispatcherInitials(chatRoom, currentUserId)
       : getInitials();
-  const avatarPlaceholderBg = loadDispatcher
-    ? getLoadChatDispatcherAvatarBg(loadDispatcher.user.userColor)
-    : undefined;
+  const avatarPlaceholderBg =
+    chatRoom.type === 'LOAD' && loadDispatcher
+      ? getLoadChatDispatcherAvatarBg(loadDispatcher.user.userColor)
+      : undefined;
   const lastMessage = getLastMessage();
   const timestamp = formatTimestamp();
 
@@ -587,6 +603,7 @@ export default function ChatListItem({
               style={[
                 styles.avatarText,
                 avatarPlaceholderBg ? styles.avatarTextOnColor : null,
+                chatRoom.type === 'LOAD' && loadDispatcher ? styles.avatarTextLoad : null,
               ]}
             >
               {initials}
@@ -615,7 +632,12 @@ export default function ChatListItem({
         </Text>
         {/* Offer subtitle: "Offer Name (id: X)" - only for OFFER chats */}
         {offerSubtitle ? (
-          <Text style={styles.offerSubtitle} numberOfLines={1}>
+          <Text
+            style={[
+              styles.offerSubtitle,
+              isDriver && chatRoom.type === 'OFFER' && styles.offerSubtitleDriver,
+            ]}
+          >
             {offerSubtitle}
           </Text>
         ) : null}
@@ -703,6 +725,9 @@ const styles = StyleSheet.create({
   avatarTextOnColor: {
     color: colors.neutral.white,
   },
+  avatarTextLoad: {
+    fontSize: fp(22),
+  },
   statusIndicator: {
     position: 'absolute',
     bottom: 2,
@@ -741,10 +766,17 @@ const styles = StyleSheet.create({
     marginBottom: rem(4),
   },
   offerSubtitle: {
+    flexShrink: 1,
     fontSize: fp(12),
     fontFamily: fonts['400'],
     color: colors.neutral.darkGrey,
     marginBottom: rem(6),
+  },
+  offerSubtitleDriver: {
+    fontSize: fp(14),
+    fontFamily: fonts['600'],
+    color: colors.neutral.black,
+    lineHeight: fp(19),
   },
   timestamp: {
     fontSize: fp(10),

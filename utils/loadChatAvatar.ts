@@ -1,19 +1,50 @@
-import type { ChatRoom } from '@/components/ChatListItem';
+import type { ChatRoom, ChatRoomParticipant } from '@/components/ChatListItem';
 
 function isDispatcherRole(role?: string | null): boolean {
   const r = role?.toUpperCase().trim();
   return r === 'DISPATCHER' || r === 'DISPATCHER_TL';
 }
 
-export function findLoadChatDispatcherParticipant(chatRoom: ChatRoom) {
+function isDriverRole(role?: string | null): boolean {
+  return role?.toUpperCase().trim() === 'DRIVER';
+}
+
+function isVisibleLoadChatParticipant(participant: ChatRoomParticipant): boolean {
+  const hidden = (participant as ChatRoomParticipant & { hideParticipant?: boolean })
+    .hideParticipant;
+  return hidden !== true;
+}
+
+export function getParticipantInitials(user: {
+  firstName?: string | null;
+  lastName?: string | null;
+}): string {
+  const name = `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim();
+  const parts = name.split(/\s+/).filter(Boolean);
+  const first = parts[0]?.[0] || '';
+  const second = parts[1]?.[0] || parts[0]?.[1] || '';
+  return `${first}${second}`.toUpperCase();
+}
+
+/** Participant with Dispatcher role (prefers DISPATCHER over DISPATCHER_TL). Mirrors Next.js loadChatAvatar. */
+export function findLoadChatDispatcherParticipant(
+  chatRoom: ChatRoom,
+  currentUserId?: string,
+): ChatRoomParticipant | undefined {
   if (!chatRoom.participants?.length) return undefined;
-  const dispatchers = chatRoom.participants.filter((p) =>
-    isDispatcherRole(p.user.role),
-  );
-  return (
+
+  const visible = chatRoom.participants.filter(isVisibleLoadChatParticipant);
+  const dispatchers = visible.filter((p) => isDispatcherRole(p.user.role));
+  const preferredDispatcher =
     dispatchers.find((p) => p.user.role?.toUpperCase().trim() === 'DISPATCHER') ??
-    dispatchers[0]
-  );
+    dispatchers[0];
+  if (preferredDispatcher) return preferredDispatcher;
+
+  // Fallback: first visible non-driver staff participant on the load
+  return visible.find((p) => {
+    if (currentUserId && p.user.id === currentUserId) return false;
+    return !isDriverRole(p.user.role);
+  });
 }
 
 function normalizeHexColor(raw?: string | null): string | null {
@@ -35,12 +66,12 @@ export function getLoadChatDispatcherAvatarBg(userColor?: string | null): string
   return normalizeHexColor(userColor) ?? '#465fff';
 }
 
-export function getLoadChatDispatcherInitials(chatRoom: ChatRoom): string {
-  const dispatcher = findLoadChatDispatcherParticipant(chatRoom);
+/** LOAD chat avatar initials: dispatcher (or staff fallback), never the load title. */
+export function getLoadChatDispatcherInitials(
+  chatRoom: ChatRoom,
+  currentUserId?: string,
+): string {
+  const dispatcher = findLoadChatDispatcherParticipant(chatRoom, currentUserId);
   if (!dispatcher) return '';
-  const name = `${dispatcher.user.firstName} ${dispatcher.user.lastName}`.trim();
-  const parts = name.split(/\s+/).filter(Boolean);
-  const first = parts[0]?.[0] || '';
-  const second = parts[1]?.[0] || parts[0]?.[1] || '';
-  return `${first}${second}`.toUpperCase();
+  return getParticipantInitials(dispatcher.user);
 }

@@ -29,7 +29,7 @@ interface SendPushNotificationModalProps {
 
 function driverShortLabel(driver: SendPushNotificationDriver): string {
   const name = [driver.firstName, driver.lastName].filter(Boolean).join(' ').trim() || '—';
-  return driver.externalId ? `${name} (ID: ${driver.externalId})` : name;
+  return driver.externalId ? `${name} (U: ${driver.externalId})` : name;
 }
 
 export default function SendPushNotificationModal({

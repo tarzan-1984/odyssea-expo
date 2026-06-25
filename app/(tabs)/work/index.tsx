@@ -9,7 +9,6 @@ import {
   TouchableOpacity,
   Alert,
 } from 'react-native';
-import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useQueryClient } from '@tanstack/react-query';
@@ -259,11 +258,6 @@ export default function OffersScreen() {
               </View>
             ) : offers.length === 0 ? (
               <View style={styles.emptyOffersWrap}>
-                <Image
-                  source={require('@/icons/no_offers_found.png')}
-                  style={styles.emptyOffersImage}
-                  contentFit="contain"
-                />
                 <Text style={styles.emptyOffersText}>No offers found</Text>
               </View>
             ) : (
@@ -407,11 +401,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: rem(40),
-    gap: rem(16),
-  },
-  emptyOffersImage: {
-    width: rem(200),
-    height: rem(200),
   },
   emptyOffersText: {
     fontSize: fp(14),

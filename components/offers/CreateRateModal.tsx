@@ -48,6 +48,7 @@ interface CreateRateModalProps {
   onClose: () => void;
   onCreate: (data: { rate: string; rateTimeMinutes: number; eta: string }) => void | Promise<void>;
   isSubmitting?: boolean;
+  offeredRate?: number | null;
 }
 
 export default function CreateRateModal({
@@ -55,6 +56,7 @@ export default function CreateRateModal({
   onClose,
   onCreate,
   isSubmitting = false,
+  offeredRate = null,
 }: CreateRateModalProps) {
   const [rate, setRate] = useState('');
   const [rateTimeMinutes, setRateTimeMinutes] = useState<number | null>(null);
@@ -97,6 +99,9 @@ export default function CreateRateModal({
     ? RATE_TIME_OPTIONS.find((o) => o.value === rateTimeMinutes)?.label ?? 'Select'
     : 'Select';
 
+  const showOfferedRate =
+    offeredRate != null && Number.isFinite(Number(offeredRate));
+
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose}>
       <KeyboardAvoidingView
@@ -112,7 +117,7 @@ export default function CreateRateModal({
         <View style={styles.popupWrapper}>
           <View style={styles.content}>
             <View style={styles.headerRow}>
-              <Text style={styles.title}>Create rate</Text>
+              <Text style={styles.title}>Place bid</Text>
               <TouchableOpacity
                 onPress={handleClose}
                 hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
@@ -121,6 +126,15 @@ export default function CreateRateModal({
                 <Text style={styles.closeButton}>✕</Text>
               </TouchableOpacity>
             </View>
+
+            {showOfferedRate ? (
+              <View style={styles.offeredRateBlock}>
+                <Text style={styles.offeredRateTitle}>Offered Rate</Text>
+                <Text style={styles.offeredRateValue}>
+                  ${Number(offeredRate).toLocaleString('en-US')}
+                </Text>
+              </View>
+            ) : null}
 
             <Text style={styles.fieldLabel}>Rate ($)</Text>
             <TextInput
@@ -132,7 +146,7 @@ export default function CreateRateModal({
               keyboardType="decimal-pad"
             />
 
-            <Text style={styles.fieldLabel}>Select rate time (min)</Text>
+            <Text style={styles.fieldLabel}>Bid timer (min)</Text>
             <TouchableOpacity
               style={[
                 styles.selectTrigger,
@@ -155,7 +169,7 @@ export default function CreateRateModal({
                     onPress={() => setShowTimePicker(false)}
                   />
                   <View style={styles.pickerContent}>
-                    <Text style={styles.pickerTitle}>Select rate time</Text>
+                    <Text style={styles.pickerTitle}>Bid timer</Text>
                     {RATE_TIME_OPTIONS.map((opt) => (
                       <TouchableOpacity
                         key={opt.value}
@@ -252,7 +266,7 @@ export default function CreateRateModal({
               {isSubmitting ? (
                 <ActivityIndicator color={colors.neutral.white} />
               ) : (
-                <Text style={styles.createButtonText}>Create rate</Text>
+                <Text style={styles.createButtonText}>Place bid</Text>
               )}
             </TouchableOpacity>
           </View>
@@ -285,6 +299,25 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: rem(20),
+  },
+  offeredRateBlock: {
+    marginBottom: rem(16),
+    backgroundColor: 'rgba(112, 255, 174, 0.28)',
+    borderRadius: rem(12),
+    padding: rem(14),
+    borderWidth: 1,
+    borderColor: 'rgba(112, 255, 174, 0.55)',
+  },
+  offeredRateTitle: {
+    fontSize: fp(14),
+    fontFamily: fonts['700'],
+    color: colors.neutral.black,
+    marginBottom: rem(4),
+  },
+  offeredRateValue: {
+    fontSize: fp(18),
+    fontFamily: fonts['700'],
+    color: '#166534',
   },
   title: {
     fontSize: fp(22),

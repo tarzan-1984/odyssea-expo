@@ -33,6 +33,10 @@ import {
 } from '@/utils/nyWallClock';
 import { chatApi } from '@/app-api/chatApi';
 import { messagesCacheService } from '@/services/MessagesCacheService';
+import {
+  getDriverOfferChatTitle,
+  isDriverViewer,
+} from '@/utils/offerChatDisplay';
 
 /**
  * Chat Room Screen
@@ -141,10 +145,17 @@ export default function ChatRoomScreen() {
     onUploadStateChange: setIsUploading,
   });
 
+  const isDriver = isDriverViewer(authState.user?.role);
+  const isDriverOfferChat = Boolean(chatRoom?.type === 'OFFER' && isDriver);
+
   // Get chat room display name
   const getChatDisplayName = (): string => {
     if (!chatRoom) {
       return 'Loading...';
+    }
+
+    if (chatRoom.type === 'OFFER' && isDriver) {
+      return getDriverOfferChatTitle(chatRoom.name);
     }
 
     // For DIRECT chats, show the other participant's name
@@ -770,6 +781,7 @@ export default function ChatRoomScreen() {
                   const { initials, backgroundColor } = getChatAvatarPlaceholderMeta(
                     chatRoom || null,
                     displayName,
+                    authState.user?.id,
                   );
                   return (
                     <View style={styles.headerAvatarContainer}>
@@ -786,6 +798,9 @@ export default function ChatRoomScreen() {
                             style={[
                               styles.headerAvatarText,
                               backgroundColor ? { color: '#fff' } : null,
+                              chatRoom?.type === 'LOAD' && backgroundColor
+                                ? styles.headerAvatarTextLoad
+                                : null,
                             ]}
                           >
                             {initials}
@@ -820,7 +835,13 @@ export default function ChatRoomScreen() {
                       }
                     }}
                   >
-                    <Text style={styles.screenTitle}>
+                    <Text
+                      style={[
+                        styles.screenTitle,
+                        isDriverOfferChat && styles.screenTitleRoute,
+                      ]}
+                      numberOfLines={2}
+                    >
                       {getChatDisplayName()}
                     </Text>
                   </TouchableOpacity>
@@ -1205,6 +1226,9 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     textTransform: 'capitalize',
   },
+  screenTitleRoute: {
+    textTransform: 'none',
+  },
   screenWrap: {
     flex: 1,
     position: "relative",
@@ -1266,6 +1290,9 @@ const styles = StyleSheet.create({
     fontSize: fp(15),
     fontFamily: fonts['700'],
     color: colors.primary.violet,
+  },
+  headerAvatarTextLoad: {
+    fontSize: fp(18),
   },
   backButton: {
     padding: rem(4),

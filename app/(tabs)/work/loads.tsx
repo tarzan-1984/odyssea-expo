@@ -9,7 +9,6 @@ import {
   RefreshControl,
   TouchableOpacity,
 } from 'react-native';
-import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { useInfiniteQuery } from '@tanstack/react-query';
@@ -155,7 +154,7 @@ export default function LoadsScreen() {
             showDriversTab={showDriversTab}
           />
 
-          {!isAdministrator ? (
+          {!isAdministrator && !isDriver ? (
             <View style={styles.tabRow}>
               <TouchableOpacity
                 style={[styles.tabButton, tab === 'your' && styles.tabButtonActive]}
@@ -205,11 +204,6 @@ export default function LoadsScreen() {
                   </View>
                 ) : yourItems.length === 0 ? (
                   <View style={styles.emptyWrap}>
-                    <Image
-                      source={require('@/icons/no_offers_found.png')}
-                      style={styles.emptyImage}
-                      contentFit="contain"
-                    />
                     <Text style={styles.emptyText}>No loads found</Text>
                   </View>
                 ) : (
@@ -258,11 +252,6 @@ export default function LoadsScreen() {
               </View>
             ) : items.length === 0 ? (
               <View style={styles.emptyWrap}>
-                <Image
-                  source={require('@/icons/no_offers_found.png')}
-                  style={styles.emptyImage}
-                  contentFit="contain"
-                />
                 <Text style={styles.emptyText}>No draft loads found</Text>
               </View>
             ) : (
@@ -378,11 +367,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingVertical: rem(40),
-    gap: rem(16),
-  },
-  emptyImage: {
-    width: rem(200),
-    height: rem(200),
   },
   emptyText: {
     fontSize: fp(14),

@@ -6,6 +6,7 @@ export function normalizeChatParticipants(participants: unknown): ChatRoom['part
 
   return participants.map((p: any) => ({
     ...p,
+    hideParticipant: p.hideParticipant === true,
     user: {
       id: p.user?.id,
       firstName: p.user?.firstName,

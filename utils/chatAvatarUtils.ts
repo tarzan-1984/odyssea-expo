@@ -4,6 +4,10 @@ import {
   getLoadChatDispatcherAvatarBg,
   getLoadChatDispatcherInitials,
 } from '@/utils/loadChatAvatar';
+import {
+  getDriverOfferChatTitle,
+  isDriverViewer,
+} from '@/utils/offerChatDisplay';
 
 /**
  * Get avatar source for a chat room
@@ -56,10 +60,15 @@ export function getChatAvatarSource(
  */
 export function getChatDisplayName(
   chatRoom: ChatRoom | null,
-  currentUserId?: string
+  currentUserId?: string,
+  viewerRole?: string | null,
 ): string {
   if (!chatRoom) {
     return 'Unknown Chat';
+  }
+
+  if (chatRoom.type === 'OFFER' && isDriverViewer(viewerRole)) {
+    return getDriverOfferChatTitle(chatRoom.name);
   }
 
   // For DIRECT chats, show the other participant's name
@@ -107,20 +116,21 @@ export function getChatInitials(name: string): string {
 export function getChatAvatarPlaceholderMeta(
   chatRoom: ChatRoom | null,
   displayName: string,
+  currentUserId?: string,
 ): { initials: string; backgroundColor?: string } {
   if (!chatRoom) {
     return { initials: getChatInitials(displayName) };
   }
   if (chatRoom.type === 'LOAD') {
-    const dispatcher = findLoadChatDispatcherParticipant(chatRoom);
-    const initials = getLoadChatDispatcherInitials(chatRoom) || getChatInitials(displayName);
+    const dispatcher = findLoadChatDispatcherParticipant(chatRoom, currentUserId);
+    const initials = getLoadChatDispatcherInitials(chatRoom, currentUserId);
     if (dispatcher) {
       return {
-        initials,
+        initials: initials || '?',
         backgroundColor: getLoadChatDispatcherAvatarBg(dispatcher.user.userColor),
       };
     }
-    return { initials };
+    return { initials: initials || '?' };
   }
   return { initials: getChatInitials(displayName) };
 }

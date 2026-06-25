@@ -5,6 +5,7 @@ import { BlurView } from 'expo-blur';
 import { colors, fonts, rem, fp } from '@/lib';
 import { OfferRow, routeSummary } from '@/app-api/offers';
 import { useAuth } from '@/context/AuthContext';
+import { canShowOfferId } from '@/utils/offerDisplay';
 import OfferBidExpiredIcon from '@/icons/OfferBidExpiredIcon';
 import Swipeable from 'react-native-gesture-handler/Swipeable';
 
@@ -66,6 +67,7 @@ export default function OfferCard({
   showParticipationLimitOverlay = false,
 }: OfferCardProps) {
   const { authState } = useAuth();
+  const showOfferId = canShowOfferId(authState.user);
   const driverExternalId = (authState.user?.externalId ?? '').trim();
   const title = routeSummary(offer.route) || '—';
   const showHazmat = hasHazmat(offer.special_requirements);
@@ -97,6 +99,7 @@ export default function OfferCard({
     driverActionTimeUnix != null ? Math.max(0, driverActionTimeUnix - nowUnixSeconds) : 0;
   const isBidExpired =
     hasSubmittedRate && driverActionTimeUnix != null && driverActionTimeUnix <= nowUnixSeconds;
+  const hasActiveBidTimer = hasSubmittedRate && remainingSeconds > 0;
 
   useEffect(() => {
     if (!hasSubmittedRate) {
@@ -119,7 +122,11 @@ export default function OfferCard({
       : styles.cardInactive
     : styles.card;
   const canSwipeToDecline = Boolean(
-    isDriver && !isInactiveForDriver && !showParticipationLimitOverlay && onDecline
+    isDriver &&
+      !isInactiveForDriver &&
+      !showParticipationLimitOverlay &&
+      !hasActiveBidTimer &&
+      onDecline
   );
   const canSwipeToDeactivate = Boolean(
     isStaffOrAdmin && offer.active !== false && onDeactivate
@@ -135,7 +142,8 @@ export default function OfferCard({
     >
       <View style={styles.titleRow}>
         <Text style={styles.title} numberOfLines={2}>
-          {title} (id: {offer.id})
+          {title}
+          {showOfferId ? ` (id: ${offer.id})` : ''}
         </Text>
         {showHazmat && (
           <View style={styles.hazmatIconWrap}>

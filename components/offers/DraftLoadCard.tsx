@@ -2,11 +2,15 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { colors, fonts, rem, fp } from '@/lib';
 import type { DriverDraftLoadItem } from '@/app-api/offers';
+import { useAuth } from '@/context/AuthContext';
+import { canShowOfferId } from '@/utils/offerDisplay';
 
 /**
  * Draft load row — same visual language as {@link OfferCard} (border, typography, meta row).
  */
 export default function DraftLoadCard({ item }: { item: DriverDraftLoadItem }) {
+  const { authState } = useAuth();
+  const showOfferId = canShowOfferId(authState.user);
   const idLabel = item.offer_numeric_id ?? item.offer_id;
   const title =
     item.offer_name?.trim() ||
@@ -27,7 +31,8 @@ export default function DraftLoadCard({ item }: { item: DriverDraftLoadItem }) {
     <View style={[styles.card, styles.cardActive]}>
       <View style={styles.titleRow}>
         <Text style={styles.title} numberOfLines={2}>
-          {title} (id: {idLabel})
+          {title}
+          {showOfferId ? ` (id: ${idLabel})` : ''}
         </Text>
       </View>
 
