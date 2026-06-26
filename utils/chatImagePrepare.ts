@@ -6,7 +6,7 @@ import {
 	HEIC_JPEG_QUALITY,
 	inferFormatFromFilename,
 	inferFormatFromMime,
-	isHeicFile,
+	needsDeviceJpegConversion,
 	logImageFormatConversion,
 	toJpegFilename,
 	type ImageFormatLabel,
@@ -61,7 +61,7 @@ function resolveOriginalFormat(params: {
 }): ImageFormatLabel {
 	if (params.originalName) {
 		const fromOriginal = inferFormatFromFilename(params.originalName);
-		if (fromOriginal === 'HEIC' || fromOriginal === 'HEIF') {
+		if (fromOriginal === 'HEIC' || fromOriginal === 'HEIF' || fromOriginal === 'DNG') {
 			return fromOriginal;
 		}
 	}
@@ -76,14 +76,14 @@ function needsJpegOutput(params: {
 	filename: string;
 	mimeType?: string;
 }): boolean {
-	if (params.containerFormat === 'HEIC' || params.containerFormat === 'HEIF') {
+	if (
+		params.containerFormat === 'HEIC' ||
+		params.containerFormat === 'HEIF' ||
+		params.containerFormat === 'DNG'
+	) {
 		return true;
 	}
-	if (isHeicFile(params.filename, params.mimeType)) {
-		return true;
-	}
-	const mime = String(params.mimeType || '').toLowerCase();
-	return mime.includes('heic') || mime.includes('heif');
+	return needsDeviceJpegConversion(params.filename, params.mimeType);
 }
 
 async function runWithConcurrency<T>(
@@ -210,7 +210,10 @@ export async function prepareChatImageForUpload(
 		size: fileSize,
 		originalName:
 			input.originalName ??
-			(input.name !== jpegName || /\.(heic|heif)$/i.test(input.name) ? input.name : undefined),
+			(input.name !== jpegName ||
+			/\.(heic|heif|dng)$/i.test(input.name)
+				? input.name
+				: undefined),
 	};
 }
 

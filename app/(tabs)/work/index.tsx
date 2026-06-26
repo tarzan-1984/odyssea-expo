@@ -22,7 +22,13 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { useWebSocketConnectionCheck } from '@/hooks/useWebSocketConnectionCheck';
 import OfferCard from '@/components/offers/OfferCard';
-import { OfferRow, deactivateOffer, removeDriverFromOfferDriver } from '@/app-api/offers';
+import {
+  OfferRow,
+  deactivateOffer,
+  findOfferDriverEntry,
+  isOfferInactiveForDriver,
+  removeDriverFromOfferDriver,
+} from '@/app-api/offers';
 import WorkTopMenu from '@/components/work/WorkTopMenu';
 import OffersAdminUserFilter from '@/components/offers/OffersAdminUserFilter';
 import {
@@ -77,16 +83,14 @@ export default function OffersScreen() {
       return rawOffers;
     }
     return [...rawOffers].sort((a, b) => {
-      const driverInA = a.drivers?.find(
-        (d) =>
-          (d.externalId ?? '').trim() === driverExternalId ||
-          (d.driver_id ?? '').trim() === driverExternalId
-      );
-      const driverInB = b.drivers?.find(
-        (d) =>
-          (d.externalId ?? '').trim() === driverExternalId ||
-          (d.driver_id ?? '').trim() === driverExternalId
-      );
+      const inactiveA = isOfferInactiveForDriver(a, driverExternalId);
+      const inactiveB = isOfferInactiveForDriver(b, driverExternalId);
+      if (inactiveA !== inactiveB) {
+        return inactiveA ? 1 : -1;
+      }
+
+      const driverInA = findOfferDriverEntry(a, driverExternalId);
+      const driverInB = findOfferDriverEntry(b, driverExternalId);
       const participatesA = driverInA != null && driverInA.rate != null;
       const participatesB = driverInB != null && driverInB.rate != null;
       if (participatesA && !participatesB) return -1;
@@ -229,7 +233,7 @@ export default function OffersScreen() {
                     statusFilter === 'inactive' && styles.statusFilterTextActive,
                   ]}
                 >
-                  INACTIVE
+                  PAST
                 </Text>
               </TouchableOpacity>
             </View>
@@ -265,11 +269,7 @@ export default function OffersScreen() {
                 data={offers}
                 keyExtractor={(item) => `offer-${item.id}`}
                 renderItem={({ item }) => {
-                  const driverEntry = item.drivers?.find(
-                    (d) =>
-                      (d.externalId ?? '').trim() === driverExternalId ||
-                      (d.driver_id ?? '').trim() === driverExternalId
-                  );
+                  const driverEntry = findOfferDriverEntry(item, driverExternalId);
                   const driverInOffer = !!driverEntry;
                   const hasSubmittedRateForThisOffer =
                     driverEntry != null && driverEntry.rate != null;

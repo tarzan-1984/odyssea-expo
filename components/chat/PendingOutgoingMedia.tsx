@@ -19,7 +19,7 @@ function isImageAttachment(fileName: string, mimeType?: string): boolean {
 	const mime = String(mimeType || '').toLowerCase();
 	if (mime.startsWith('image/')) return true;
 	const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
-	return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp'].includes(ext);
+	return ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'dng'].includes(ext);
 }
 
 export default function PendingOutgoingMedia({ localAttachments, status, isSender }: Props) {

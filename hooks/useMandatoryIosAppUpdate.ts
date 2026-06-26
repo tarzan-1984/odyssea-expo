@@ -9,7 +9,10 @@ import {
   fetchGooglePlayListing,
   getDefaultStoreUrls,
 } from '@/services/appStoreUpdate';
-import { getResolvedAppLocationSettings } from '@/utils/appLocationSettings';
+import {
+  getResolvedAppLocationSettings,
+  type AppLocationSettingsStored,
+} from '@/utils/appLocationSettings';
 import { eventBus, AppEvents } from '@/services/EventBus';
 
 export type MandatoryIosUpdateState =
@@ -42,11 +45,20 @@ function isInstalledBelowMinimum(installed: string, minimum: string): boolean {
   return compareAppVersions(installed, min) < 0;
 }
 
+function isAllowedByServerMinimum(
+  installed: string,
+  minimumAppVersion: string,
+): boolean {
+  const min = minimumAppVersion.trim();
+  if (!min) return false;
+  return !isInstalledBelowMinimum(installed, min);
+}
+
 async function resolveForceUpdateFromBackend(
   installed: string,
   applicationId: string,
+  settings: AppLocationSettingsStored,
 ): Promise<Extract<MandatoryIosUpdateState, { phase: 'force' }> | null> {
-  const settings = await getResolvedAppLocationSettings();
   if (!isInstalledBelowMinimum(installed, settings.minimumAppVersion)) {
     return null;
   }
@@ -77,7 +89,14 @@ async function resolveForceUpdateFromBackend(
 async function resolveForceUpdateFromStore(
   installed: string,
   applicationId: string,
+  minimumAppVersion: string,
 ): Promise<Extract<MandatoryIosUpdateState, { phase: 'force' }> | null> {
+  // When admin sets minimumAppVersion, installed builds at or above it stay usable
+  // even if Play/App Store HTML already mentions an unreleased newer build.
+  if (isAllowedByServerMinimum(installed, minimumAppVersion)) {
+    return null;
+  }
+
   if (Platform.OS === 'ios') {
     const listing = await fetchAppStoreListing(applicationId);
     if (!listing) return null;
@@ -108,6 +127,9 @@ async function resolveForceUpdateFromStore(
  * Blocks the app when the installed build is older than:
  * 1) the public App Store / Google Play listing, or
  * 2) the server minimumAppVersion from GET /v1/app-settings (admin Next.js UI).
+ *
+ * When minimumAppVersion is set, builds at or above it skip the store listing check
+ * so unreleased uploads (e.g. 2.2.0 in Play Console) do not block production users.
  *
  * Re-checks on cold start, when the app returns to active, and after settings sync.
  */
@@ -145,10 +167,11 @@ export function useMandatoryIosAppUpdate(): MandatoryIosUpdateState {
 
     const installed = Application.nativeApplicationVersion ?? '0';
     const applicationId = Application.applicationId ?? '';
+    const settings = await getResolvedAppLocationSettings();
 
     const [backendForce, storeForce] = await Promise.all([
-      resolveForceUpdateFromBackend(installed, applicationId),
-      resolveForceUpdateFromStore(installed, applicationId),
+      resolveForceUpdateFromBackend(installed, applicationId, settings),
+      resolveForceUpdateFromStore(installed, applicationId, settings.minimumAppVersion),
     ]);
 
     if (cancelled()) return;

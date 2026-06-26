@@ -11,11 +11,8 @@ import MoreDotsIcon from '@/icons/MoreDotsIcon';
 import { chatApi } from '@/app-api/chatApi';
 import { getMessageMultiAttachments } from '@/utils/messageAttachments';
 import { stripMarkdown } from '@/utils/chatMarkdown';
-import {
-  findLoadChatDispatcherParticipant,
-  getLoadChatDispatcherAvatarBg,
-  getLoadChatDispatcherInitials,
-} from '@/utils/loadChatAvatar';
+import { getChatAvatarPlaceholderMeta } from '@/utils/chatAvatarUtils';
+import { findLoadChatDispatcherParticipant } from '@/utils/loadChatAvatar';
 import { formatChatRelativeTimeNy } from '@/utils/nyWallClock';
 import type { PendingOutgoingMeta } from '@/utils/optimisticChatMessage';
 import { useAuth } from '@/context/AuthContext';
@@ -462,14 +459,10 @@ export default function ChatListItem({
     chatRoom.type === 'LOAD'
       ? findLoadChatDispatcherParticipant(chatRoom, currentUserId)
       : undefined;
-  const initials =
+  const { initials, backgroundColor: avatarPlaceholderBg } =
     chatRoom.type === 'LOAD'
-      ? getLoadChatDispatcherInitials(chatRoom, currentUserId)
-      : getInitials();
-  const avatarPlaceholderBg =
-    chatRoom.type === 'LOAD' && loadDispatcher
-      ? getLoadChatDispatcherAvatarBg(loadDispatcher.user.userColor)
-      : undefined;
+      ? getChatAvatarPlaceholderMeta(chatRoom, displayName, currentUserId)
+      : { initials: getInitials(), backgroundColor: undefined };
   const lastMessage = getLastMessage();
   const timestamp = formatTimestamp();
 
@@ -769,13 +762,13 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     fontSize: fp(12),
     fontFamily: fonts['400'],
-    color: colors.neutral.darkGrey,
+    color: colors.primary.violet,
     marginBottom: rem(6),
   },
   offerSubtitleDriver: {
     fontSize: fp(14),
     fontFamily: fonts['600'],
-    color: colors.neutral.black,
+    color: colors.primary.violet,
     lineHeight: fp(19),
   },
   timestamp: {

@@ -20,6 +20,7 @@ export type TmsLoadRawRow = {
 
 export type YourLoadItem = {
   tms_load_id: string;
+  reference_number: string;
   load_status: string;
   from_short_address: string;
   to_short_address: string;
@@ -128,6 +129,8 @@ function normalizeTmsLoadRow(raw: Record<string, unknown>): YourLoadItem {
 
   const meta = asRecord(raw.meta_data) ?? {};
   const load_status = meta.load_status != null ? String(meta.load_status).trim() : '';
+  const reference_number =
+    meta.reference_number != null ? String(meta.reference_number).trim() : '';
 
   const pu = tryParseJsonArray(meta.pick_up_location);
   const del = tryParseJsonArray(meta.delivery_location);
@@ -140,6 +143,7 @@ function normalizeTmsLoadRow(raw: Record<string, unknown>): YourLoadItem {
 
   return {
     tms_load_id,
+    reference_number,
     load_status,
     from_short_address,
     to_short_address,

@@ -84,7 +84,7 @@ export default function FileViewerModal({ visible, fileUri, fileName, originalUr
   const isPdf = ext === 'pdf';
   const isDoc = ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx'].includes(ext);
   const isText = ['txt', 'text', 'log', 'md', 'json', 'xml', 'html', 'css', 'js', 'ts'].includes(ext);
-  const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tiff'].includes(ext);
+  const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tiff', 'dng'].includes(ext);
 
   // Helper function to get MIME type
   const getMimeType = (extension: string): string => {

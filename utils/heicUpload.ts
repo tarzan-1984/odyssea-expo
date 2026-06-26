@@ -30,6 +30,7 @@ const HEIC_FTYP_BRANDS = new Set([
 export type ImageFormatLabel =
 	| 'HEIC'
 	| 'HEIF'
+	| 'DNG'
 	| 'JPEG'
 	| 'PNG'
 	| 'WEBP'
@@ -51,6 +52,7 @@ export function inferFormatFromFilename(filename: string): ImageFormatLabel {
 	const ext = filename.trim().toLowerCase().split('.').pop() ?? '';
 	if (ext === 'heic') return 'HEIC';
 	if (ext === 'heif' || ext === 'hif') return 'HEIF';
+	if (ext === 'dng') return 'DNG';
 	if (ext === 'jpg' || ext === 'jpeg') return 'JPEG';
 	if (ext === 'png') return 'PNG';
 	if (ext === 'webp') return 'WEBP';
@@ -63,6 +65,7 @@ export function inferFormatFromMime(mimeType?: string): ImageFormatLabel | null 
 	if (!mime) return null;
 	if (mime.includes('heic')) return 'HEIC';
 	if (mime.includes('heif')) return 'HEIF';
+	if (mime.includes('dng') || mime === 'image/x-adobe-dng') return 'DNG';
 	if (mime === 'image/jpeg' || mime === 'image/jpg') return 'JPEG';
 	if (mime === 'image/png') return 'PNG';
 	if (mime === 'image/webp') return 'WEBP';
@@ -215,6 +218,22 @@ type ServerBatchConvertItem = {
 	data: string;
 };
 
+/** Filename / MIME based DNG check. */
+export function isDngFile(filename: string, mimeType?: string): boolean {
+	const lowerName = filename.toLowerCase();
+	const lowerType = String(mimeType || '').toLowerCase();
+	return (
+		lowerName.endsWith('.dng') ||
+		lowerType === 'image/x-adobe-dng' ||
+		lowerType.includes('dng')
+	);
+}
+
+/** HEIC/HEIF/DNG and other raw formats that must become JPEG before chat upload or inline preview. */
+export function needsDeviceJpegConversion(filename: string, mimeType?: string): boolean {
+	return isHeicFile(filename, mimeType) || isDngFile(filename, mimeType);
+}
+
 /** Filename / MIME based HEIC check. */
 export function isHeicFile(filename: string, mimeType?: string): boolean {
 	const lowerName = filename.toLowerCase();
@@ -313,8 +332,8 @@ export type PreparedHeicUploadFile = {
 };
 
 export function toJpegFilename(filename: string): string {
-	if (/\.(heic|heif)$/i.test(filename)) {
-		return filename.replace(/\.(heic|heif)$/i, '.jpg');
+	if (/\.(heic|heif|dng)$/i.test(filename)) {
+		return filename.replace(/\.(heic|heif|dng)$/i, '.jpg');
 	}
 	return `${filename.replace(/\.[^/.]+$/, '') || 'image'}.jpg`;
 }

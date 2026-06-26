@@ -43,6 +43,31 @@ export interface OfferRow {
   drivers: OfferDriver[];
 }
 
+export function findOfferDriverEntry(
+  offer: OfferRow,
+  driverExternalId: string,
+): OfferDriver | null {
+  const id = driverExternalId.trim();
+  if (!id) return null;
+  return (
+    offer.drivers?.find(
+      (d) =>
+        (d.externalId ?? '').trim() === id || (d.driver_id ?? '').trim() === id,
+    ) ?? null
+  );
+}
+
+/** Offer inactive for driver (red card, no navigation). */
+export function isOfferInactiveForDriver(
+  offer: OfferRow,
+  driverExternalId: string,
+): boolean {
+  const driverEntry = findOfferDriverEntry(offer, driverExternalId);
+  return (
+    offer.active === false || driverEntry?.active === false || driverEntry == null
+  );
+}
+
 export interface GetOffersParams {
   page?: number;
   limit?: number;

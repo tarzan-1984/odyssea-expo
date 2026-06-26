@@ -457,6 +457,22 @@ function formatMoneyFromString(raw: string): string {
   return `$${n.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
 }
 
+function formatMilesFromString(raw: string): string {
+  const s = raw.trim();
+  if (!s) return '';
+  const n = Number(String(s).replace(/,/g, '').trim());
+  if (!Number.isFinite(n)) return s;
+  return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
+}
+
+function formatWeightFromString(raw: string): string {
+  const s = raw.trim();
+  if (!s) return '';
+  const n = Number(String(s).replace(/,/g, '').trim());
+  if (!Number.isFinite(n)) return s;
+  return `${n.toLocaleString('en-US', { maximumFractionDigits: 0 })} lbs`;
+}
+
 function canOpenUrl(url: string): boolean {
   return !!url && typeof url === 'string';
 }
@@ -924,11 +940,12 @@ export default function LoadDetailScreen() {
 
   const cargoCommodity = cleanText(meta.commodity);
   const cargoWeight = cleanText(meta.weight);
+  const cargoWeightUi = cargoWeight ? formatWeightFromString(cargoWeight) : '—';
   const cargoNotes = cleanText(meta.notes);
   const allMilesRaw = cleanText(meta.all_miles);
   const allEmptyMilesRaw = cleanText(meta.all_empty_miles);
-  const loadedMilesUi = allMilesRaw || '—';
-  const emptyMilesUi = allEmptyMilesRaw || '—';
+  const loadedMilesUi = allMilesRaw ? formatMilesFromString(allMilesRaw) : '—';
+  const emptyMilesUi = allEmptyMilesRaw ? formatMilesFromString(allEmptyMilesRaw) : '—';
 
   const factoringStatusRaw = cleanText(meta.factoring_status);
   const factoringStatusDisplay = useMemo(
@@ -1693,7 +1710,7 @@ export default function LoadDetailScreen() {
                   <View style={styles.loadInfoRow}>
                     <Text style={styles.loadInfoLabel}>Weight</Text>
                     <Text style={styles.loadInfoValue} numberOfLines={2}>
-                      {cargoWeight || '—'}
+                      {cargoWeightUi}
                     </Text>
                   </View>
 

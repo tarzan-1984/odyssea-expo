@@ -13,6 +13,7 @@ const THUMBNAIL_EXTENSIONS = new Set([
 	'heic',
 	'heif',
 	'gif',
+	'dng',
 ]);
 
 export function isChatImageThumbnailCandidate(fileName: string): boolean {
@@ -67,6 +68,33 @@ export function isStoredChatImageThumbnailUrl(url: string): boolean {
 
 export function isChatImageThumbnailUrl(url: string): boolean {
 	return isStoredChatImageThumbnailUrl(url);
+}
+
+/** Formats that cannot render inline on device and need a server JPEG preview. */
+export function needsServerImagePreview(fileName: string): boolean {
+	const ext = fileName.toLowerCase().split('.').pop();
+	return ext === 'heic' || ext === 'heif' || ext === 'dng';
+}
+
+export function getServerImagePreviewUrl(
+	fileUrl: string,
+	fileName: string,
+	options?: { maxWidth?: number; quality?: number },
+): string {
+	const base = process.env.EXPO_PUBLIC_API_BASE_URL;
+	if (!base) {
+		throw new Error('API base URL is not configured');
+	}
+
+	const ext = fileName.toLowerCase().split('.').pop();
+	if (ext === 'heic' || ext === 'heif') {
+		return `${base}/v1/storage/convert-heic?url=${encodeURIComponent(fileUrl)}`;
+	}
+
+	const params = new URLSearchParams({ url: fileUrl });
+	params.set('w', String(options?.maxWidth ?? CHAT_IMAGE_PREVIEW_MAX_WIDTH));
+	params.set('q', String(options?.quality ?? CHAT_IMAGE_PREVIEW_QUALITY));
+	return `${base}/v1/storage/image-preview?${params.toString()}`;
 }
 
 export async function ensureChatImageThumbnail(

@@ -42,7 +42,7 @@ export default function LoadCard({
   const badge = badgeForStatus(item.load_status);
   const loadedPart =
     item.loaded_miles != null && Number.isFinite(item.loaded_miles)
-      ? `Loaded: ${item.loaded_miles} mi`
+      ? `Loaded: ${item.loaded_miles.toLocaleString('en-US', { maximumFractionDigits: 0 })} mi`
       : '';
   const ratePart =
     item.driver_rate != null && Number.isFinite(item.driver_rate)
@@ -74,9 +74,11 @@ export default function LoadCard({
         ) : null}
       </View>
 
-      <Text style={styles.loadId} numberOfLines={1}>
-        ID: {item.tms_load_id}
-      </Text>
+      {item.reference_number ? (
+        <Text style={styles.loadId} numberOfLines={1}>
+          Reference number: {item.reference_number}
+        </Text>
+      ) : null}
 
       {loadedPart || ratePart ? (
         <View style={styles.loadedRow}>

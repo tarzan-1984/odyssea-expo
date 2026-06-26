@@ -36,8 +36,10 @@ const storeCreator: StateCreator<ChatState> = (set, get) => ({
       if (!existing) {
         map.set(r.id, r);
       } else {
-        // Merge lastMessage and updatedAt, prefer newer values
         const next: ChatRoom = { ...existing, ...r } as ChatRoom;
+        if (!r.participants?.length && existing.participants?.length) {
+          next.participants = existing.participants;
+        }
         map.set(r.id, next);
       }
     });

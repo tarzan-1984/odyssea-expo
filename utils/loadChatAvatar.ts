@@ -5,10 +5,6 @@ function isDispatcherRole(role?: string | null): boolean {
   return r === 'DISPATCHER' || r === 'DISPATCHER_TL';
 }
 
-function isDriverRole(role?: string | null): boolean {
-  return role?.toUpperCase().trim() === 'DRIVER';
-}
-
 function isVisibleLoadChatParticipant(participant: ChatRoomParticipant): boolean {
   const hidden = (participant as ChatRoomParticipant & { hideParticipant?: boolean })
     .hideParticipant;
@@ -35,16 +31,10 @@ export function findLoadChatDispatcherParticipant(
 
   const visible = chatRoom.participants.filter(isVisibleLoadChatParticipant);
   const dispatchers = visible.filter((p) => isDispatcherRole(p.user.role));
-  const preferredDispatcher =
+  return (
     dispatchers.find((p) => p.user.role?.toUpperCase().trim() === 'DISPATCHER') ??
-    dispatchers[0];
-  if (preferredDispatcher) return preferredDispatcher;
-
-  // Fallback: first visible non-driver staff participant on the load
-  return visible.find((p) => {
-    if (currentUserId && p.user.id === currentUserId) return false;
-    return !isDriverRole(p.user.role);
-  });
+    dispatchers[0]
+  );
 }
 
 function normalizeHexColor(raw?: string | null): string | null {
@@ -66,7 +56,7 @@ export function getLoadChatDispatcherAvatarBg(userColor?: string | null): string
   return normalizeHexColor(userColor) ?? '#465fff';
 }
 
-/** LOAD chat avatar initials: dispatcher (or staff fallback), never the load title. */
+/** LOAD chat avatar initials: dispatcher only, never the load title. */
 export function getLoadChatDispatcherInitials(
   chatRoom: ChatRoom,
   currentUserId?: string,

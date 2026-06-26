@@ -11,12 +11,14 @@ import FileIcon from '@/icons/FileIcon';
 import FileViewerModal from '@/components/modals/FileViewerModal';
 import { imageCacheService } from '@/services/ImageCacheService';
 import { secureStorage } from '@/utils/secureStorage';
-import { getHeicConvertApiUrl, toJpegFilename } from '@/utils/heicUpload';
+import { toJpegFilename } from '@/utils/heicUpload';
 import {
 	prefetchChatImageThumbnail,
 	getChatImageThumbnailUrl,
 	isChatImageThumbnailUrl,
 	isChatImageThumbnailCandidate,
+	getServerImagePreviewUrl,
+	needsServerImagePreview,
 } from '@/utils/chatImageThumbnail';
 import ChatMediaPreviewPlaceholder from '@/components/chat/ChatMediaPreviewPlaceholder';
 
@@ -77,7 +79,7 @@ const getCachedHeicFileUri = async (params: {
 	const jpegName = toJpegFilename(fileName);
 	const localFileUri = imageCacheService.getHeicCacheUri(fileUrl, jpegName);
 	const accessToken = await secureStorage.getItemAsync('accessToken').catch(() => null);
-	const downloadUrl = getHeicConvertApiUrl(fileUrl);
+	const downloadUrl = getServerImagePreviewUrl(fileUrl, fileName);
 	const downloadHeaders = accessToken
 		? { Authorization: `Bearer ${accessToken}` }
 		: undefined;
@@ -131,9 +133,9 @@ export default function FilePreviewCard({
 	const queryClient = useQueryClient();
 	const name = fileName || 'Attachment';
 	const ext = name.toLowerCase().split('.').pop() || '';
-	const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tiff'].includes(ext);
+	const isImage = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'heic', 'heif', 'bmp', 'tiff', 'dng'].includes(ext);
 	const isPdf = ext === 'pdf';
-	const needsLocalImageOpen = ['heic', 'heif'].includes(ext);
+	const needsLocalImageOpen = needsServerImagePreview(name);
 	
 	const [isDownloading, setIsDownloading] = useState(false);
 	const [viewerVisible, setViewerVisible] = useState(false);
@@ -217,7 +219,7 @@ export default function FilePreviewCard({
 				if (cancelled) return;
 				heicConvertAttemptedRef.current = true;
 				setHeicPreviewSource({
-					uri: getHeicConvertApiUrl(fileUrl),
+					uri: getServerImagePreviewUrl(fileUrl, name),
 					headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
 				});
 				prefetchChatImageThumbnail(fileUrl, name);
@@ -524,7 +526,7 @@ export default function FilePreviewCard({
 		void (async () => {
 			const accessToken = await secureStorage.getItemAsync('accessToken').catch(() => null);
 			setHeicPreviewSource({
-				uri: getHeicConvertApiUrl(fileUrl),
+				uri: getServerImagePreviewUrl(fileUrl, name),
 				headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
 			});
 		})();

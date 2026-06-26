@@ -13,7 +13,7 @@ import {
   completeDevicePickerExportFlow,
 } from '@/utils/chatImageFlowTiming';
 import { prepareChatImageForUpload, prepareChatImagesForUpload } from '@/utils/chatImagePrepare';
-import { toJpegFilename, logPickerImageResult } from '@/utils/heicUpload';
+import { toJpegFilename, logPickerImageResult, needsDeviceJpegConversion } from '@/utils/heicUpload';
 
 export interface FileData {
   uri: string;
@@ -81,7 +81,19 @@ export async function uploadAttachmentFiles(
     throw new Error('Authentication required');
   }
 
-  const normalized = await Promise.all(files.map((f) => normalizeAttachmentForUpload(f)));
+  const normalized = await Promise.all(
+    files.map(async (f) => {
+      const withMime = await normalizeAttachmentForUpload(f);
+      if (needsDeviceJpegConversion(withMime.name, withMime.mimeType)) {
+        try {
+          return await prepareChatImageForUpload(withMime);
+        } catch (error) {
+          console.warn('[chatAttachmentHelpers] Device JPEG prepare failed, using original file:', error);
+        }
+      }
+      return withMime;
+    }),
+  );
   normalized.forEach((_, index) => onProgress?.(index, 'uploading'));
 
   const uploaded = await uploadChatFilesBatch({
@@ -175,7 +187,7 @@ export async function capturePhoto(
     const mimeType = asset.mimeType || 'image/jpeg';
     const rawName = asset.fileName || `photo_${Date.now()}.jpg`;
     const filename =
-      mimeType === 'image/jpeg' && /\.(heic|heif)$/i.test(rawName)
+      mimeType === 'image/jpeg' && /\.(heic|heif|dng)$/i.test(rawName)
         ? toJpegFilename(rawName)
         : rawName;
     const rawFile: FileData = {
@@ -237,8 +249,8 @@ function fileDataFromGalleryAsset(
     fileName ||
     `photo_${Date.now()}_${uniqueIndex}.${isJpegMime ? 'jpg' : fileExtension || 'jpg'}`;
 
-  // Picker may transcode to JPEG while keeping a .heic filename from the asset.
-  if (isJpegMime && /\.(heic|heif)$/i.test(filename)) {
+  // Picker may transcode to JPEG while keeping a raw-image filename from the asset.
+  if (isJpegMime && /\.(heic|heif|dng)$/i.test(filename)) {
     filename = toJpegFilename(filename);
   }
 
@@ -248,7 +260,7 @@ function fileDataFromGalleryAsset(
     mimeType,
     size: asset.fileSize || undefined,
     originalName:
-      fileName && (fileName !== filename || /\.(heic|heif)$/i.test(fileName))
+      fileName && (fileName !== filename || /\.(heic|heif|dng)$/i.test(fileName))
         ? fileName
         : undefined,
     width: asset.width,

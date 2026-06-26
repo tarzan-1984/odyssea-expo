@@ -3,7 +3,12 @@ import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native
 import { Image } from 'expo-image';
 import { BlurView } from 'expo-blur';
 import { colors, fonts, rem, fp } from '@/lib';
-import { OfferRow, routeSummary } from '@/app-api/offers';
+import {
+  OfferRow,
+  findOfferDriverEntry,
+  isOfferInactiveForDriver,
+  routeSummary,
+} from '@/app-api/offers';
 import { useAuth } from '@/context/AuthContext';
 import { canShowOfferId } from '@/utils/offerDisplay';
 import OfferBidExpiredIcon from '@/icons/OfferBidExpiredIcon';
@@ -74,20 +79,11 @@ export default function OfferCard({
   const [isHazmatImageReady, setIsHazmatImageReady] = useState(false);
   const [isStopImageReady, setIsStopImageReady] = useState(false);
   const offerDriver = useMemo(
-    () =>
-      offer.drivers?.find((driver) => {
-        const externalId = (driver.externalId ?? '').trim();
-        const driverId = (driver.driver_id ?? '').trim();
-
-        return (
-          (!!driverExternalId && externalId === driverExternalId) ||
-          (!!driverExternalId && driverId === driverExternalId)
-        );
-      }) ?? null,
-    [driverExternalId, offer.drivers]
+    () => findOfferDriverEntry(offer, driverExternalId),
+    [driverExternalId, offer]
   );
   const isInactiveForDriver = Boolean(
-    isDriver && (offer.active === false || offerDriver?.active === false || !offerDriver)
+    isDriver && isOfferInactiveForDriver(offer, driverExternalId)
   );
   const isSelectedForDriver = Boolean(isDriver && offerDriver?.is_selected);
   const canNavigate = !isInactiveForDriver && !showParticipationLimitOverlay;

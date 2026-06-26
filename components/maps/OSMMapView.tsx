@@ -1,19 +1,12 @@
-import React, { useRef, useEffect, useImperativeHandle, forwardRef, useMemo } from 'react';
-import { View, StyleSheet, StyleProp, ViewStyle, Linking, Image } from 'react-native';
+import React, { useRef, useEffect, useImperativeHandle, forwardRef, useMemo, useState } from 'react';
+import { View, StyleSheet, StyleProp, ViewStyle } from 'react-native';
 import { WebView } from 'react-native-webview';
 import {
   getCartoVoyagerTileConfig,
   getLeafletRasterTileConfig,
   isMapTilerConfigured,
 } from '@/utils/mapTileLayer';
-
-const TRACKING_DRIVER_MARKER_URI = Image.resolveAssetSource(
-  require('@/assets/images/tracking-driver-marker.png'),
-).uri;
-const PICKUP_MARKER_URI = Image.resolveAssetSource(require('@/assets/images/pickUp.png')).uri;
-const DELIVERY_MARKER_URI = Image.resolveAssetSource(
-  require('@/assets/images/deliveryMarcer.png'),
-).uri;
+import { loadMapMarkerImageUris, type MapMarkerImageUris } from '@/utils/mapMarkerAssets';
 
 export interface Region {
   latitude: number;
@@ -95,6 +88,25 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
     const webViewRef = useRef<WebView>(null);
     const mapReadyRef = useRef(false);
     const currentZoomRef = useRef<number | null>(null);
+    const [markerImageUris, setMarkerImageUris] = useState<MapMarkerImageUris | null>(null);
+
+    useEffect(() => {
+      let cancelled = false;
+
+      loadMapMarkerImageUris()
+        .then((uris) => {
+          if (!cancelled) {
+            setMarkerImageUris(uris);
+          }
+        })
+        .catch((error) => {
+          console.warn('[OSMMapView] Failed to load marker images:', error);
+        });
+
+      return () => {
+        cancelled = true;
+      };
+    }, []);
 
     // Marker size configuration
     const MIN_MARKER_WIDTH = 16;
@@ -170,8 +182,8 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
     // Base SVG path for marker (will be colored based on status)
     const markerSvgPath = 'M49.1,122.34a2.75,2.75,0,0,1-3.12.1A109.7,109.7,0,0,1,19,98.35C9.15,86,3,72.33.83,59.16-1.33,45.79.69,32.94,7.34,22.49A45.14,45.14,0,0,1,17.39,11.35C26.77,3.87,37.49-.08,48.16,0c10.29.08,20.43,3.92,29.2,11.91a43,43,0,0,1,7.79,9.49c7.15,11.77,8.69,26.8,5.55,42a92.52,92.52,0,0,1-41.6,58.92Zm-3-98.58a23,23,0,1,1-22.94,23A23,23,0,0,1,46.13,23.76Z';
 
-    const updateMarkers = (markersToAdd: MarkerData[], zoom?: number) => {
-      if (!mapReadyRef.current) return;
+    const updateMarkers = (markersToAdd: MarkerData[], zoom?: number, imageUris?: MapMarkerImageUris | null) => {
+      if (!mapReadyRef.current || !imageUris) return;
 
       // Use provided zoom or current zoom from ref
       const currentZoom = zoom ?? currentZoomRef.current ?? MAX_ZOOM;
@@ -223,9 +235,9 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
             var stopHeight = ${stopSize.height};
             var liveDriverWidth = ${liveDriverSize.width};
             var liveDriverHeight = ${liveDriverSize.height};
-            var driverMarkerUri = ${JSON.stringify(TRACKING_DRIVER_MARKER_URI)};
-            var pickupMarkerUri = ${JSON.stringify(PICKUP_MARKER_URI)};
-            var deliveryMarkerUri = ${JSON.stringify(DELIVERY_MARKER_URI)};
+            var driverMarkerUri = ${JSON.stringify(imageUris.driver)};
+            var pickupMarkerUri = ${JSON.stringify(imageUris.pickup)};
+            var deliveryMarkerUri = ${JSON.stringify(imageUris.delivery)};
 
             function escapeHtml(value) {
               return String(value || '').replace(/[&<>"']/g, function(ch) {
@@ -392,13 +404,13 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
       webViewRef.current?.injectJavaScript(script);
     };
 
-    // Update markers when markers prop changes
+    // Update markers when markers prop or image URIs change
     useEffect(() => {
       if (mapReadyRef.current) {
         // Always update markers, even if array is empty (to clear map)
-        updateMarkers(markers, currentZoomRef.current ?? undefined);
+        updateMarkers(markers, currentZoomRef.current ?? undefined, markerImageUris);
       }
-    }, [markers]);
+    }, [markers, markerImageUris]);
 
     useEffect(() => {
       if (mapReadyRef.current) {
@@ -730,12 +742,12 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
                 mapReadyRef.current = true;
                 updatePolylines(polylineCoordinates, polylines);
                 if (markers.length > 0) {
-                  updateMarkers(markers);
+                  updateMarkers(markers, undefined, markerImageUris);
                 }
               } else if (data.type === 'zoomChange') {
                 // Update zoom ref when zoom changes
                 currentZoomRef.current = data.zoom;
-                updateMarkers(markers, data.zoom);
+                updateMarkers(markers, data.zoom, markerImageUris);
               } else if (data.type === 'mapClick' && onMapPress) {
                 onMapPress(data.lat, data.lng);
               } else if (data.type === 'markerClick' && onMarkerPress) {

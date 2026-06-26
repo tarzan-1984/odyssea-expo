@@ -526,12 +526,20 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         const updatedChatRoom = data?.updatedChatRoom ?? data?.chatRoom ?? data;
         if (!chatRoomId || !updatedChatRoom) return;
 
+        const state = useChatStore.getState();
+        const existing = state.chatRooms.find((r) => r.id === chatRoomId);
+        const participants =
+          Array.isArray(updatedChatRoom.participants) &&
+          updatedChatRoom.participants.length > 0
+            ? normalizeParticipants(updatedChatRoom.participants)
+            : existing?.participants ?? [];
+
         const normalized: ChatRoom = {
+          ...existing,
           ...updatedChatRoom,
-          participants: normalizeParticipants(updatedChatRoom.participants || []),
+          participants,
         };
 
-        const state = useChatStore.getState();
         state.updateChatRoom(chatRoomId, normalized);
 
         // Update cache (best-effort)
