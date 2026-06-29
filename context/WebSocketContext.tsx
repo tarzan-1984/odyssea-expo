@@ -1033,7 +1033,6 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
     // Handle bulk messages marked as read (when markChatRoomAsRead is called)
     newSocket.on('messagesMarkedAsRead', (data: { chatRoomId: string; messageIds: string[]; userId: string }) => {
-      console.log('✅ [WebSocket] Messages marked as read:', data);
       try {
         const { markMessagesRead } = useChatStore.getState();
         markMessagesRead(data.chatRoomId, data.messageIds, data.userId);
