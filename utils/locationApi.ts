@@ -7,6 +7,7 @@ import { fileLogger } from '@/utils/fileLogger';
 import { reverseGeocodeAsync, resolveCityForApi } from '@/utils/geocoding';
 import { toLocationDeviceFields } from '@/utils/mobileDevicePayload';
 import { loadMobileDeviceContextForBackground } from '@/utils/mobileDeviceIdentity';
+import { toStateAbbreviation } from '@/utils/formatDriverLocation';
 
 import { formatStatusDateNyDisplay } from './nyWallClock';
 
@@ -351,7 +352,7 @@ export function buildLocationDisplayLabel(parts: {
   country?: string;
 }): string | undefined {
   const city = parts.city?.trim();
-  const state = parts.state?.trim();
+  const state = toStateAbbreviation(parts.state?.trim()) ?? parts.state?.trim();
   const zip = parts.zip?.trim();
   const country = parts.country?.trim();
   // Avoid misleading zip-only badges when city/state failed to resolve.

@@ -46,7 +46,10 @@ import ExtendTimeModal from '@/components/offers/ExtendTimeModal';
 import SendPushNotificationModal from '@/components/offers/SendPushNotificationModal';
 import { RectButton } from 'react-native-gesture-handler';
 import Swipeable from 'react-native-gesture-handler/Swipeable';
+import { abbreviateStateInLocationString } from '@/utils/formatDriverLocation';
 import { formatOfferRouteTimeForDriver } from '@/utils/offerDateTimeDisplay';
+import SpecialRequirementsList from '@/components/offers/SpecialRequirementsList';
+import { parseSpecialRequirements } from '@/icons/specialRequirements';
 
 const MAP_MAX_HEIGHT = Dimensions.get('window').height * 0.25;
 const DRIVER_TABLE_VISIBLE_ROWS = 20;
@@ -60,13 +63,6 @@ const ROUTE_POINT_COLORS = {
   finalDelivery: '#15803D',
   intermediateDelivery: '#4ADE80',
 } as const;
-
-function parseSpecialRequirements(sr: unknown): string[] {
-  if (!sr) return [];
-  if (Array.isArray(sr)) return sr.map((v) => String(v).trim()).filter(Boolean);
-  const s = String(sr).trim();
-  return s ? [s] : [];
-}
 
 function hasHazmatRequirement(sr: unknown): boolean {
   if (!sr) return false;
@@ -84,6 +80,11 @@ function formatOfferWeight(weight: unknown, forDriver: boolean): string {
   if (!Number.isFinite(numeric)) return String(weight);
 
   return `${numeric.toLocaleString('en-US')} lbs`;
+}
+
+function formatOfferMiles(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return value.toLocaleString('en-US', { maximumFractionDigits: 0 });
 }
 
 function getRoutePointColor(
@@ -124,14 +125,6 @@ function getRoutePointColor(
   }
 
   return ROUTE_POINT_COLORS.initialPickup;
-}
-
-function formatSpecialRequirementLabel(value: string): string {
-  return String(value)
-    .trim()
-    .replace(/[_-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function hasDriverRate(rate: number | null | undefined): boolean {
@@ -433,7 +426,7 @@ export default function OfferDetailScreen() {
               : {}),
           markerColor: getRoutePointColor(routePoints, i),
           tooltipType: isPickup ? 'Pick up' : isDelivery ? 'Delivery' : '',
-          tooltipAddress: point?.location ?? '',
+          tooltipAddress: abbreviateStateInLocationString(point?.location ?? ''),
           tooltipTime: point?.time ?? '',
         };
       }),
@@ -484,7 +477,7 @@ export default function OfferDetailScreen() {
               <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
                 <ArrowLeft width={24} height={24} color={colors.neutral.white} />
               </TouchableOpacity>
-              <Text style={styles.screenTitle} numberOfLines={1}>
+              <Text style={styles.screenTitle}>
                 {headerTitle}
               </Text>
             </View>
@@ -940,7 +933,7 @@ export default function OfferDetailScreen() {
                           onPress={() => focusRoutePointOnMap(idx)}
                         >
                           <Text style={styles.routeStopAddress}>
-                            {point.location || '—'}
+                            {abbreviateStateInLocationString(point.location) || '—'}
                           </Text>
                         </TouchableOpacity>
                         {isDriver ? (
@@ -984,13 +977,13 @@ export default function OfferDetailScreen() {
                   </View>
                   <View style={styles.distanceTableDataRow}>
                     <Text style={styles.distanceTableValue}>
-                      {offerDriver?.empty_miles != null ? offerDriver.empty_miles : '—'}
+                      {formatOfferMiles(offerDriver?.empty_miles)}
                     </Text>
                     <Text style={styles.distanceTableValue}>
-                      {offer.loaded_miles != null ? offer.loaded_miles : '—'}
+                      {formatOfferMiles(offer.loaded_miles)}
                     </Text>
                     <Text style={[styles.distanceTableValue, styles.distanceTableValueBold]}>
-                      {offerDriver?.total_miles != null ? offerDriver.total_miles : '—'}
+                      {formatOfferMiles(offerDriver?.total_miles)}
                     </Text>
                   </View>
                 </View>
@@ -1021,9 +1014,10 @@ export default function OfferDetailScreen() {
                 return (
                   <View style={styles.infoBlock}>
                     <Text style={styles.infoBlockTitle}>Special requirements</Text>
-                    <Text style={styles.infoBlockText}>
-                      {reqs.map(formatSpecialRequirementLabel).join(', ')}
-                    </Text>
+                    <SpecialRequirementsList
+                      values={reqs}
+                      textStyle={styles.infoBlockText}
+                    />
                   </View>
                 );
               })()}
@@ -1141,7 +1135,7 @@ const styles = StyleSheet.create({
   },
   header: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
     paddingTop: 0,
@@ -1154,19 +1148,22 @@ const styles = StyleSheet.create({
   },
   headerLeft: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     flex: 1,
     minWidth: 0,
   },
   backBtn: {
     padding: rem(4),
     marginRight: rem(12),
+    marginTop: rem(2),
   },
   screenTitle: {
     flex: 1,
+    flexShrink: 1,
     color: colors.neutral.white,
     fontFamily: fonts['700'],
     fontSize: fp(22),
+    lineHeight: fp(28),
   },
   mainScroll: {
     flex: 1,
@@ -1603,13 +1600,13 @@ const styles = StyleSheet.create({
   },
   distanceTableValue: {
     flex: 1,
-    fontSize: fp(14),
-    fontFamily: fonts['600'],
-    color: colors.neutral.black,
+    fontSize: fp(20),
+    fontFamily: fonts['700'],
+    color: colors.primary.blue,
     textAlign: 'center',
   },
   distanceTableValueBold: {
-    fontFamily: fonts['700'],
+    fontSize: fp(22),
   },
   infoBlock: {
     marginTop: rem(16),

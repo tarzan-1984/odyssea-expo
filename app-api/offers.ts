@@ -1,4 +1,5 @@
 import { API_BASE_URL } from '@/lib/config';
+import { abbreviateStateInLocationString } from '@/utils/formatDriverLocation';
 import { secureStorage } from '@/utils/secureStorage';
 
 export interface OfferDriver {
@@ -144,14 +145,16 @@ export interface CreateOfferResult {
   errors?: string[];
 }
 
-/** First and last locations from route for short display (e.g. "Wauseon, Ohio 43567 → Los Angeles, California 90003") */
+/** First and last locations from route for short display (e.g. "Toledo, OH 43601 → Minnesota City, MN 55959") */
 export function routeSummary(
   route: Array<{ location?: string }> | null | undefined
 ): string {
   if (!Array.isArray(route) || route.length === 0) return '';
-  const first = route[0]?.location ?? '';
+  const first = abbreviateStateInLocationString(route[0]?.location ?? '');
   const last =
-    route.length > 1 ? route[route.length - 1]?.location ?? '' : first;
+    route.length > 1
+      ? abbreviateStateInLocationString(route[route.length - 1]?.location ?? '')
+      : first;
   return last ? `${first} → ${last}` : first;
 }
 

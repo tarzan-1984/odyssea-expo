@@ -1,8 +1,8 @@
 import { ChatRoom } from '@/components/ChatListItem';
 import {
-  findLoadChatDispatcherParticipant,
+  findLoadChatAvatarParticipant,
   getLoadChatDispatcherAvatarBg,
-  getLoadChatDispatcherInitials,
+  getParticipantInitials,
 } from '@/utils/loadChatAvatar';
 import {
   getDriverOfferChatTitle,
@@ -122,15 +122,15 @@ export function getChatAvatarPlaceholderMeta(
     return { initials: getChatInitials(displayName) };
   }
   if (chatRoom.type === 'LOAD') {
-    const dispatcher = findLoadChatDispatcherParticipant(chatRoom, currentUserId);
-    const initials = getLoadChatDispatcherInitials(chatRoom, currentUserId);
-    if (dispatcher) {
+    const avatarParticipant = findLoadChatAvatarParticipant(chatRoom, currentUserId);
+    if (avatarParticipant) {
+      const initials = getParticipantInitials(avatarParticipant.user);
       return {
         initials: initials || '?',
-        backgroundColor: getLoadChatDispatcherAvatarBg(dispatcher.user.userColor),
+        backgroundColor: getLoadChatDispatcherAvatarBg(avatarParticipant.user.userColor),
       };
     }
-    return { initials: initials || '?' };
+    return { initials: '?' };
   }
   return { initials: getChatInitials(displayName) };
 }

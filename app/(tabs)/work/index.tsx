@@ -287,6 +287,7 @@ export default function OffersScreen() {
                       onPress={() => handleOfferPress(item)}
                       isDriver={isDriver}
                       isStaffOrAdmin={isStaff}
+                      offerListTab={statusFilter}
                       onDecline={isDriver ? () => handleDeclineOffer(item) : undefined}
                       isDeclining={decliningOfferId === item.id}
                       onDeactivate={isStaff ? () => handleDeactivateOffer(item) : undefined}

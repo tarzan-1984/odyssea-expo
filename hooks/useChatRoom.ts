@@ -10,6 +10,9 @@ import { useAuth } from '@/context/AuthContext';
 import { eventBus, AppEvents } from '@/services/EventBus';
 import { useChatStore } from '@/stores/chatStore';
 import { tryCompleteImageFlowOnMessage } from '@/utils/chatImageFlowTiming';
+import {
+  mergeChatRoomParticipants,
+} from '@/utils/normalizeChatParticipants';
 
 const OPENED_CHATS_KEY = '@chat_opened_rooms';
 
@@ -449,11 +452,16 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
       //    or when we need the freshest participants/full data).
       try {
         const roomFromApi = await chatApi.getChatRoom(chatRoomId);
-        setChatRoom((prev) => {
-          // If the store already had chat we could merge, but to keep it simple
-          // just trust API as the source of truth.
-          return roomFromApi as ChatRoom;
-        });
+        const mergedRoom: ChatRoom = {
+          ...(roomFromStore ?? {}),
+          ...roomFromApi,
+          participants: mergeChatRoomParticipants(
+            roomFromApi.participants,
+            roomFromStore?.participants,
+          ),
+        };
+        setChatRoom(mergedRoom);
+        useChatStore.getState().updateChatRoom(chatRoomId, mergedRoom);
       } catch (apiErr) {
         // If API fails but we already set chat from store — do not overwrite UI with error.
         if (!roomFromStore) {

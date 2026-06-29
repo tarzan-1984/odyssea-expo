@@ -95,3 +95,23 @@ export function abbreviateStateInLocationString(
   const stateZip = zip ? `${abbr} ${zip}` : abbr;
   return `${city}, ${stateZip}`;
 }
+
+/** Format: City, ST, ZIP — single line for easy copy. */
+export function formatDriverLocationLine(
+  city: string | null | undefined,
+  state: string | null | undefined,
+  zip: string | null | undefined,
+): string {
+  const parts: string[] = [];
+
+  const cityTrimmed = city?.trim();
+  if (cityTrimmed) parts.push(cityTrimmed);
+
+  const stateAbbr = toStateAbbreviation(state);
+  if (stateAbbr) parts.push(stateAbbr);
+
+  const zipTrimmed = zip?.trim();
+  if (zipTrimmed) parts.push(zipTrimmed);
+
+  return parts.length > 0 ? parts.join(', ') : 'N/A';
+}

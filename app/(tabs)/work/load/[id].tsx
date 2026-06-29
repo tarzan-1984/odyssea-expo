@@ -22,6 +22,10 @@ import ArrowLeft from '@/icons/ArrowLeft';
 import OSMMapView, { type Region, type OSMMapViewRef } from '@/components/maps/OSMMapView';
 import { useUserByExternalId } from '@/hooks/useUserByExternalId';
 import {
+  abbreviateStateInLocationString,
+  formatDriverLocationLine,
+} from '@/utils/formatDriverLocation';
+import {
   getLoadMapPayload,
   type DriverTrackingPoint,
   type LoadMapDriver,
@@ -175,10 +179,8 @@ function normalizeTrackingStatus(value: string | null | undefined): string {
   return String(value ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
 }
 
-function formatDriverLocationLine(driver: LoadMapDriver | null): string {
-  const location = [driver?.city, driver?.state].filter(Boolean).join(', ');
-  const zip = String(driver?.zip ?? '').trim();
-  return [location, zip].filter(Boolean).join(' ') || 'N/A';
+function formatDriverLocationLineFromDriver(driver: LoadMapDriver | null): string {
+  return formatDriverLocationLine(driver?.city, driver?.state, driver?.zip);
 }
 
 function formatDriverCoordinates(latitude: number, longitude: number, hasCoordinates: boolean): string {
@@ -513,7 +515,10 @@ export default function LoadDetailScreen() {
   // Removed debug logging for load payload
 
   const title = load
-    ? [load.from_short_address, load.to_short_address].filter(Boolean).join(' -> ')
+    ? [load.from_short_address, load.to_short_address]
+        .filter(Boolean)
+        .map((address) => abbreviateStateInLocationString(address))
+        .join(' -> ')
     : '';
   const headerTitle = load ? (title || '—') : 'Load';
 
@@ -710,7 +715,7 @@ export default function LoadDetailScreen() {
   const currentDriverDisplayName = currentTrackingDriver?.externalId
     ? `(${currentTrackingDriver.externalId}) ${currentDriverFullName}`
     : currentDriverFullName;
-  const currentDriverLocationLine = formatDriverLocationLine(currentTrackingDriver);
+  const currentDriverLocationLine = formatDriverLocationLineFromDriver(currentTrackingDriver);
   const currentDriverCoordinates = formatDriverCoordinates(
     currentDriverLatitude,
     currentDriverLongitude,
@@ -733,8 +738,9 @@ export default function LoadDetailScreen() {
         coordinate: pickupRoutePoint,
         markerColor: '#2563EB',
         tooltipType: 'Pick up',
-        tooltipAddress:
+        tooltipAddress: abbreviateStateInLocationString(
           String(pickupStop?.address ?? pickupStop?.short_address ?? pickupLabel ?? '').trim(),
+        ),
         tooltipTime: pickupStop ? formatStopTime(pickupStop as TmsLoadLocationPoint) : '',
       });
     }
@@ -745,8 +751,9 @@ export default function LoadDetailScreen() {
         coordinate: deliveryRoutePoint,
         markerColor: '#16A34A',
         tooltipType: 'Delivery',
-        tooltipAddress:
+        tooltipAddress: abbreviateStateInLocationString(
           String(deliveryStop?.address ?? deliveryStop?.short_address ?? deliveryLabel ?? '').trim(),
+        ),
         tooltipTime: deliveryStop ? formatStopTime(deliveryStop as TmsLoadLocationPoint) : '',
       });
     }
@@ -795,9 +802,11 @@ export default function LoadDetailScreen() {
                   .filter(Boolean)
                   .join(' ')
                   .trim() || 'Driver',
-              tooltipAddress: [currentTrackingDriver?.city, currentTrackingDriver?.state]
-                .filter(Boolean)
-                .join(', '),
+              tooltipAddress: formatDriverLocationLine(
+                currentTrackingDriver?.city,
+                currentTrackingDriver?.state,
+                null,
+              ),
               tooltipTime: currentTrackingDriver?.lastLocationUpdateAt ?? '',
             },
           ]
@@ -1351,7 +1360,9 @@ export default function LoadDetailScreen() {
                             onPress={() => focusRoutePointOnMap(idx)}
                           >
                             <Text style={styles.routeStopAddress}>
-                              {String(point.address ?? point.short_address ?? '—') || '—'}
+                              {abbreviateStateInLocationString(
+                                String(point.address ?? point.short_address ?? '—'),
+                              ) || '—'}
                             </Text>
                           </TouchableOpacity>
                           <Text style={styles.routeStopTime}>

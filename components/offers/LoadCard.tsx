@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { colors, fonts, rem, fp } from '@/lib';
 import type { YourLoadItem } from '@/app-api/loads';
 import { labelForDriverLoadStatus } from '@/constants/driverLoadStatuses';
+import { abbreviateStateInLocationString } from '@/utils/formatDriverLocation';
 
 function backgroundForStatus(status: string): string {
   const s = status.trim().toLowerCase();
@@ -37,7 +38,10 @@ export default function LoadCard({
   item: YourLoadItem;
   onPress?: (row: YourLoadItem) => void;
 }) {
-  const title = [item.from_short_address, item.to_short_address].filter(Boolean).join(' -> ');
+  const title = [item.from_short_address, item.to_short_address]
+    .filter(Boolean)
+    .map((address) => abbreviateStateInLocationString(address))
+    .join(' -> ');
   const statusLabel = item.load_status ? labelForDriverLoadStatus(item.load_status) : '';
   const badge = badgeForStatus(item.load_status);
   const loadedPart =

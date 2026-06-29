@@ -37,6 +37,8 @@ interface OfferCardProps {
   isDeactivating?: boolean;
   /** Show overlay when driver has reached configured max open bids (unassigned offers with a rate, not selected) */
   showParticipationLimitOverlay?: boolean;
+  /** Driver offers list tab — controls rate label in preview */
+  offerListTab?: 'active' | 'assigned' | 'inactive';
 }
 
 function normalizeUnixSeconds(value: unknown): number | null {
@@ -56,6 +58,16 @@ function formatCountdown(totalSeconds: number): string {
   return [hours, minutes, seconds].map((value) => String(value).padStart(2, '0')).join(':');
 }
 
+function formatOfferRate(value: number | null | undefined): string | null {
+  if (value == null || !Number.isFinite(Number(value))) return null;
+  return `$${Number(value).toLocaleString('en-US')}`;
+}
+
+function formatLoadedMiles(value: number | null | undefined): string | null {
+  if (value == null || !Number.isFinite(value)) return null;
+  return value.toLocaleString('en-US', { maximumFractionDigits: 0 });
+}
+
 /**
  * Unified offer card for all roles.
  * For drivers: green border when active, red when inactive; inactive blocks navigation.
@@ -70,6 +82,7 @@ export default function OfferCard({
   onDeactivate,
   isDeactivating = false,
   showParticipationLimitOverlay = false,
+  offerListTab = 'active',
 }: OfferCardProps) {
   const { authState } = useAuth();
   const showOfferId = canShowOfferId(authState.user);
@@ -96,6 +109,15 @@ export default function OfferCard({
   const isBidExpired =
     hasSubmittedRate && driverActionTimeUnix != null && driverActionTimeUnix <= nowUnixSeconds;
   const hasActiveBidTimer = hasSubmittedRate && remainingSeconds > 0;
+  const offeredRateLabel = formatOfferRate(offer.offered_rate);
+  const driverRateLabel = formatOfferRate(offerDriver?.rate);
+  const loadedMilesLabel = formatLoadedMiles(offer.loaded_miles);
+  const showOfferedRatePreview = Boolean(
+    isDriver && offerListTab !== 'assigned' && offeredRateLabel,
+  );
+  const showDriverRatePreview = Boolean(
+    isDriver && offerListTab === 'assigned' && driverRateLabel,
+  );
 
   useEffect(() => {
     if (!hasSubmittedRate) {
@@ -185,12 +207,20 @@ export default function OfferCard({
         </View>
       ) : null}
 
-      {((offer.loaded_miles != null && !isSelectedForDriver) ||
+      {showOfferedRatePreview ? (
+        <Text style={styles.rateMeta}>Offered rate: {offeredRateLabel}</Text>
+      ) : null}
+
+      {showDriverRatePreview ? (
+        <Text style={styles.rateMeta}>Driver rate: {driverRateLabel}</Text>
+      ) : null}
+
+      {((loadedMilesLabel != null && !isSelectedForDriver) ||
         (hasSubmittedRate && !isSelectedForDriver)) &&
       !isInactiveForDriver && (
         <View style={styles.loadedRow}>
           <Text style={styles.meta}>
-            {offer.loaded_miles != null && !isSelectedForDriver ? `Loaded: ${offer.loaded_miles} mi` : ''}
+            {loadedMilesLabel != null && !isSelectedForDriver ? `Loaded: ${loadedMilesLabel} mi` : ''}
           </Text>
           {hasSubmittedRate && !isBidExpired && !isSelectedForDriver ? (
             <View style={styles.timerBadge}>
@@ -402,6 +432,12 @@ const styles = StyleSheet.create({
     fontSize: fp(13),
     fontFamily: fonts['400'],
     color: colors.neutral.darkGrey,
+  },
+  rateMeta: {
+    marginTop: rem(4),
+    fontSize: fp(13),
+    fontFamily: fonts['600'],
+    color: colors.neutral.black,
   },
   timerBadge: {
     minWidth: rem(88),

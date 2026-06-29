@@ -12,7 +12,7 @@ import { chatApi } from '@/app-api/chatApi';
 import { getMessageMultiAttachments } from '@/utils/messageAttachments';
 import { stripMarkdown } from '@/utils/chatMarkdown';
 import { getChatAvatarPlaceholderMeta } from '@/utils/chatAvatarUtils';
-import { findLoadChatDispatcherParticipant } from '@/utils/loadChatAvatar';
+import { findLoadChatAvatarParticipant } from '@/utils/loadChatAvatar';
 import { formatChatRelativeTimeNy } from '@/utils/nyWallClock';
 import type { PendingOutgoingMeta } from '@/utils/optimisticChatMessage';
 import { useAuth } from '@/context/AuthContext';
@@ -455,9 +455,9 @@ export default function ChatListItem({
   const offerSubtitle = getOfferSubtitle();
   const role = getRole();
   const avatarSource = getAvatarSource();
-  const loadDispatcher =
+  const loadAvatarParticipant =
     chatRoom.type === 'LOAD'
-      ? findLoadChatDispatcherParticipant(chatRoom, currentUserId)
+      ? findLoadChatAvatarParticipant(chatRoom, currentUserId)
       : undefined;
   const { initials, backgroundColor: avatarPlaceholderBg } =
     chatRoom.type === 'LOAD'
@@ -596,7 +596,7 @@ export default function ChatListItem({
               style={[
                 styles.avatarText,
                 avatarPlaceholderBg ? styles.avatarTextOnColor : null,
-                chatRoom.type === 'LOAD' && loadDispatcher ? styles.avatarTextLoad : null,
+                chatRoom.type === 'LOAD' && loadAvatarParticipant ? styles.avatarTextLoad : null,
               ]}
             >
               {initials}
