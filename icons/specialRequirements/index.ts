@@ -6,6 +6,7 @@ import AirportIcon from './airport.svg';
 import AlcoholIcon from './alcohol.svg';
 import BlindShipmentIcon from './blind_shipment.svg';
 import DockHighIcon from './dock-high.svg';
+import DirectDeliveryIcon from './direct-delivery.svg';
 import DriverAssistIcon from './driver_assist.svg';
 import FakeTeamIcon from './fake _team.svg';
 import FragileIcon from './fragile.svg';
@@ -34,6 +35,7 @@ export const SPECIAL_REQ_ICON_MAP: Record<string, SpecialRequirementIconComponen
   airport: AirportIcon,
   alcohol: AlcoholIcon,
   'blind-shipment': BlindShipmentIcon,
+  'direct-delivery': DirectDeliveryIcon,
   'dock-high': DockHighIcon,
   'driver-assist': DriverAssistIcon,
   'fake-team': FakeTeamIcon,
