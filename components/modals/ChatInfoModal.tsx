@@ -1,9 +1,13 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Image,
+  Keyboard,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -11,6 +15,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { colors, fonts, fp, rem, borderRadius } from '@/lib';
 import { ChatRoom } from '@/components/ChatListItem';
@@ -21,6 +26,7 @@ import { uploadImageViaPresign } from '@/app-api/upload';
 import { useAuth } from '@/context/AuthContext';
 import { useWebSocket } from '@/context/WebSocketContext';
 import { useOnlineStatusContext } from '@/context/OnlineStatusContext';
+import { userMatchesSearchQuery } from '@/utils/chatSearch';
 
 interface UserItem {
   id: string;
@@ -29,6 +35,8 @@ interface UserItem {
   avatar?: string;
   profilePhoto?: string;
   email?: string;
+  phone?: string;
+  externalId?: string;
   role?: string;
   status?: string;
 }
@@ -73,8 +81,11 @@ const getInitials = (name: string) => {
 export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoModalProps) {
   const { authState } = useAuth();
   const currentUser = authState.user;
+  const insets = useSafeAreaInsets();
   const { isUserOnline } = useOnlineStatusContext();
   const { socket, isConnected, updateChatRoom, addParticipants, removeParticipant } = useWebSocket();
+  const mainScrollRef = useRef<ScrollView>(null);
+  const searchInputRef = useRef<TextInput>(null);
 
   const isGroupChat = chatRoom?.type === 'GROUP';
   const isLoadChat = chatRoom?.type === 'LOAD';
@@ -109,9 +120,7 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
 
   const apiSearch = useMemo(() => {
     const q = (debouncedSearch || '').trim();
-    if (!q) return undefined;
-    const firstToken = q.split(/\s+/).filter(Boolean)[0];
-    return firstToken || undefined;
+    return q || undefined;
   }, [debouncedSearch]);
 
   const chatDisplayName = useMemo(() => {
@@ -199,23 +208,29 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
   }, [visible, showAddSection, apiSearch]);
 
   const filteredUsers = useMemo(() => {
-    const q = (search || '').trim().toLowerCase();
-    const tokens = q.split(/\s+/).filter(Boolean);
     const onlyActive = users.filter((u) => String(u?.status || '').toUpperCase() === 'ACTIVE');
-    if (tokens.length === 0) return onlyActive;
-    return onlyActive.filter((u) => {
-      const haystack = `${u.firstName || ''} ${u.lastName || ''} ${u.email || ''}`.toLowerCase();
-      return tokens.every((t) => haystack.includes(t));
-    });
+    return onlyActive.filter((u) => userMatchesSearchQuery(u, search));
   }, [users, search]);
 
+  const dismissKeyboard = useCallback(() => {
+    searchInputRef.current?.blur();
+    Keyboard.dismiss();
+  }, []);
+
   const closeAddSection = () => {
+    dismissKeyboard();
     setShowAddSection(false);
     setSearch('');
     setDebouncedSearch('');
     setUsers([]);
     setPage(1);
     setHasNextPage(true);
+  };
+
+  const handleSearchFocus = () => {
+    setTimeout(() => {
+      mainScrollRef.current?.scrollToEnd({ animated: true });
+    }, 150);
   };
 
   const handlePickAvatar = async () => {
@@ -423,25 +438,47 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
     }
   };
 
+  const handleClose = () => {
+    if (isSaving || isUploadingAvatar) return;
+    dismissKeyboard();
+    onClose();
+  };
+
   if (!chatRoom) return null;
 
   return (
-    <Modal transparent visible={visible} animationType="fade" onRequestClose={onClose}>
-      <View style={styles.overlay}>
-        <View style={styles.container}>
-          <View style={styles.header}>
-            <Text style={styles.title}>Chat info</Text>
-            <TouchableOpacity style={styles.closeBtn} onPress={onClose} disabled={isSaving || isUploadingAvatar}>
-              <Text style={styles.closeText}>Close</Text>
-            </TouchableOpacity>
-          </View>
+    <Modal transparent visible={visible} animationType="fade" onRequestClose={handleClose}>
+      <View style={styles.modalRoot}>
+        <Pressable style={styles.backdrop} onPress={dismissKeyboard} accessibilityRole="button" />
+        <KeyboardAvoidingView
+          style={styles.keyboardLayer}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}
+          pointerEvents="box-none"
+        >
+          <View style={styles.sheetWrap} pointerEvents="box-none">
+            <View style={styles.container} onStartShouldSetResponder={() => true}>
+              <View style={styles.header}>
+                <Text style={styles.title}>Chat info</Text>
+                <TouchableOpacity
+                  style={styles.closeBtn}
+                  onPress={handleClose}
+                  disabled={isSaving || isUploadingAvatar}
+                >
+                  <Text style={styles.closeText}>Close</Text>
+                </TouchableOpacity>
+              </View>
 
-          <ScrollView
-            style={styles.body}
-            contentContainerStyle={styles.bodyScrollContent}
-            keyboardShouldPersistTaps="handled"
-            nestedScrollEnabled
-          >
+              <ScrollView
+                ref={mainScrollRef}
+                style={styles.body}
+                contentContainerStyle={styles.bodyScrollContent}
+                keyboardShouldPersistTaps="handled"
+                keyboardDismissMode="on-drag"
+                onScrollBeginDrag={dismissKeyboard}
+                onMomentumScrollBegin={dismissKeyboard}
+                nestedScrollEnabled
+              >
             {/* Avatar */}
             <View style={styles.avatarSection}>
               <View style={styles.chatAvatarWrap}>
@@ -488,7 +525,19 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
               {canManageChat ? (
                 <TouchableOpacity
                   style={styles.addToggleBtn}
-                  onPress={() => setShowAddSection((v) => !v)}
+                  onPress={() => {
+                    setShowAddSection((v) => {
+                      const next = !v;
+                      if (next) {
+                        setTimeout(() => {
+                          mainScrollRef.current?.scrollToEnd({ animated: true });
+                        }, 200);
+                      } else {
+                        dismissKeyboard();
+                      }
+                      return next;
+                    });
+                  }}
                   activeOpacity={0.8}
                   disabled={isSaving || isUploadingAvatar}
                 >
@@ -515,11 +564,16 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
                 </View>
 
                 <TextInput
+                  ref={searchInputRef}
                   style={styles.input}
                   placeholder="Search..."
                   placeholderTextColor={colors.neutral.gray}
                   value={search}
                   onChangeText={setSearch}
+                  onFocus={handleSearchFocus}
+                  returnKeyType="search"
+                  blurOnSubmit
+                  onSubmitEditing={dismissKeyboard}
                   editable={!isSaving && !isUploadingAvatar}
                 />
 
@@ -532,6 +586,10 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
                   <ScrollView
                     style={styles.addList}
                     nestedScrollEnabled
+                    keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode="on-drag"
+                    onScrollBeginDrag={dismissKeyboard}
+                    onMomentumScrollBegin={dismissKeyboard}
                     onScroll={handleAddScroll}
                     scrollEventThrottle={16}
                   >
@@ -611,24 +669,37 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
                 )}
               </TouchableOpacity>
             ) : null}
-          </ScrollView>
-        </View>
+              </ScrollView>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
       </View>
     </Modal>
   );
 }
 
 const styles = StyleSheet.create({
-  overlay: {
+  modalRoot: {
     flex: 1,
+  },
+  backdrop: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0,0,0,0.35)',
+  },
+  keyboardLayer: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  sheetWrap: {
+    flex: 1,
     justifyContent: 'center',
     paddingHorizontal: rem(16),
   },
   container: {
+    width: '100%',
+    maxHeight: '85%',
     backgroundColor: colors.neutral.white,
     borderRadius: borderRadius.lg,
-    maxHeight: '85%',
     overflow: 'hidden',
   },
   header: {

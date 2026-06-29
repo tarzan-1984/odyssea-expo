@@ -147,6 +147,7 @@ export const DRIVER_CAPABILITY_FILTER_OPTIONS: { value: string; label: string }[
 export const CREATE_OFFER_SPECIAL_REQUIREMENTS: { value: string; label: string }[] = [
   { value: 'hazmat', label: 'Hazmat' },
   { value: 'tanker-end', label: 'Tanker End' },
+  { value: 'direct-delivery', label: 'Direct Delivery' },
   { value: 'driver-assist', label: 'Driver assist' },
   { value: 'liftgate', label: 'Liftgate' },
   { value: 'pallet-jack', label: 'Pallet Jack' },

@@ -4,11 +4,57 @@ export function normalizePhoneDigits(value: string): string {
   return value.replace(/\D/g, '');
 }
 
+function isPhoneLikeQuery(query: string): boolean {
+  const trimmed = query.replace(/\s/g, '');
+  if (!trimmed) return false;
+  const digits = normalizePhoneDigits(trimmed);
+  return digits.length >= 3 && digits.length / trimmed.length >= 0.5;
+}
+
+export type UserSearchFields = {
+  firstName?: string | null;
+  lastName?: string | null;
+  email?: string | null;
+  phone?: string | null;
+  externalId?: string | null;
+};
+
+/** Match contact/user against name, email, externalId, or phone (digits-normalized). */
+export function userMatchesSearchQuery(user: UserSearchFields, query: string): boolean {
+  const q = query.trim();
+  if (!q) return true;
+
+  const phone = String(user.phone ?? '').trim();
+  if (phone && isPhoneLikeQuery(q)) {
+    if (phoneMatchesQuery(phone, q.toLowerCase(), normalizePhoneDigits(q))) {
+      return true;
+    }
+  }
+
+  const tokens = q.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return true;
+
+  return tokens.every((token) => {
+    const tLower = token.toLowerCase();
+    const tDigits = normalizePhoneDigits(token);
+    const haystack = `${user.firstName ?? ''} ${user.lastName ?? ''} ${user.email ?? ''}`.toLowerCase();
+    if (haystack.includes(tLower)) return true;
+
+    const externalId = String(user.externalId ?? '').trim();
+    if (externalId && externalId.toLowerCase().includes(tLower)) return true;
+
+    if (phone && phoneMatchesQuery(phone, tLower, tDigits)) return true;
+
+    return false;
+  });
+}
+
 function phoneMatchesQuery(phoneRaw: string, qLower: string, qDigits: string): boolean {
   const phone = phoneRaw.trim();
   if (!phone) return false;
   if (phone.toLowerCase().includes(qLower)) return true;
-  return qDigits.length > 0 && normalizePhoneDigits(phone).includes(qDigits);
+  if (qDigits.length < 3) return false;
+  return normalizePhoneDigits(phone).includes(qDigits);
 }
 
 function collectSearchPhones(chatRoom: ChatRoom): string[] {

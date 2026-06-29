@@ -10,8 +10,11 @@ import {
   Platform,
   LayoutAnimation,
   Pressable,
+  Keyboard,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { ScrollView } from 'react-native-gesture-handler';
 import MaterialIcons from '@expo/vector-icons/MaterialIcons';
 import { Image } from 'expo-image';
 import { GestureHandlerRootView, RectButton } from 'react-native-gesture-handler';
@@ -104,6 +107,11 @@ export default function CreateOfferSheet({
   onSuccess,
 }: CreateOfferSheetProps) {
   const insets = useSafeAreaInsets();
+  const scrollRef = useRef<ScrollView>(null);
+  const scrollContentRef = useRef<View>(null);
+  const weightFieldRef = useRef<View>(null);
+  const commodityFieldRef = useRef<View>(null);
+  const notesFieldRef = useRef<View>(null);
   const [driversExpanded, setDriversExpanded] = useState(false);
   const [routeRows, setRouteRows] = useState<RouteRow[]>(() => [newRow('pickup'), newRow('delivery')]);
   const [timePickerRowId, setTimePickerRowId] = useState<string | null>(null);
@@ -140,6 +148,44 @@ export default function CreateOfferSheet({
     }
     wasOpen.current = visible;
   }, [visible, resetForm]);
+
+  const dismissKeyboard = useCallback(() => {
+    Keyboard.dismiss();
+  }, []);
+
+  const scrollFieldIntoView = useCallback((
+    fieldRef: React.RefObject<View | null>,
+    preferScrollToEnd = false
+  ) => {
+    setTimeout(() => {
+      if (preferScrollToEnd) {
+        scrollRef.current?.scrollToEnd({ animated: true });
+        return;
+      }
+
+      const field = fieldRef.current;
+      const content = scrollContentRef.current;
+      if (!field || !content || !scrollRef.current) return;
+
+      field.measureLayout(
+        content,
+        (_x, y) => {
+          scrollRef.current?.scrollTo({
+            y: Math.max(0, y - rem(80)),
+            animated: true,
+          });
+        },
+        () => {
+          scrollRef.current?.scrollToEnd({ animated: true });
+        }
+      );
+    }, Platform.OS === 'ios' ? 350 : 150);
+  }, []);
+
+  const handleClose = useCallback(() => {
+    dismissKeyboard();
+    onClose();
+  }, [dismissKeyboard, onClose]);
 
   const driverLines = useMemo((): SelectedDriverLine[] => {
     const byId = new Map((selectedDrivers ?? []).map((d) => [d.id, d.label]));
@@ -555,23 +601,32 @@ export default function CreateOfferSheet({
   );
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
+    <Modal visible={visible} animationType="slide" onRequestClose={handleClose}>
       <GestureHandlerRootView style={styles.gestureRoot}>
       <View style={styles.root}>
         <View style={[styles.header, { paddingTop: insets.top + rem(12) }]}>
           <Text style={styles.title}>Create offer</Text>
-          <TouchableOpacity onPress={onClose} hitSlop={12}>
+          <TouchableOpacity onPress={handleClose} hitSlop={12}>
             <Text style={styles.close}>Close</Text>
           </TouchableOpacity>
         </View>
 
+        <KeyboardAvoidingView
+          style={styles.keyboardAvoid}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+        >
         <NestableScrollContainer
+          ref={scrollRef}
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
+          onScrollBeginDrag={dismissKeyboard}
+          onMomentumScrollBegin={dismissKeyboard}
           showsVerticalScrollIndicator={false}
         >
+          <View ref={scrollContentRef} collapsable={false}>
           <TouchableOpacity
             style={styles.hintRow}
             onPress={toggleDriversList}
@@ -653,7 +708,7 @@ export default function CreateOfferSheet({
             </TouchableOpacity>
           </View>
 
-          <View style={styles.formRowHalf}>
+          <View style={styles.formRowHalf} ref={weightFieldRef} collapsable={false}>
             <View style={styles.formHalfColumn}>
               <Text style={styles.label}>Loaded miles *</Text>
               <View style={styles.loadedMilesWrap}>
@@ -681,6 +736,7 @@ export default function CreateOfferSheet({
                 style={[styles.input, styles.inputInHalfColumn]}
                 value={weight}
                 onChangeText={setWeight}
+                onFocus={() => scrollFieldIntoView(weightFieldRef)}
                 keyboardType="decimal-pad"
                 placeholder="e.g. 1,000 lbs"
                 placeholderTextColor={colors.neutral.grey}
@@ -692,14 +748,17 @@ export default function CreateOfferSheet({
             <Text style={styles.routeDistanceError}>{routeDistanceError}</Text>
           ) : null}
 
-          <Text style={styles.label}>Commodity</Text>
-          <TextInput
-            style={styles.input}
-            value={commodity}
-            onChangeText={setCommodity}
-            placeholder="Enter commodity"
-            placeholderTextColor={colors.neutral.grey}
-          />
+          <View ref={commodityFieldRef} collapsable={false}>
+            <Text style={styles.label}>Commodity</Text>
+            <TextInput
+              style={styles.input}
+              value={commodity}
+              onChangeText={setCommodity}
+              onFocus={() => scrollFieldIntoView(commodityFieldRef)}
+              placeholder="Enter commodity"
+              placeholderTextColor={colors.neutral.grey}
+            />
+          </View>
 
           <Text style={styles.label}>Special requirements</Text>
           <View style={styles.specWrap}>
@@ -719,15 +778,19 @@ export default function CreateOfferSheet({
             })}
           </View>
 
-          <Text style={styles.label}>Notes</Text>
-          <TextInput
-            style={[styles.input, styles.notes]}
-            value={notes}
-            onChangeText={setNotes}
-            multiline
-            placeholder="Enter notes"
-            placeholderTextColor={colors.neutral.grey}
-          />
+          <View ref={notesFieldRef} collapsable={false}>
+            <Text style={styles.label}>Notes</Text>
+            <TextInput
+              style={[styles.input, styles.notes]}
+              value={notes}
+              onChangeText={setNotes}
+              onFocus={() => scrollFieldIntoView(notesFieldRef, true)}
+              multiline
+              placeholder="Enter notes"
+              placeholderTextColor={colors.neutral.grey}
+            />
+          </View>
+          </View>
         </NestableScrollContainer>
 
         <View
@@ -769,6 +832,7 @@ export default function CreateOfferSheet({
             )}
           </TouchableOpacity>
         </View>
+        </KeyboardAvoidingView>
 
         <OfferRouteTimePickerModal
           visible={timePickerRowId !== null}
@@ -800,6 +864,9 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: colors.neutral.white,
+  },
+  keyboardAvoid: {
+    flex: 1,
   },
   header: {
     flexDirection: 'row',
