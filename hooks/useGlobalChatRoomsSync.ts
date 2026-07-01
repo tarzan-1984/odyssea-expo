@@ -4,6 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { forceSyncChatRoomsFromApi } from '@/services/chatRoomsForegroundSync';
 import { catchUpChatsOnReconnect } from '@/services/chatReconnectSync';
 import { eventBus, AppEvents } from '@/services/EventBus';
+import { proactiveRefreshFromSecureStorage } from '@/utils/accessTokenRefresh';
 
 /**
  * Keeps chat list + unread badge in sync app-wide (not only on Messages screen).
@@ -26,13 +27,19 @@ export function useGlobalChatRoomsSync(): void {
 			return;
 		}
 		isCatchUpRunningRef.current = true;
-		void catchUpChatsOnReconnect(syncOptions)
-			.catch((error) => {
-				console.error('[GlobalChatRoomsSync] Catch-up sync failed:', error);
-			})
-			.finally(() => {
+		void (async () => {
+			try {
+				// reconnect_attempt starts refresh in parallel; wait so API uses a fresh token.
+				await proactiveRefreshFromSecureStorage();
+				await catchUpChatsOnReconnect(syncOptions);
+			} catch (error: unknown) {
+				const message =
+					error instanceof Error ? error.message : 'Unknown chat catch-up error';
+				console.warn('[GlobalChatRoomsSync] Chat catch-up skipped:', message);
+			} finally {
 				isCatchUpRunningRef.current = false;
-			});
+			}
+		})();
 	};
 
 	useEffect(() => {

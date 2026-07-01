@@ -34,6 +34,7 @@ export interface OfferRow {
   external_user_id: string | null;
   create_time: string;
   update_time: string;
+  update_date?: string | null;
   route?: OfferRoutePoint[] | null;
   loaded_miles: number | null;
   offered_rate: number | null;

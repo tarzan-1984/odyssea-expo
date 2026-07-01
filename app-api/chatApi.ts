@@ -437,6 +437,22 @@ class ChatApiClient {
     });
   }
 
+  async sendMessage(data: {
+    chatRoomId: string;
+    content: string;
+    clientMessageId?: string;
+    fileUrl?: string;
+    fileName?: string;
+    fileSize?: number;
+    attachments?: { fileUrl: string; fileName: string; fileSize?: number }[];
+    replyData?: Message['replyData'];
+  }): Promise<Message> {
+    return this.request<Message>('/v1/messages', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
   /**
    * Mark all messages in a chat room as read
    * Mirrors Next.js chatApi.markChatRoomAsRead

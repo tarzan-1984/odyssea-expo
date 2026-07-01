@@ -12,6 +12,7 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { canShowOfferId } from '@/utils/offerDisplay';
 import OfferBidExpiredIcon from '@/icons/OfferBidExpiredIcon';
+import OfferUpdatedIcon from '@/icons/OfferUpdatedIcon';
 import Swipeable from 'react-native-gesture-handler/Swipeable';
 
 function hasHazmat(specialRequirements: unknown): boolean {
@@ -118,6 +119,7 @@ export default function OfferCard({
   const showDriverRatePreview = Boolean(
     isDriver && offerListTab === 'assigned' && driverRateLabel,
   );
+  const showOfferUpdatedNotice = Boolean(offer.update_date?.trim());
 
   useEffect(() => {
     if (!hasSubmittedRate) {
@@ -232,6 +234,15 @@ export default function OfferCard({
           ) : null}
         </View>
       )}
+
+      {showOfferUpdatedNotice ? (
+        <View style={styles.updatedNoticeRow}>
+          <OfferUpdatedIcon width={rem(18)} height={rem(18)} color={colors.primary.blue} />
+          <Text style={styles.updatedNoticeText}>
+            This offer has been updated. Please review the changes
+          </Text>
+        </View>
+      ) : null}
 
       {showParticipationLimitOverlay ? (
         <View style={styles.participationLimitOverlay} pointerEvents="auto">
@@ -452,6 +463,22 @@ const styles = StyleSheet.create({
     fontSize: fp(15),
     fontFamily: fonts['700'],
     color: colors.neutral.white,
+  },
+  updatedNoticeRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: rem(8),
+    marginTop: rem(10),
+    paddingTop: rem(10),
+    borderTopWidth: 1,
+    borderTopColor: colors.neutral.lightGrey,
+  },
+  updatedNoticeText: {
+    flex: 1,
+    fontSize: fp(13),
+    fontFamily: fonts['500'],
+    color: colors.neutral.darkGrey,
+    lineHeight: fp(18),
   },
   participationLimitOverlay: {
     ...StyleSheet.absoluteFillObject,

@@ -173,11 +173,17 @@ export async function fetchAppLocationSettingsFromBackend(
  * Fetches global app location thresholds from backend, persists to AsyncStorage.
  * Also records users.lastActiveApp and user_devices (deviceId + lastActiveAt, NY time) on the server.
  */
+export type SyncAppLocationSettingsOptions = {
+  /** When false, skips event bus emits (e.g. version gate refresh to avoid duplicate checks). */
+  emitEvents?: boolean;
+};
+
 export async function syncAppLocationSettingsWithDeviceContext(
   accessToken: string,
+  options?: SyncAppLocationSettingsOptions,
 ): Promise<boolean> {
   const pushToken = await secureStorage.getItemAsync('expoPushToken').catch(() => null);
-  return syncAppLocationSettingsFromBackend(accessToken, { pushToken });
+  return syncAppLocationSettingsFromBackend(accessToken, { pushToken }, options);
 }
 
 /**
@@ -187,6 +193,7 @@ export async function syncAppLocationSettingsWithDeviceContext(
 export async function syncAppLocationSettingsFromBackend(
   accessToken: string,
   extra?: { pushToken?: string | null },
+  options?: SyncAppLocationSettingsOptions,
 ): Promise<boolean> {
   const remote = await fetchAppLocationSettingsFromBackend(accessToken, extra);
   if (!remote) return false;
@@ -201,10 +208,14 @@ export async function syncAppLocationSettingsFromBackend(
     prev.maxDriverOpenOfferParticipations !== remote.maxDriverOpenOfferParticipations ||
     prev.minimumAppVersion !== remote.minimumAppVersion;
 
+  const emitEvents = options?.emitEvents !== false;
+
   await persistAppLocationSettingsLocally(remote);
-  if (changed) {
+  if (changed && emitEvents) {
     eventBus.emit('APP_LOCATION_SETTINGS_SYNCED', remote);
   }
-  eventBus.emit(AppEvents.AppUpdateCheckRequested, remote);
+  if (emitEvents) {
+    eventBus.emit(AppEvents.AppUpdateCheckRequested, remote);
+  }
   return changed;
 }

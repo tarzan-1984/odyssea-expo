@@ -13,11 +13,19 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { syncAppLocationSettingsWithDeviceContext } from '@/utils/appLocationSettings';
 import { normalizeChatParticipants } from '@/utils/normalizeChatParticipants';
 import { proactiveRefreshFromSecureStorage } from '@/utils/accessTokenRefresh';
+import {
+  SOCKET_IO_CLIENT_OPTIONS,
+  SOCKET_OFFLINE_UI_DEBOUNCE_MS,
+  SOCKET_PERIODIC_RETRY_MS,
+} from '@/lib/socketIoClientOptions';
+import { useNetworkReconnect } from '@/hooks/useNetworkReconnect';
 
 // WebSocket context interface
 interface WebSocketContextType {
   socket: Socket | null;
   isConnected: boolean;
+  /** Debounced offline flag for UI — avoids flicker during brief reconnects. */
+  isDisplayOffline: boolean;
   connect: () => void;
   disconnect: () => void;
   joinChatRoom: (chatRoomId: string) => void;
@@ -69,6 +77,9 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   const currentUser = authState.user;
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [isDisplayOffline, setIsDisplayOffline] = useState(false);
+  const socketRef = useRef<Socket | null>(null);
+  const offlineUiTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [typingByRoom, setTypingByRoom] = useState<Record<string, Record<string, { isTyping: boolean; firstName?: string }>>>({});
   const chatRoomsList = useChatStore((s) => s.chatRooms);
   const joinedRoomsRef = useRef<Set<string>>(new Set());
@@ -156,22 +167,29 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     console.log('🔌 [WebSocket] Creating socket connection to:', WS_URL);
     // Create new socket connection with authentication
     const newSocket = io(WS_URL, {
-      auth: {
-        token: token,
+      ...SOCKET_IO_CLIENT_OPTIONS,
+      auth: (cb) => {
+        void proactiveRefreshFromSecureStorage()
+          .then(async () => {
+            const freshToken = await getAuthToken();
+            cb({ token: freshToken || '' });
+          })
+          .catch(async () => {
+            const freshToken = await getAuthToken();
+            cb({ token: freshToken || '' });
+          });
       },
       transports: ['websocket', 'polling'],
-      timeout: 20000,
-      reconnection: true,
-      reconnectionAttempts: Infinity,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 30000,
-      randomizationFactor: 0.5,
     });
 
     // Connection event handlers
     newSocket.on('connect', () => {
-      const wasDisconnected = !isConnected;
+      if (offlineUiTimerRef.current) {
+        clearTimeout(offlineUiTimerRef.current);
+        offlineUiTimerRef.current = null;
+      }
       setIsConnected(true);
+      setIsDisplayOffline(false);
       reconnectAttempts.current = 0;
       isConnectingRef.current = false;
       console.log('✅ [WebSocket] Connected, socket id:', newSocket.id);
@@ -188,9 +206,8 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         periodicRetryIntervalRef.current = null;
       }
 
-      // If we were disconnected and now reconnected, trigger sync
-      // This handles the case when device was offline and missed messages
-      if (wasDisconnected && hasConnectedOnceRef.current) {
+      // Trigger catch-up sync only on reconnect, not the initial connection.
+      if (hasConnectedOnceRef.current) {
         console.log('🔄 [WebSocket] Reconnected after disconnection');
         const { eventBus, AppEvents } = require('@/services/EventBus');
         eventBus.emit(AppEvents.WebSocketReconnected, undefined);
@@ -227,6 +244,13 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
     newSocket.on('disconnect', (reason) => {
       setIsConnected(false);
+      if (offlineUiTimerRef.current) {
+        clearTimeout(offlineUiTimerRef.current);
+      }
+      offlineUiTimerRef.current = setTimeout(() => {
+        setIsDisplayOffline(true);
+        offlineUiTimerRef.current = null;
+      }, SOCKET_OFFLINE_UI_DEBOUNCE_MS);
       isConnectingRef.current = false;
 
       console.log('🔌 [WebSocket] Disconnected, reason:', reason);
@@ -239,6 +263,13 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     newSocket.on('connect_error', (error) => {
       console.error('❌ [WebSocket] Connection error:', error.message);
       setIsConnected(false);
+      if (offlineUiTimerRef.current) {
+        clearTimeout(offlineUiTimerRef.current);
+      }
+      offlineUiTimerRef.current = setTimeout(() => {
+        setIsDisplayOffline(true);
+        offlineUiTimerRef.current = null;
+      }, SOCKET_OFFLINE_UI_DEBOUNCE_MS);
       isConnectingRef.current = false;
 
       void proactiveRefreshFromSecureStorage().then(async (result) => {
@@ -258,9 +289,8 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
     newSocket.on('reconnect', (attemptNumber: number) => {
       console.log(`✅ [WebSocket] Socket.IO reconnected successfully after ${attemptNumber} attempts`);
-      reconnectAttempts.current = 0; // Reset our counter when Socket.IO reconnects
-      const { eventBus, AppEvents } = require('@/services/EventBus');
-      eventBus.emit(AppEvents.WebSocketReconnected, undefined);
+      reconnectAttempts.current = 0;
+      // Catch-up sync is triggered from the "connect" handler when hasConnectedOnceRef is set.
     });
 
     newSocket.on('reconnect_error', (error: Error) => {
@@ -279,12 +309,13 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         if (!currentUser) {
           return;
         }
-        if (isConnected || isConnectingRef.current) {
+        const activeSocket = socketRef.current;
+        if (activeSocket?.connected || activeSocket?.active) {
           return;
         }
         reconnectAttempts.current = 0;
         connect();
-      }, 30000);
+      }, SOCKET_PERIODIC_RETRY_MS);
     });
 
     // Handle server's connected event
@@ -1050,13 +1081,20 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     });
 
     setSocket(newSocket);
+    socketRef.current = newSocket;
   }, [currentUser, getAuthToken]);
 
   const disconnect = useCallback(() => {
+    if (offlineUiTimerRef.current) {
+      clearTimeout(offlineUiTimerRef.current);
+      offlineUiTimerRef.current = null;
+    }
+    setIsDisplayOffline(false);
     if (socket) {
       console.log('🔌 [WebSocket] Disconnecting...');
       socket.disconnect();
       setSocket(null);
+      socketRef.current = null;
       setIsConnected(false);
     }
 
@@ -1107,14 +1145,14 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     if (!socket) {
       throw new Error('WebSocket not initialized');
     }
-    
-    if (!isConnected || !socket.connected) {
+
+    if (!socket.connected) {
       throw new Error('WebSocket not connected');
     }
-    
+
     console.log('📤 [WebSocket] Sending message:', data);
     socket.emit('sendMessage', data);
-  }, [socket, isConnected]);
+  }, [socket]);
 
   const sendTyping = useCallback((chatRoomId: string, isTyping: boolean) => {
     if (socket && isConnected) {
@@ -1129,16 +1167,26 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     }
   }, [socket, isConnected]);
 
-  const markChatRoomAsRead = useCallback((chatRoomId: string) => {
-    if (!socket || !isConnected || !String(appStateRef.current).match(/active/)) {
+  const markChatRoomAsRead = useCallback(async (chatRoomId: string) => {
+    if (!String(appStateRef.current).match(/active/)) {
       return;
     }
     const room = useChatStore.getState().chatRooms.find((r: ChatRoom) => r.id === chatRoomId);
     if ((room?.unreadCount ?? 0) > 0) {
       useChatStore.getState().updateChatRoom(chatRoomId, { unreadCount: 0 });
     }
-    socket.emit('markChatRoomAsRead', { chatRoomId });
-  }, [socket, isConnected]);
+
+    if (socket?.connected) {
+      socket.emit('markChatRoomAsRead', { chatRoomId });
+      return;
+    }
+
+    try {
+      await chatApi.markChatRoomAsRead(chatRoomId);
+    } catch (error) {
+      console.warn('[WebSocket] HTTP fallback markChatRoomAsRead failed:', error);
+    }
+  }, [socket]);
 
   // Offer lists / detail — same server event as Next.js (OffersRealtimeService.emitOfferUpdated)
   useEffect(() => {
@@ -1156,6 +1204,21 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       socket.off('offerUpdated', onOfferUpdated);
     };
   }, [socket, isConnected, queryClient]);
+
+  const nudgeReconnect = useCallback(() => {
+    if (!currentUser) return;
+    if (!String(appStateRef.current).match(/active/)) return;
+    const activeSocket = socketRef.current;
+    if (activeSocket?.connected) return;
+    if (activeSocket?.active || isConnectingRef.current) return;
+    if (activeSocket && !activeSocket.connected) {
+      activeSocket.connect();
+      return;
+    }
+    connect();
+  }, [currentUser, connect]);
+
+  useNetworkReconnect(nudgeReconnect);
 
   // Auto-connect when user is available
   useEffect(() => {
@@ -1205,7 +1268,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
             reconnectTimeoutRef.current = null;
           }
 
-          connect();
+          nudgeReconnect();
         } else if (isConnected && wasInBackground) {
           console.log('✅ [WebSocket] App became active, WebSocket already connected');
         }
@@ -1215,11 +1278,14 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     return () => {
       subscription.remove();
     };
-  }, [currentUser, isConnected, connect, socket]);
+  }, [currentUser, isConnected, connect, socket, nudgeReconnect]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      if (offlineUiTimerRef.current) {
+        clearTimeout(offlineUiTimerRef.current);
+      }
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
@@ -1238,6 +1304,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   const value: WebSocketContextType = {
     socket,
     isConnected,
+    isDisplayOffline,
     connect,
     disconnect,
     joinChatRoom,

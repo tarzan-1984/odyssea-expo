@@ -25,6 +25,8 @@ import {
 	removeOptimisticByClientMessageId,
 } from '@/utils/optimisticChatMessage';
 import { eventBus, AppEvents } from '@/services/EventBus';
+import { chatApi } from '@/app-api/chatApi';
+import { useChatStore } from '@/stores/chatStore';
 
 const SEND_ACK_TIMEOUT_MS = 60_000;
 
@@ -114,18 +116,6 @@ export function useChatOutboxSend({
 		}
 	}, []);
 
-	const scheduleAckTimeout = useCallback(
-		(clientMessageId: string) => {
-			clearAckTimer(clientMessageId);
-			const timer = setTimeout(() => {
-				ackTimersRef.current.delete(clientMessageId);
-				markOptimisticFailed(clientMessageId);
-			}, SEND_ACK_TIMEOUT_MS);
-			ackTimersRef.current.set(clientMessageId, timer);
-		},
-		[clearAckTimer, markOptimisticFailed],
-	);
-
 	const removeConfirmedOptimistic = useCallback(
 		async (clientMessageId: string) => {
 			clearAckTimer(clientMessageId);
@@ -135,6 +125,71 @@ export function useChatOutboxSend({
 			setOptimisticMessages((prev) => removeOptimisticByClientMessageId(prev, clientMessageId));
 		},
 		[clearAckTimer, setOptimisticMessages],
+	);
+
+	const tryHttpFallback = useCallback(
+		async (clientMessageId: string): Promise<boolean> => {
+			if (!chatRoomId) return false;
+			const item = (await chatOutboxService.getAll()).find(
+				(row) => row.clientMessageId === clientMessageId,
+			);
+			if (!item) return false;
+
+			try {
+				const uploaded = item.uploadedAttachments;
+				const multi = uploaded && uploaded.length >= 2 ? uploaded : null;
+				const newMessage = await chatApi.sendMessage({
+					chatRoomId,
+					content: item.content,
+					clientMessageId: item.clientMessageId,
+					replyData: item.replyData,
+					...(multi
+						? {
+								attachments: multi,
+								fileUrl: multi[0].fileUrl,
+								fileName: multi[0].fileName,
+								fileSize: multi[0].fileSize,
+							}
+						: uploaded?.[0]
+							? {
+									fileUrl: uploaded[0].fileUrl,
+									fileName: uploaded[0].fileName,
+									fileSize: uploaded[0].fileSize,
+								}
+							: {}),
+				});
+				useChatStore.getState().addMessage(chatRoomId, newMessage);
+				await removeConfirmedOptimistic(clientMessageId);
+				return true;
+			} catch (error) {
+				console.warn('[useChatOutboxSend] HTTP fallback failed:', error);
+				return false;
+			}
+		},
+		[chatRoomId, removeConfirmedOptimistic],
+	);
+
+	const recoverViaHttpOrFail = useCallback(
+		(clientMessageId: string) => {
+			void tryHttpFallback(clientMessageId).then((recovered) => {
+				if (!recovered) {
+					markOptimisticFailed(clientMessageId);
+				}
+			});
+		},
+		[tryHttpFallback, markOptimisticFailed],
+	);
+
+	const scheduleAckTimeout = useCallback(
+		(clientMessageId: string) => {
+			clearAckTimer(clientMessageId);
+			const timer = setTimeout(() => {
+				ackTimersRef.current.delete(clientMessageId);
+				recoverViaHttpOrFail(clientMessageId);
+			}, SEND_ACK_TIMEOUT_MS);
+			ackTimersRef.current.set(clientMessageId, timer);
+		},
+		[clearAckTimer, recoverViaHttpOrFail],
 	);
 
 	const dispatchOutboxSend = useCallback(
@@ -236,9 +291,12 @@ export function useChatOutboxSend({
 				awaitingAckRef.current.add(item.clientMessageId);
 				scheduleAckTimeout(item.clientMessageId);
 			} catch (error) {
-				console.error('[useChatOutboxSend] dispatch failed:', error);
-				markOptimisticFailed(item.clientMessageId);
-				throw error;
+				console.warn('[useChatOutboxSend] WebSocket dispatch failed:', error);
+				const recovered = await tryHttpFallback(item.clientMessageId);
+				if (!recovered) {
+					markOptimisticFailed(item.clientMessageId);
+					throw error;
+				}
 			} finally {
 				inFlightRef.current.delete(item.clientMessageId);
 				onUploadStateChange?.(false);
@@ -249,6 +307,7 @@ export function useChatOutboxSend({
 			sender,
 			sendMessage,
 			markOptimisticFailed,
+			tryHttpFallback,
 			onUploadStateChange,
 			scheduleAckTimeout,
 			setOptimisticMessages,

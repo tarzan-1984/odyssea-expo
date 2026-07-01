@@ -291,6 +291,123 @@ function humanizeUnderscores(raw: string): string {
   return t.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function isAttachedDriverIdSet(value: unknown): boolean {
+  const s = cleanText(value);
+  return s !== '' && s !== '0';
+}
+
+function isQuickPayAccountingEnabled(value: unknown): boolean {
+  return cleanText(value) === '1';
+}
+
+type DriverAccountingSlot = 'first' | 'second' | 'third';
+
+type DriverAccountingEntry = {
+  slot: DriverAccountingSlot;
+  attachedDriverId: string;
+  driverLabel: string;
+  bankPaymentStatus: string;
+  driverPayStatus: string;
+  quickPayEnabled: boolean;
+  quickPayMethod: string;
+  quickPayAmount: string;
+};
+
+const DRIVER_ACCOUNTING_FIELD_MAP: Record<
+  DriverAccountingSlot,
+  {
+    attached: string;
+    bankPayment: string;
+    payStatus: string;
+    quickPayAccounting: string;
+    quickPayMethod: string;
+    quickPayAmount: string;
+    unitName: string;
+    fallbackTitle: string;
+  }
+> = {
+  first: {
+    attached: 'attached_driver',
+    bankPayment: 'bank_payment_status',
+    payStatus: 'driver_pay_statuses',
+    quickPayAccounting: 'quick_pay_accounting',
+    quickPayMethod: 'quick_pay_method',
+    quickPayAmount: 'quick_pay_driver_amount',
+    unitName: 'unit_number_name',
+    fallbackTitle: 'Driver',
+  },
+  second: {
+    attached: 'attached_second_driver',
+    bankPayment: 'second_bank_payment_status',
+    payStatus: 'second_driver_pay_statuses',
+    quickPayAccounting: 'second_quick_pay_accounting',
+    quickPayMethod: 'second_quick_pay_method',
+    quickPayAmount: 'second_quick_pay_driver_amount',
+    unitName: 'second_unit_number_name',
+    fallbackTitle: 'Driver 2',
+  },
+  third: {
+    attached: 'attached_third_driver',
+    bankPayment: 'third_bank_payment_status',
+    payStatus: 'third_driver_pay_statuses',
+    quickPayAccounting: 'third_quick_pay_accounting',
+    quickPayMethod: 'third_quick_pay_method',
+    quickPayAmount: 'third_quick_pay_driver_amount',
+    unitName: 'third_unit_number_name',
+    fallbackTitle: 'Driver 3',
+  },
+};
+
+function buildDriverAccountingEntry(
+  slot: DriverAccountingSlot,
+  meta: Record<string, unknown>,
+): DriverAccountingEntry | null {
+  const fields = DRIVER_ACCOUNTING_FIELD_MAP[slot];
+  const attachedDriverId = cleanText(meta[fields.attached]);
+  if (!isAttachedDriverIdSet(attachedDriverId)) return null;
+
+  const unitRaw = cleanText(meta[fields.unitName]);
+  const driverLabel = humanizeUnderscores(unitRaw) || unitRaw || fields.fallbackTitle;
+  const quickPayEnabled = isQuickPayAccountingEnabled(meta[fields.quickPayAccounting]);
+
+  return {
+    slot,
+    attachedDriverId,
+    driverLabel,
+    bankPaymentStatus: humanizeUnderscores(cleanText(meta[fields.bankPayment])),
+    driverPayStatus: humanizeUnderscores(cleanText(meta[fields.payStatus])),
+    quickPayEnabled,
+    quickPayMethod: quickPayEnabled
+      ? humanizeUnderscores(cleanText(meta[fields.quickPayMethod]))
+      : '',
+    quickPayAmount: quickPayEnabled ? cleanText(meta[fields.quickPayAmount]) : '',
+  };
+}
+
+function formatQuickPayFeePercent(raw: string): string {
+  const s = raw.trim();
+  if (!s) return '—';
+  const n = Number(String(s).replace(/,/g, '').trim());
+  if (!Number.isFinite(n)) return s;
+  return `${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+}
+
+function buildVisibleAccountingEntries(
+  meta: Record<string, unknown>,
+  isDriverRole: boolean,
+  driverExternalId: string,
+): DriverAccountingEntry[] {
+  const slots: DriverAccountingSlot[] = ['first', 'second', 'third'];
+  const all = slots
+    .map((slot) => buildDriverAccountingEntry(slot, meta))
+    .filter((entry): entry is DriverAccountingEntry => entry != null);
+
+  if (isDriverRole && driverExternalId) {
+    return all.filter((entry) => entry.attachedDriverId === driverExternalId);
+  }
+  return all;
+}
+
 /** Normalize TMS / CSV token to same `value` as CREATE_OFFER_SPECIAL_REQUIREMENTS */
 function instructionTokenToValue(token: string): string {
   return token.trim().toLowerCase().replace(/\s+/g, '-').replace(/_/g, '-');
@@ -495,6 +612,7 @@ export default function LoadDetailScreen() {
   const canAccess = canAccessWorkTab(authState.user?.role);
   const role = (authState.user?.role ?? '').trim().toUpperCase();
   const isDriverRole = role === 'DRIVER';
+  const driverExternalId = (authState.user?.externalId ?? '').trim();
   const showDriversTab = canAccessDriversAndOffers(role);
 
   useEffect(() => {
@@ -969,26 +1087,10 @@ export default function LoadDetailScreen() {
         ? 'Yes'
         : 'No';
 
-  const driverPayStatusesRaw = cleanText(meta.driver_pay_statuses);
-  const driverPayStatusLabels = useMemo(() => {
-    if (!driverPayStatusesRaw.trim()) return [];
-    // Accept comma-separated or JSON array.
-    const s = driverPayStatusesRaw.trim();
-    if (s.startsWith('[') && s.endsWith(']')) {
-      try {
-        const parsed: unknown = JSON.parse(s);
-        if (Array.isArray(parsed)) {
-          return parsed
-            .map((x) => humanizeUnderscores(String(x ?? '').trim()))
-            .filter(Boolean);
-        }
-      } catch {}
-    }
-    return s
-      .split(',')
-      .map((p) => humanizeUnderscores(p))
-      .filter(Boolean);
-  }, [driverPayStatusesRaw]);
+  const accountingEntries = useMemo(
+    () => buildVisibleAccountingEntries(meta, isDriverRole, driverExternalId),
+    [meta, isDriverRole, driverExternalId],
+  );
 
   const pod = useWpMediaFile(cleanText(meta.proof_of_delivery), 'proof_of_delivery');
   const updatedRateConfirmation = useWpMediaFile(
@@ -1861,16 +1963,61 @@ export default function LoadDetailScreen() {
                 </View>
               </View>
             ) : contentTab === 'accounting' ? (
-              <View style={styles.loadInfoSection}>
-                <Text style={styles.loadInfoSectionTitle}>Accounting</Text>
+              accountingEntries.length > 0 ? (
+                accountingEntries.map((entry) => {
+                  const sectionTitle =
+                    accountingEntries.length > 1 ? entry.driverLabel : 'Accounting';
+                  return (
+                    <View key={`accounting-${entry.slot}`} style={styles.loadInfoSection}>
+                      <Text style={styles.loadInfoSectionTitle}>{sectionTitle}</Text>
 
-                <View style={styles.loadInfoRow}>
-                  <Text style={styles.loadInfoLabel}>Driver pay statuses</Text>
-                  <Text style={styles.loadInfoValue} numberOfLines={3}>
-                    {driverPayStatusLabels.length > 0 ? driverPayStatusLabels.join(', ') : '—'}
-                  </Text>
+                      <View style={styles.loadInfoRow}>
+                        <Text style={styles.loadInfoLabel}>Bank payment status</Text>
+                        <Text style={styles.loadInfoValue} numberOfLines={2}>
+                          {entry.bankPaymentStatus || '—'}
+                        </Text>
+                      </View>
+
+                      <View style={styles.loadInfoRow}>
+                        <Text style={styles.loadInfoLabel}>Pay status</Text>
+                        <Text style={styles.loadInfoValue} numberOfLines={2}>
+                          {entry.driverPayStatus || '—'}
+                        </Text>
+                      </View>
+
+                      <View style={styles.loadInfoRow}>
+                        <Text style={styles.loadInfoLabel}>Quick pay</Text>
+                        <Text style={styles.loadInfoValue} numberOfLines={2}>
+                          {entry.quickPayEnabled ? 'Yes' : 'No'}
+                        </Text>
+                      </View>
+
+                      {entry.quickPayEnabled ? (
+                        <>
+                          <View style={styles.loadInfoRow}>
+                            <Text style={styles.loadInfoLabel}>Quick pay method</Text>
+                            <Text style={styles.loadInfoValue} numberOfLines={2}>
+                              {entry.quickPayMethod || '—'}
+                            </Text>
+                          </View>
+
+                          <View style={styles.loadInfoRow}>
+                            <Text style={styles.loadInfoLabel}>Quick pay fee</Text>
+                            <Text style={styles.loadInfoValue} numberOfLines={2}>
+                              {formatQuickPayFeePercent(entry.quickPayAmount)}
+                            </Text>
+                          </View>
+                        </>
+                      ) : null}
+                    </View>
+                  );
+                })
+              ) : (
+                <View style={styles.loadInfoSection}>
+                  <Text style={styles.loadInfoSectionTitle}>Accounting</Text>
+                  <Text style={styles.documentsHint}>No accounting data available.</Text>
                 </View>
-              </View>
+              )
             ) : null}
 
             <View style={{ height: rem(12) }} />

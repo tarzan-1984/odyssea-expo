@@ -59,7 +59,8 @@ export default function MessagesScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { authState } = useAuth();
-  const { isConnected } = useWebSocket();
+  const { isConnected, isDisplayOffline } = useWebSocket();
+  const showConnectionOffline = isDisplayOffline || !isConnected;
   const { isUserOnline } = useOnlineStatusContext();
   const { chatRooms, isLoading, error, loadChatRooms, updateChatRoom } = useChatRooms();
   const activeTab = useChatStore((s) => s.messagesTab);
@@ -480,9 +481,9 @@ export default function MessagesScreen() {
                 <View
                   style={[
                     styles.statusDot,
-                    isConnected ? styles.statusDotOnline : styles.statusDotOffline,
+                    isConnected && !showConnectionOffline ? styles.statusDotOnline : styles.statusDotOffline,
                   ]}
-                  accessibilityLabel={isConnected ? 'Online' : 'Offline'}
+                  accessibilityLabel={isConnected && !showConnectionOffline ? 'Online' : 'Offline'}
                 />
               </View>
             </View>

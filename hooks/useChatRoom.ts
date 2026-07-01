@@ -8,6 +8,7 @@ import { ChatRoom, Message } from '@/components/ChatListItem';
 import { useWebSocket } from '@/context/WebSocketContext';
 import { useAuth } from '@/context/AuthContext';
 import { eventBus, AppEvents } from '@/services/EventBus';
+import { proactiveRefreshFromSecureStorage } from '@/utils/accessTokenRefresh';
 import { useChatStore } from '@/stores/chatStore';
 import { tryCompleteImageFlowOnMessage } from '@/utils/chatImageFlowTiming';
 import {
@@ -1507,12 +1508,18 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
   // This ensures we get messages that arrived while device was offline
   useEffect(() => {
     const off = eventBus.on(AppEvents.WebSocketReconnected, () => {
-      if (chatRoomId) {
-        delete hasLoadedMessagesOnceRef.current[chatRoomId];
-        loadMessagesRef.current(1, 50, true).catch((error) => {
-          console.error('Failed to refresh messages after reconnection:', error);
-        });
-      }
+      if (!chatRoomId) return;
+      void (async () => {
+        try {
+          await proactiveRefreshFromSecureStorage();
+          delete hasLoadedMessagesOnceRef.current[chatRoomId];
+          await loadMessagesRef.current(1, 50, true);
+        } catch (error: unknown) {
+          const message =
+            error instanceof Error ? error.message : 'Failed to refresh messages after reconnect';
+          console.warn('[ChatRoom] Message refresh after reconnect skipped:', message);
+        }
+      })();
     });
 
     return () => {
