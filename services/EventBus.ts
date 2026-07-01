@@ -37,4 +37,6 @@ export const AppEvents = {
   ArchivedLoadChatsNeedRefresh: 'ARCHIVED_LOAD_CHATS_NEED_REFRESH',
   /** Re-run App Store / Play Store version check (after settings sync or foreground). */
   AppUpdateCheckRequested: 'APP_UPDATE_CHECK_REQUESTED',
+  /** TMS load data changed (POST /v1/tms/load/update webhook). */
+  TmsLoadUpdated: 'TMS_LOAD_UPDATED',
 } as const;

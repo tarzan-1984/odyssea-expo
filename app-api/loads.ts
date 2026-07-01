@@ -259,6 +259,43 @@ export async function getYourLoads(params: {
   };
 }
 
+export async function fetchYourLoadById(loadId: string): Promise<YourLoadItem | null> {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is not configured');
+  }
+
+  const cleanLoadId = loadId.trim();
+  if (!cleanLoadId) return null;
+
+  const accessToken = await secureStorage.getItemAsync('accessToken');
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
+
+  const response = await fetch(`${API_BASE_URL}/v1/tms/load/${encodeURIComponent(cleanLoadId)}`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const raw: unknown = await response.json();
+  const wrapped = asRecord(raw) ?? {};
+  const data = asRecord(wrapped.data) ?? wrapped;
+  const loadRow = asRecord(data.data) ?? data;
+
+  if (!loadRow || loadRow.id == null) {
+    return null;
+  }
+
+  return normalizeTmsLoadRow(loadRow);
+}
+
 export async function getLoadMapPayload(loadId: string): Promise<LoadMapPayload | null> {
   if (!API_BASE_URL) {
     throw new Error('API_BASE_URL is not configured');

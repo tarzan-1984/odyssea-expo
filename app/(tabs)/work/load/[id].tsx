@@ -27,6 +27,7 @@ import {
 } from '@/utils/formatDriverLocation';
 import {
   getLoadMapPayload,
+  fetchYourLoadById,
   type DriverTrackingPoint,
   type LoadMapDriver,
   type LoadRouteGeocodeMarker,
@@ -41,6 +42,7 @@ import FilePreviewCard from '@/components/FilePreviewCard';
 import { fetchRouteForPoints, type RoutePoint } from '@/services/offerRouteService';
 import { useWebSocket } from '@/context/WebSocketContext';
 import { chatApi } from '@/app-api/chatApi';
+import { eventBus, AppEvents } from '@/services/EventBus';
 
 const MAP_MAX_HEIGHT = Dimensions.get('window').height * 0.25;
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -384,12 +386,12 @@ function buildDriverAccountingEntry(
   };
 }
 
-function formatQuickPayFeePercent(raw: string): string {
+function formatQuickPayDriverCharge(raw: string): string {
   const s = raw.trim();
   if (!s) return '—';
   const n = Number(String(s).replace(/,/g, '').trim());
   if (!Number.isFinite(n)) return s;
-  return `${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function buildVisibleAccountingEntries(
@@ -629,29 +631,35 @@ export default function LoadDetailScreen() {
       return null;
     }
   }, [loadJson]);
+  const [loadData, setLoadData] = useState<YourLoadItem | null>(load);
+
+  useEffect(() => {
+    setLoadData(load);
+  }, [load]);
+
+  const loadIdForMap = loadData?.tms_load_id?.trim() || id?.trim() || '';
 
   // Removed debug logging for load payload
 
-  const title = load
-    ? [load.from_short_address, load.to_short_address]
+  const title = loadData
+    ? [loadData.from_short_address, loadData.to_short_address]
         .filter(Boolean)
         .map((address) => abbreviateStateInLocationString(address))
         .join(' -> ')
     : '';
-  const headerTitle = load ? (title || '—') : 'Load';
+  const headerTitle = loadData ? (title || '—') : 'Load';
 
   const routePoints = useMemo(() => {
-    if (!load) return [];
-    const pu = Array.isArray(load.pick_up_location) ? load.pick_up_location : [];
-    const del = Array.isArray(load.delivery_location) ? load.delivery_location : [];
+    if (!loadData) return [];
+    const pu = Array.isArray(loadData.pick_up_location) ? loadData.pick_up_location : [];
+    const del = Array.isArray(loadData.delivery_location) ? loadData.delivery_location : [];
     const points = [
       ...pu.map((p) => ({ ...p, type: normalizeStopType(p) || 'pick_up_location' })),
       ...del.map((p) => ({ ...p, type: normalizeStopType(p) || 'delivery_location' })),
     ];
     return points;
-  }, [load]);
+  }, [loadData]);
 
-  const loadIdForMap = load?.tms_load_id?.trim() || id?.trim() || '';
   const openLoadChat = async () => {
     if (!loadIdForMap || isOpeningLoadChat) return;
 
@@ -719,6 +727,25 @@ export default function LoadDetailScreen() {
       socket.off('driverTrackingPointCreated', handleTrackingPointCreated);
     };
   }, [isConnected, loadIdForMap, refetchLoadMap, socket]);
+
+  useEffect(() => {
+    if (!loadIdForMap) return;
+
+    const off = eventBus.on(
+      AppEvents.TmsLoadUpdated,
+      (payload: { loadId?: string }) => {
+        if (payload?.loadId?.trim() !== loadIdForMap) return;
+        fetchYourLoadById(loadIdForMap)
+          .then((fresh) => {
+            if (fresh) setLoadData(fresh);
+          })
+          .catch(() => {});
+        refetchLoadMap().catch(() => {});
+      },
+    );
+
+    return off;
+  }, [loadIdForMap, refetchLoadMap]);
 
   const pickupRoutePoint = useMemo(
     () => routePointFromGeocode(loadMapQuery.data?.routeGeocode?.pickup),
@@ -816,8 +843,8 @@ export default function LoadDetailScreen() {
   const currentDriverLongitude = Number(currentTrackingDriver?.longitude);
   const hasCurrentDriverCoordinates =
     Number.isFinite(currentDriverLatitude) && Number.isFinite(currentDriverLongitude);
-  const isDeliveredLoad = normalizeTrackingStatus(load?.load_status) === 'delivered';
-  const isLoadLoadedEnroute = normalizeTrackingStatus(load?.load_status) === 'loaded_enroute';
+  const isDeliveredLoad = normalizeTrackingStatus(loadData?.load_status) === 'delivered';
+  const isLoadLoadedEnroute = normalizeTrackingStatus(loadData?.load_status) === 'loaded_enroute';
   const isDriverLoadedEnroute =
     normalizeTrackingStatus(currentTrackingDriver?.driverStatus ?? null) === 'loaded_enroute';
   const showDriverLiveMarker =
@@ -965,11 +992,11 @@ export default function LoadDetailScreen() {
     [historyPolyline],
   );
   const routeLoading = loadMapQuery.isLoading || routeDataQuery.isLoading;
-  const loadStatusRaw = (load?.load_status ?? '').trim();
+  const loadStatusRaw = (loadData?.load_status ?? '').trim();
   const loadStatusLabel = loadStatusRaw ? labelForDriverLoadStatus(loadStatusRaw) : '';
   const statusBadge = badgeForStatus(loadStatusRaw);
 
-  const meta = (load?.raw?.meta_data ?? {}) as Record<string, unknown>;
+  const meta = (loadData?.raw?.meta_data ?? {}) as Record<string, unknown>;
   const contactName = cleanText(meta.contact_name);
   const contactPhone = cleanText(meta.contact_phone);
   const contactPhoneExt = cleanText(meta.contact_phone_ext);
@@ -987,7 +1014,7 @@ export default function LoadDetailScreen() {
   }, [loadTypeRaw]);
 
   const dateCreatedRaw =
-    cleanText(load?.raw?.date_created) || cleanText(meta.date_created);
+    cleanText(loadData?.raw?.date_created) || cleanText(meta.date_created);
   const dateBookedDisplay = useMemo(
     () => formatBookedDate(dateCreatedRaw),
     [dateCreatedRaw],
@@ -1030,8 +1057,8 @@ export default function LoadDetailScreen() {
   );
   const driverRateRaw =
     cleanText(meta.driver_rate) ||
-    (typeof load?.driver_rate === 'number' && Number.isFinite(load.driver_rate)
-      ? String(load.driver_rate)
+    (typeof loadData?.driver_rate === 'number' && Number.isFinite(loadData.driver_rate)
+      ? String(loadData.driver_rate)
       : '');
   const driverRateDisplay = useMemo(
     () => formatMoneyFromString(driverRateRaw),
@@ -1972,21 +1999,21 @@ export default function LoadDetailScreen() {
                       <Text style={styles.loadInfoSectionTitle}>{sectionTitle}</Text>
 
                       <View style={styles.loadInfoRow}>
-                        <Text style={styles.loadInfoLabel}>Bank payment status</Text>
+                        <Text style={styles.loadInfoLabel}>Bank status</Text>
                         <Text style={styles.loadInfoValue} numberOfLines={2}>
                           {entry.bankPaymentStatus || '—'}
                         </Text>
                       </View>
 
                       <View style={styles.loadInfoRow}>
-                        <Text style={styles.loadInfoLabel}>Pay status</Text>
+                        <Text style={styles.loadInfoLabel}>Payment status</Text>
                         <Text style={styles.loadInfoValue} numberOfLines={2}>
                           {entry.driverPayStatus || '—'}
                         </Text>
                       </View>
 
                       <View style={styles.loadInfoRow}>
-                        <Text style={styles.loadInfoLabel}>Quick pay</Text>
+                        <Text style={styles.loadInfoLabel}>Quick pay?</Text>
                         <Text style={styles.loadInfoValue} numberOfLines={2}>
                           {entry.quickPayEnabled ? 'Yes' : 'No'}
                         </Text>
@@ -2002,9 +2029,9 @@ export default function LoadDetailScreen() {
                           </View>
 
                           <View style={styles.loadInfoRow}>
-                            <Text style={styles.loadInfoLabel}>Quick pay fee</Text>
+                            <Text style={styles.loadInfoLabel}>Will charge the driver</Text>
                             <Text style={styles.loadInfoValue} numberOfLines={2}>
-                              {formatQuickPayFeePercent(entry.quickPayAmount)}
+                              {formatQuickPayDriverCharge(entry.quickPayAmount)}
                             </Text>
                           </View>
                         </>

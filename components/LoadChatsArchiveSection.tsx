@@ -24,6 +24,7 @@ import ChatListItem, { ChatRoom } from '@/components/ChatListItem';
 import { chatApi } from '@/app-api/chatApi';
 import { eventBus, AppEvents } from '@/services/EventBus';
 import { ARCHIVED_LOAD_CHATS_QUERY_KEY } from '@/components/loadArchivedChatsQueryKey';
+import { removeArchivedLoadChatFromCache } from '@/utils/removeArchivedLoadChatFromCache';
 import { chatRoomMatchesSearchQuery } from '@/utils/chatSearch';
 import { normalizeChatParticipants } from '@/utils/normalizeChatParticipants';
 
@@ -215,11 +216,18 @@ export default function LoadChatsArchiveSection({
   }, [displayRooms, mergeChatRooms]);
 
   useEffect(() => {
-    const off = eventBus.on(AppEvents.ArchivedLoadChatsNeedRefresh, () => {
-      void queryClient.invalidateQueries({
-        queryKey: [...ARCHIVED_LOAD_CHATS_QUERY_KEY],
-      });
-    });
+    const off = eventBus.on(
+      AppEvents.ArchivedLoadChatsNeedRefresh,
+      (payload?: { chatRoomId?: string; reactivated?: boolean }) => {
+        if (payload?.reactivated && payload.chatRoomId) {
+          removeArchivedLoadChatFromCache(queryClient, payload.chatRoomId);
+          return;
+        }
+        void queryClient.invalidateQueries({
+          queryKey: [...ARCHIVED_LOAD_CHATS_QUERY_KEY],
+        });
+      },
+    );
     return () => void off();
   }, [queryClient]);
 

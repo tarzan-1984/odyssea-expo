@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { colors, fonts, rem, fp } from '@/lib';
 import BottomNavigation from '@/components/navigation/BottomNavigation';
 import WorkTopMenu from '@/components/work/WorkTopMenu';
@@ -27,10 +27,12 @@ import {
   DEFAULT_DRIVER_LOAD_STATUS,
   type DriverLoadStatusValue,
 } from '@/constants/driverLoadStatuses';
+import { eventBus, AppEvents } from '@/services/EventBus';
 
 export default function LoadsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const { authState } = useAuth();
   const role = authState.user?.role?.trim().toUpperCase() ?? '';
   const canAccess = canAccessWorkTab(role);
@@ -95,6 +97,13 @@ export default function LoadsScreen() {
       setTab('your');
     }
   }, [isAdministrator, tab]);
+
+  useEffect(() => {
+    const off = eventBus.on(AppEvents.TmsLoadUpdated, () => {
+      queryClient.invalidateQueries({ queryKey: ['your-loads'] });
+    });
+    return off;
+  }, [queryClient]);
 
   const items = data?.pages?.flatMap((p) => p.items ?? []) ?? [];
 

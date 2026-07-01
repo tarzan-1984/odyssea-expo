@@ -582,7 +582,10 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         const mergedRoom = useChatStore.getState().chatRooms.find((r) => r.id === chatRoomId);
         if (mergedRoom?.type === 'LOAD') {
           const { eventBus, AppEvents } = await import('@/services/EventBus');
-          eventBus.emit(AppEvents.ArchivedLoadChatsNeedRefresh, { chatRoomId });
+          eventBus.emit(AppEvents.ArchivedLoadChatsNeedRefresh, {
+            chatRoomId,
+            reactivated: updatedChatRoom.isLoadArchived === false,
+          });
         }
       } catch (e) {
         console.error('Failed to handle chatRoomUpdated:', e);
@@ -803,6 +806,21 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           console.error('[WebSocket] Failed to apply driverProfileSync:', error);
         }
       }
+    );
+
+    newSocket.on(
+      'tmsLoadUpdated',
+      (data: { loadId?: string; project?: string; is_flt?: boolean }) => {
+        const loadId = data?.loadId?.trim();
+        if (!loadId) return;
+        import('@/services/EventBus').then(({ eventBus, AppEvents }) => {
+          eventBus.emit(AppEvents.TmsLoadUpdated, {
+            loadId,
+            project: data?.project,
+            is_flt: data?.is_flt,
+          });
+        });
+      },
     );
 
     // Handle participant removed from chat room
