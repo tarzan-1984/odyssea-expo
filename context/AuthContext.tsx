@@ -243,6 +243,54 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           );
         }
         
+        const {
+          beginLoginDeviceReactivation,
+          endLoginDeviceReactivation,
+        } = await import('@/utils/forceDeviceLogout');
+        beginLoginDeviceReactivation();
+        try {
+        // Re-activate device before persisting session tokens (other hooks read storage and sync settings).
+        let pushTokenForDeviceSnapshot: string | null = null;
+        try {
+          console.log('[AuthContext] Registering push token after login...');
+
+          const existingToken = await secureStorage.getItemAsync('expoPushToken').catch(() => null);
+          let pushToken = existingToken;
+
+          if (!pushToken) {
+            pushToken = await registerForPushNotificationsAsync();
+            if (pushToken) {
+              await secureStorage.setItemAsync('expoPushToken', pushToken).catch(() => {});
+              console.log('[AuthContext] ✅ Push token saved to secureStorage');
+            }
+          } else {
+            console.log('[AuthContext] Push token already exists in secureStorage');
+          }
+
+          pushTokenForDeviceSnapshot = pushToken ?? null;
+
+          if (pushToken) {
+            await registerPushTokenToBackend(pushToken, accessToken);
+          } else {
+            console.warn('[AuthContext] Failed to get push token, will retry on app start');
+          }
+        } catch (pushError) {
+          console.error('[AuthContext] Error registering push token after login:', pushError);
+        }
+
+        if (user?.externalId) {
+          await registerMobileDeviceAfterLogin(accessToken, {
+            pushToken: pushTokenForDeviceSnapshot,
+          });
+        } else {
+          console.warn(
+            '[AuthContext] Skipping mobile device registration: no externalId',
+          );
+        }
+        } finally {
+          endLoginDeviceReactivation();
+        }
+
         // Save tokens to secure storage
         try {
           await secureStorage.setItemAsync('refreshToken', refreshToken);
@@ -425,50 +473,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             console.error('❌ [AuthContext] Error requesting notification permissions:', notificationError);
           }
         }, 300); // Small delay to ensure UI is ready
-
-        // Register push token after successful authentication
-        let pushTokenForDeviceSnapshot: string | null = null;
-        try {
-          console.log('[AuthContext] Registering push token after login...');
-          
-          // Check if token already exists
-          const existingToken = await secureStorage.getItemAsync("expoPushToken").catch(() => null);
-          let pushToken = existingToken;
-
-          // Get new token if doesn't exist
-          if (!pushToken) {
-            pushToken = await registerForPushNotificationsAsync();
-            if (pushToken) {
-              // Save token to secureStorage
-              await secureStorage.setItemAsync("expoPushToken", pushToken).catch(() => {});
-              console.log('[AuthContext] ✅ Push token saved to secureStorage');
-            }
-          } else {
-            console.log('[AuthContext] Push token already exists in secureStorage');
-          }
-
-          pushTokenForDeviceSnapshot = pushToken ?? null;
-
-          // Register token on backend
-          if (pushToken) {
-            await registerPushTokenToBackend(pushToken, accessToken);
-          } else {
-            console.warn('[AuthContext] Failed to get push token, will retry on app start');
-          }
-        } catch (pushError) {
-          console.error('[AuthContext] Error registering push token after login:', pushError);
-          // Don't fail authentication if push token registration fails
-        }
-
-        if (user?.externalId) {
-          void registerMobileDeviceAfterLogin(accessToken, {
-            pushToken: pushTokenForDeviceSnapshot,
-          });
-        } else {
-          console.warn(
-            '[AuthContext] Skipping mobile device registration: no externalId',
-          );
-        }
       } else {
         console.warn('⚠️ [AuthContext] OTP verification failed:', result.error || 'Unknown error');
         
@@ -881,6 +885,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   useLayoutEffect(() => {
     resetAuthStateRef.current = resetAuthState;
   }, [resetAuthState]);
+
+  useEffect(() => {
+    const { eventBus, AppEvents } = require('@/services/EventBus');
+    return eventBus.on(AppEvents.ForceLogout, () => {
+      console.log('🔒 [AuthContext] Force logout requested');
+      void resetAuthStateRef.current?.();
+    });
+  }, []);
 
   // Proactive JWT refresh when app becomes active (all roles); uses storage to avoid stale closures.
   useEffect(() => {

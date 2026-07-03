@@ -6,6 +6,7 @@ import * as Application from 'expo-application';
 import LogsSettings from '@/components/settings/LogsSettings';
 import NotificationToggleSettings from '@/components/settings/NotificationToggleSettings';
 import ChatCacheSettings from '@/components/settings/ChatCacheSettings';
+import UserDevicesSettings from '@/components/settings/UserDevicesSettings';
 import WebSocketConnectionSettings from '@/components/settings/WebSocketConnectionSettings';
 import BottomNavigation, { BOTTOM_NAV_SCROLL_PADDING } from '@/components/navigation/BottomNavigation';
 import { colors } from '@/lib/colors';
@@ -37,6 +38,7 @@ export default function SettingsScreen() {
                 Version {appVersion} ({buildNumber})
               </Text>
               <NotificationToggleSettings />
+              <UserDevicesSettings />
               <View style={styles.sectionCard}>
                 <View style={styles.sectionHeaderRow}>
                   <Text style={styles.sectionTitle}>Password</Text>

@@ -150,6 +150,14 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       return;
     }
 
+    let stableDeviceId: string | null = null;
+    try {
+      const { resolveStableDeviceId } = await import('@/utils/mobileDeviceIdentity');
+      stableDeviceId = await resolveStableDeviceId();
+    } catch {
+      stableDeviceId = null;
+    }
+
     // Validate WebSocket URL
     if (!WS_URL) {
       console.error('❌ [WebSocket] WS_URL is not defined');
@@ -172,11 +180,17 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         void proactiveRefreshFromSecureStorage()
           .then(async () => {
             const freshToken = await getAuthToken();
-            cb({ token: freshToken || '' });
+            cb({
+              token: freshToken || '',
+              deviceId: stableDeviceId || '',
+            });
           })
           .catch(async () => {
             const freshToken = await getAuthToken();
-            cb({ token: freshToken || '' });
+            cb({
+              token: freshToken || '',
+              deviceId: stableDeviceId || '',
+            });
           });
       },
       transports: ['websocket', 'polling'],
@@ -221,6 +235,12 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       // So we should receive userOnline events for other participants
     });
 
+    newSocket.on('deviceDeactivated', async () => {
+      console.log('[WebSocket] deviceDeactivated received — logging out');
+      const { emitForceDeviceLogout } = await import('@/utils/forceDeviceLogout');
+      emitForceDeviceLogout('device_removed');
+    });
+
     // Global app_settings changed (mobile throttling + live/test mode). Re-fetch and apply locally.
     newSocket.on('appLocationSettingsUpdated', async () => {
       try {
@@ -237,7 +257,10 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       void proactiveRefreshFromSecureStorage().then(async () => {
         const freshToken = await getAuthToken();
         if (freshToken) {
-          newSocket.auth = { token: freshToken };
+          newSocket.auth = {
+            token: freshToken,
+            deviceId: stableDeviceId || '',
+          };
         }
       });
     });
@@ -717,7 +740,6 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       }
     });
 
-    // Driver status delta (includes isAutoupdate so UI matches DB without waiting for AppState active).
     newSocket.on(
       'driverStatusUpdate',
       async (data: {

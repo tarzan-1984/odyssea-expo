@@ -39,4 +39,6 @@ export const AppEvents = {
   AppUpdateCheckRequested: 'APP_UPDATE_CHECK_REQUESTED',
   /** TMS load data changed (POST /v1/tms/load/update webhook). */
   TmsLoadUpdated: 'TMS_LOAD_UPDATED',
+  /** Session must end (e.g. device removed from account on another phone). */
+  ForceLogout: 'FORCE_LOGOUT',
 } as const;

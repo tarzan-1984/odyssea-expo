@@ -123,10 +123,24 @@ export async function fetchAppLocationSettingsFromBackend(
         Authorization: `Bearer ${accessToken}`,
       },
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      const t = await response.text().catch(() => '');
+      const { isDeviceDeactivatedApiError, emitForceDeviceLogout } = await import(
+        '@/utils/forceDeviceLogout'
+      );
+      if (isDeviceDeactivatedApiError(response.status, t)) {
+        emitForceDeviceLogout('device_deactivated');
+      }
+      return null;
+    }
     const data = await response.json();
     const body = data.data ?? data;
     if (!body || typeof body !== 'object') return null;
+    if (body.forceDeviceLogout === true) {
+      const { emitForceDeviceLogout } = await import('@/utils/forceDeviceLogout');
+      emitForceDeviceLogout('device_deactivated');
+      return null;
+    }
     const interval = body.locationMinIntervalMs;
     const distance = body.locationMinDistanceM;
     const revGeoRaw = body.reverseGeocodeMinDistanceM;
