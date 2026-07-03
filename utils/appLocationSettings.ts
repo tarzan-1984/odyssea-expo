@@ -125,11 +125,16 @@ export async function fetchAppLocationSettingsFromBackend(
     });
     if (!response.ok) {
       const t = await response.text().catch(() => '');
-      const { isDeviceDeactivatedApiError, emitForceDeviceLogout } = await import(
-        '@/utils/forceDeviceLogout'
-      );
-      if (isDeviceDeactivatedApiError(response.status, t)) {
-        emitForceDeviceLogout('device_deactivated');
+      const {
+        isDeviceDeactivatedApiError,
+        isDeviceBlockedApiError,
+        emitForceDeviceLogout,
+      } = await import('@/utils/forceDeviceLogout');
+      if (
+        isDeviceDeactivatedApiError(response.status, t) ||
+        isDeviceBlockedApiError(response.status, t)
+      ) {
+        emitForceDeviceLogout('device_blocked');
       }
       return null;
     }

@@ -79,9 +79,20 @@ async function submitMobileDeviceSnapshot(
 
 		if (!res.ok) {
 			const t = await res.text().catch(() => '');
-			const { isDeviceDeactivatedApiError, emitForceDeviceLogout } = await import(
-				'@/utils/forceDeviceLogout'
-			);
+			const {
+				isDeviceDeactivatedApiError,
+				isDeviceBlockedApiError,
+				emitForceDeviceLogout,
+				DeviceBlockedError,
+				parseDeviceBlockedMessage,
+			} = await import('@/utils/forceDeviceLogout');
+			if (isDeviceBlockedApiError(res.status, t)) {
+				if (extra?.reactivate === true) {
+					throw new DeviceBlockedError(parseDeviceBlockedMessage(t));
+				}
+				emitForceDeviceLogout('device_blocked');
+				return false;
+			}
 			if (isDeviceDeactivatedApiError(res.status, t)) {
 				emitForceDeviceLogout('device_deactivated');
 				return false;

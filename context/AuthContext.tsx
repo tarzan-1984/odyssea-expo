@@ -287,6 +287,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             '[AuthContext] Skipping mobile device registration: no externalId',
           );
         }
+        } catch (loginDeviceError) {
+          const { DeviceBlockedError } = await import('@/utils/forceDeviceLogout');
+          if (loginDeviceError instanceof DeviceBlockedError) {
+            setAuthState((prev) => ({
+              ...prev,
+              isLoading: false,
+              error: loginDeviceError.message,
+            }));
+            return {
+              success: false,
+              error: loginDeviceError.message,
+            };
+          }
+          throw loginDeviceError;
         } finally {
           endLoginDeviceReactivation();
         }
