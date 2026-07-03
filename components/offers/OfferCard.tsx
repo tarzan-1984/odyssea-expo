@@ -12,8 +12,9 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { canShowOfferId } from '@/utils/offerDisplay';
 import OfferBidExpiredIcon from '@/icons/OfferBidExpiredIcon';
-import OfferUpdatedIcon from '@/icons/OfferUpdatedIcon';
 import Swipeable from 'react-native-gesture-handler/Swipeable';
+import { formatRatePerMile, resolveOfferTotalMiles } from '@/utils/ratePerMile';
+import OfferUpdatedNotice from '@/components/offers/OfferUpdatedNotice';
 
 function hasHazmat(specialRequirements: unknown): boolean {
   if (!specialRequirements) return false;
@@ -116,6 +117,12 @@ export default function OfferCard({
   const showOfferedRatePreview = Boolean(
     isDriver && offerListTab !== 'assigned' && offeredRateLabel,
   );
+  const offerTotalMiles = resolveOfferTotalMiles(
+    offer.loaded_miles,
+    offerDriver?.empty_miles,
+    offerDriver?.total_miles,
+  );
+  const offeredRatePerMileLabel = formatRatePerMile(offer.offered_rate, offerTotalMiles);
   const showDriverRatePreview = Boolean(
     isDriver && offerListTab === 'assigned' && driverRateLabel,
   );
@@ -153,6 +160,30 @@ export default function OfferCard({
   );
   const canSwipe = canSwipeToDecline || canSwipeToDeactivate;
 
+  const titleText = (
+    <Text style={styles.title} numberOfLines={2}>
+      {title}
+      {showOfferId ? ` (id: ${offer.id})` : ''}
+    </Text>
+  );
+
+  const hazmatIcon = showHazmat ? (
+    <View style={styles.hazmatIconWrap}>
+      {!isHazmatImageReady ? <View style={styles.hazmatPlaceholder} /> : null}
+      <Image
+        source={require('@/icons/hazmat.png')}
+        style={[styles.hazmatIcon, !isHazmatImageReady && styles.hiddenImage]}
+        contentFit="contain"
+        cachePolicy="memory-disk"
+        transition={0}
+        onLoad={() => setIsHazmatImageReady(true)}
+        onError={() => setIsHazmatImageReady(true)}
+      />
+    </View>
+  ) : null;
+
+  const showMainPreviewRow = !isInactiveForDriver && !isSelectedForDriver;
+
   const cardContent = (
     <TouchableOpacity
       style={[styles.card, cardStyle]}
@@ -160,26 +191,78 @@ export default function OfferCard({
       activeOpacity={canNavigate ? 0.7 : 1}
       disabled={!canNavigate || isDeclining}
     >
-      <View style={styles.titleRow}>
-        <Text style={styles.title} numberOfLines={2}>
-          {title}
-          {showOfferId ? ` (id: ${offer.id})` : ''}
-        </Text>
-        {showHazmat && (
-          <View style={styles.hazmatIconWrap}>
-            {!isHazmatImageReady ? <View style={styles.hazmatPlaceholder} /> : null}
-            <Image
-              source={require('@/icons/hazmat.png')}
-              style={[styles.hazmatIcon, !isHazmatImageReady && styles.hiddenImage]}
-              contentFit="contain"
-              cachePolicy="memory-disk"
-              transition={0}
-              onLoad={() => setIsHazmatImageReady(true)}
-              onError={() => setIsHazmatImageReady(true)}
-            />
+      {showMainPreviewRow ? (
+        <>
+          <View style={styles.titleRow}>
+            {titleText}
+            {hazmatIcon}
           </View>
-        )}
-      </View>
+
+          {showOfferedRatePreview ||
+          showDriverRatePreview ||
+          loadedMilesLabel != null ||
+          hasSubmittedRate ? (
+            <>
+              {showOfferedRatePreview || showDriverRatePreview ? (
+                <View style={styles.metaRow}>
+                  <View style={styles.metaLeft} />
+                  <View style={styles.metaRight}>
+                    {showOfferedRatePreview ? (
+                      <Text style={[styles.rateMeta, styles.offeredRateMeta]} numberOfLines={1}>
+                        Offered rate: {offeredRateLabel}
+                      </Text>
+                    ) : null}
+                    {showDriverRatePreview ? (
+                      <Text style={styles.rateMeta} numberOfLines={1}>
+                        Driver rate: {driverRateLabel}
+                      </Text>
+                    ) : null}
+                  </View>
+                </View>
+              ) : null}
+
+              {(loadedMilesLabel != null || (offeredRatePerMileLabel && showOfferedRatePreview)) ? (
+                <View style={styles.metaRow}>
+                  {loadedMilesLabel != null ? (
+                    <Text style={[styles.meta, styles.metaLeft]} numberOfLines={1}>
+                      Loaded: {loadedMilesLabel} mi
+                    </Text>
+                  ) : (
+                    <View style={styles.metaLeft} />
+                  )}
+                  {offeredRatePerMileLabel && showOfferedRatePreview ? (
+                    <Text style={[styles.rateMeta, styles.metaRightText]} numberOfLines={1}>
+                      Offered rate per mile: {offeredRatePerMileLabel}
+                    </Text>
+                  ) : (
+                    <View style={styles.metaRight} />
+                  )}
+                </View>
+              ) : null}
+
+              {hasSubmittedRate ? (
+                <View style={styles.metaRow}>
+                  <View style={styles.metaLeft} />
+                  <View style={styles.metaRight}>
+                    {!isBidExpired ? (
+                      <View style={styles.timerBadge}>
+                        <Text style={styles.timerText}>{formatCountdown(remainingSeconds)}</Text>
+                      </View>
+                    ) : (
+                      <OfferBidExpiredIcon width={34} height={28} />
+                    )}
+                  </View>
+                </View>
+              ) : null}
+            </>
+          ) : null}
+        </>
+      ) : (
+        <View style={styles.titleRow}>
+          {titleText}
+          {hazmatIcon}
+        </View>
+      )}
 
       {isInactiveForDriver ? (
         <View style={styles.unavailableBlock}>
@@ -209,40 +292,7 @@ export default function OfferCard({
         </View>
       ) : null}
 
-      {showOfferedRatePreview ? (
-        <Text style={styles.rateMeta}>Offered rate: {offeredRateLabel}</Text>
-      ) : null}
-
-      {showDriverRatePreview ? (
-        <Text style={styles.rateMeta}>Driver rate: {driverRateLabel}</Text>
-      ) : null}
-
-      {((loadedMilesLabel != null && !isSelectedForDriver) ||
-        (hasSubmittedRate && !isSelectedForDriver)) &&
-      !isInactiveForDriver && (
-        <View style={styles.loadedRow}>
-          <Text style={styles.meta}>
-            {loadedMilesLabel != null && !isSelectedForDriver ? `Loaded: ${loadedMilesLabel} mi` : ''}
-          </Text>
-          {hasSubmittedRate && !isBidExpired && !isSelectedForDriver ? (
-            <View style={styles.timerBadge}>
-              <Text style={styles.timerText}>{formatCountdown(remainingSeconds)}</Text>
-            </View>
-          ) : null}
-          {isBidExpired && !isSelectedForDriver ? (
-            <OfferBidExpiredIcon width={34} height={28} />
-          ) : null}
-        </View>
-      )}
-
-      {showOfferUpdatedNotice ? (
-        <View style={styles.updatedNoticeRow}>
-          <OfferUpdatedIcon width={rem(18)} height={rem(18)} color={colors.primary.blue} />
-          <Text style={styles.updatedNoticeText}>
-            This offer has been updated. Please review the changes
-          </Text>
-        </View>
-      ) : null}
+      {showOfferUpdatedNotice ? <OfferUpdatedNotice /> : null}
 
       {showParticipationLimitOverlay ? (
         <View style={styles.participationLimitOverlay} pointerEvents="auto">
@@ -341,12 +391,33 @@ const styles = StyleSheet.create({
     borderColor: colors.semantic.success,
     backgroundColor: '#ECFDF3',
   },
+  metaRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: rem(8),
+    marginTop: rem(6),
+  },
+  metaLeft: {
+    flex: 1,
+    flexShrink: 1,
+    minWidth: 0,
+  },
+  metaRight: {
+    flex: 1,
+    minWidth: 0,
+    maxWidth: '48%',
+    alignItems: 'flex-end',
+  },
+  metaRightText: {
+    flexShrink: 0,
+    textAlign: 'right',
+  },
   titleRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: rem(8),
-    marginBottom: rem(6),
   },
   title: {
     flex: 1,
@@ -432,23 +503,19 @@ const styles = StyleSheet.create({
     fontFamily: fonts['600'],
     color: '#166534',
   },
-  loadedRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: rem(8),
-    marginTop: rem(4),
-  },
   meta: {
     fontSize: fp(13),
     fontFamily: fonts['400'],
     color: colors.neutral.darkGrey,
   },
   rateMeta: {
-    marginTop: rem(4),
     fontSize: fp(13),
     fontFamily: fonts['600'],
     color: colors.neutral.black,
+    textAlign: 'right',
+  },
+  offeredRateMeta: {
+    color: colors.primary.offeredRate,
   },
   timerBadge: {
     minWidth: rem(88),
@@ -463,22 +530,6 @@ const styles = StyleSheet.create({
     fontSize: fp(15),
     fontFamily: fonts['700'],
     color: colors.neutral.white,
-  },
-  updatedNoticeRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: rem(8),
-    marginTop: rem(10),
-    paddingTop: rem(10),
-    borderTopWidth: 1,
-    borderTopColor: colors.neutral.lightGrey,
-  },
-  updatedNoticeText: {
-    flex: 1,
-    fontSize: fp(13),
-    fontFamily: fonts['500'],
-    color: colors.neutral.darkGrey,
-    lineHeight: fp(18),
   },
   participationLimitOverlay: {
     ...StyleSheet.absoluteFillObject,

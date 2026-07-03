@@ -128,8 +128,9 @@ export default function MessageItem({
 		[isSender, message, chatType]
 	);
 	const canDeleteMessage =
-		normalizedCurrentUserRole === 'ADMINISTRATOR' &&
-		!isOptimisticMessageId(message.id);
+		['ADMINISTRATOR', 'TRACKING_TL', 'HR_MANAGER', 'EXPEDITE_MANAGER'].includes(
+			normalizedCurrentUserRole,
+		) && !isOptimisticMessageId(message.id);
 	const canEditMessage =
 		isSender &&
 		!isOptimisticMessageId(message.id) &&

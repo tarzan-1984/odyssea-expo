@@ -3,7 +3,7 @@
  * Used for displaying route on map.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { geocodeAsync } from '@/utils/geocoding';
+import { geocodeOfferAddressCoordinates } from '@/utils/offerLocationGeocode';
 
 export interface RoutePoint {
   latitude: number;
@@ -104,7 +104,7 @@ async function writeCache<T>(key: string, value: T): Promise<void> {
 }
 
 /**
- * Geocode address to coordinates (add USA if not present)
+ * Geocode address to coordinates (US / Canada / Mexico — same as Create Offer).
  */
 async function geocodeAddress(address: string): Promise<RoutePoint | null> {
   const trimmed = (address || '').trim();
@@ -113,43 +113,14 @@ async function geocodeAddress(address: string): Promise<RoutePoint | null> {
   const cached = await readCache(geocodeCacheKey(trimmed), GEOCODE_CACHE_TTL_MS, isRoutePoint);
   if (cached) return cached;
 
-  const candidates = buildGeocodeCandidates(trimmed);
-  for (const c of candidates) {
-    const query = c.includes('USA') ? c : `${c}, USA`;
-    const result = await geocodeAsync(query, 'us');
-    if (result) {
-      const point = { latitude: result.latitude, longitude: result.longitude };
-      await writeCache(geocodeCacheKey(trimmed), point);
-      return point;
-    }
+  const result = await geocodeOfferAddressCoordinates(trimmed);
+  if (result) {
+    const point = { latitude: result.lat, longitude: result.lon };
+    await writeCache(geocodeCacheKey(trimmed), point);
+    return point;
   }
+
   return null;
-}
-
-function buildGeocodeCandidates(address: string): string[] {
-  const a = (address || '').trim();
-  if (!a) return [];
-  const out: string[] = [];
-  const push = (s: string) => {
-    const v = (s || '').trim().replace(/\s+/g, ' ');
-    if (v && !out.includes(v)) out.push(v);
-  };
-
-  // Full address first
-  push(a);
-
-  // Remove common "Doors X-Y" / suite-ish fragments that Nominatim sometimes rejects
-  push(a.replace(/\bDoors?\s+[0-9A-Za-z-]+\b,?/gi, '').replace(/\s+,/g, ','));
-
-  // City, ST ZIP fallback (very reliable)
-  const cityStateZip = a.match(/,\s*([^,]+,\s*[A-Z]{2}\s*\d{5}(?:-\d{4})?)\s*$/);
-  if (cityStateZip?.[1]) push(cityStateZip[1]);
-
-  // ZIP-only fallback
-  const zip = a.match(/\b(\d{5}(?:-\d{4})?)\b/);
-  if (zip?.[1]) push(zip[1]);
-
-  return out;
 }
 
 /**

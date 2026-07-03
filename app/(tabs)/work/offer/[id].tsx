@@ -38,6 +38,7 @@ import {
 import PhoneAppStatusActiveIcon from '@/icons/PhoneAppStatusActiveIcon';
 import PhoneAppStatusInactiveIcon from '@/icons/PhoneAppStatusInactiveIcon';
 import DeactivateOfferIcon from '@/icons/DeactivateOfferIcon';
+import OfferUpdatedNotice from '@/components/offers/OfferUpdatedNotice';
 import ExtendBidTimeIcon from '@/icons/ExtendBidTimeIcon';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { DRIVER_PARTICIPATION_COUNT_QUERY_KEY } from '@/hooks/useDriverParticipationCount';
@@ -50,6 +51,7 @@ import { abbreviateStateInLocationString } from '@/utils/formatDriverLocation';
 import { formatOfferRouteTimeForDriver } from '@/utils/offerDateTimeDisplay';
 import SpecialRequirementsList from '@/components/offers/SpecialRequirementsList';
 import { parseSpecialRequirements } from '@/icons/specialRequirements';
+import { formatRatePerMile, resolveOfferTotalMiles } from '@/utils/ratePerMile';
 
 const MAP_MAX_HEIGHT = Dimensions.get('window').height * 0.25;
 const DRIVER_TABLE_VISIBLE_ROWS = 20;
@@ -347,6 +349,7 @@ export default function OfferDetailScreen() {
   const hasSubmittedRate = hasDriverRate(driverRate);
   const isBidExpired = hasSubmittedRate && remainingSeconds <= 0;
   const isDeclineBlockedByActiveBidTimer = hasSubmittedRate && remainingSeconds > 0;
+  const showOfferUpdatedNotice = Boolean(offer?.update_date?.trim());
 
   useEffect(() => {
     if (!hasSubmittedRate) {
@@ -406,6 +409,12 @@ export default function OfferDetailScreen() {
   );
   const showRouteLoading = routeLoading && !routePreviewData;
   const showHazmatBanner = hasHazmatRequirement(offer?.special_requirements);
+  const offerTotalMiles = resolveOfferTotalMiles(
+    offer?.loaded_miles,
+    offerDriver?.empty_miles,
+    offerDriver?.total_miles,
+  );
+  const offeredRatePerMileDisplay = formatRatePerMile(offer?.offered_rate, offerTotalMiles);
 
   const headerTitle = offer ? (routeSummary(offer.route) || '—') : 'Offer';
 
@@ -511,47 +520,55 @@ export default function OfferDetailScreen() {
               </View>
 
               {isStaffOrAdmin && offer?.active !== false ? (
-                <TouchableOpacity
-                  style={[
-                    styles.deactivateOfferButton,
-                    isDeactivatingOffer && styles.deactivateOfferButtonDisabled,
-                  ]}
-                  onPress={() => {
-                    Alert.alert(
-                      'Deactivate offer',
-                      'Are you sure you want to deactivate this offer?',
-                      [
-                        { text: 'Cancel', style: 'cancel' },
-                        {
-                          text: 'Deactivate',
-                          style: 'destructive',
-                          onPress: async () => {
-                            if (!offer) return;
-                            try {
-                              setIsDeactivatingOffer(true);
-                              await deactivateOffer(offer.id);
-                              await queryClient.invalidateQueries({ queryKey: ['offers'] });
-                              await queryClient.invalidateQueries({
-                                queryKey: ['offer-detail', offer.id],
-                              });
-                              router.replace('/work');
-                            } catch (err) {
-                              console.error('[OfferDetailScreen] Failed to deactivate offer', err);
-                              Alert.alert('Error', 'Failed to deactivate offer. Please try again.');
-                            } finally {
-                              setIsDeactivatingOffer(false);
-                            }
+                <>
+                  <TouchableOpacity
+                    style={[
+                      styles.deactivateOfferButton,
+                      isDeactivatingOffer && styles.deactivateOfferButtonDisabled,
+                    ]}
+                    onPress={() => {
+                      Alert.alert(
+                        'Deactivate offer',
+                        'Are you sure you want to deactivate this offer?',
+                        [
+                          { text: 'Cancel', style: 'cancel' },
+                          {
+                            text: 'Deactivate',
+                            style: 'destructive',
+                            onPress: async () => {
+                              if (!offer) return;
+                              try {
+                                setIsDeactivatingOffer(true);
+                                await deactivateOffer(offer.id);
+                                await queryClient.invalidateQueries({ queryKey: ['offers'] });
+                                await queryClient.invalidateQueries({
+                                  queryKey: ['offer-detail', offer.id],
+                                });
+                                router.replace('/work');
+                              } catch (err) {
+                                console.error('[OfferDetailScreen] Failed to deactivate offer', err);
+                                Alert.alert('Error', 'Failed to deactivate offer. Please try again.');
+                              } finally {
+                                setIsDeactivatingOffer(false);
+                              }
+                            },
                           },
-                        },
-                      ]
-                    );
-                  }}
-                  activeOpacity={0.7}
-                  disabled={isDeactivatingOffer}
-                >
-                  <Text style={styles.deactivateOfferButtonText}>Deactivate offer</Text>
-                  <DeactivateOfferIcon width={fp(20)} height={fp(20)} />
-                </TouchableOpacity>
+                        ]
+                      );
+                    }}
+                    activeOpacity={0.7}
+                    disabled={isDeactivatingOffer}
+                  >
+                    <Text style={styles.deactivateOfferButtonText}>Deactivate offer</Text>
+                    <DeactivateOfferIcon width={fp(20)} height={fp(20)} />
+                  </TouchableOpacity>
+                  {showOfferUpdatedNotice ? (
+                    <OfferUpdatedNotice
+                      bordered={false}
+                      style={styles.offerUpdatedNoticeAfterAction}
+                    />
+                  ) : null}
+                </>
               ) : !isSelectedOfferDriver && isDriver ? (
                 <TouchableOpacity
                   style={[
@@ -596,60 +613,68 @@ export default function OfferDetailScreen() {
               ) : null}
 
               {canDeclineOffer ? (
-                <TouchableOpacity
-                  style={[
-                    styles.declineOfferButton,
-                    isDeclineBlockedByActiveBidTimer && styles.declineOfferButtonBlocked,
-                    isDecliningOffer && styles.declineOfferButtonDisabled,
-                  ]}
-                  activeOpacity={isDeclineBlockedByActiveBidTimer ? 1 : 0.75}
-                  disabled={isDecliningOffer || isDeclineBlockedByActiveBidTimer}
-                  onPress={() => {
-                    if (isDeclineBlockedByActiveBidTimer) return;
-
-                    Alert.alert(
-                      'Decline offer',
-                      'Are you sure you want to decline this offer?',
-                      [
-                        { text: 'Cancel', style: 'cancel' },
-                        {
-                          text: 'Decline',
-                          style: 'destructive',
-                          onPress: async () => {
-                            if (!offer || !driverExternalId) return;
-
-                            try {
-                              setIsDecliningOffer(true);
-                              await removeDriverFromOfferDriver(offer.id, driverExternalId);
-                              await queryClient.invalidateQueries({ queryKey: ['offers'] });
-                              await queryClient.invalidateQueries({
-                                queryKey: ['offer-detail', offer.id],
-                              });
-                              await queryClient.invalidateQueries({
-                                queryKey: DRIVER_PARTICIPATION_COUNT_QUERY_KEY,
-                              });
-                              router.replace('/work');
-                            } catch (declineError) {
-                              console.error('[OfferDetailScreen] Failed to decline offer', declineError);
-                              Alert.alert('Error', 'Failed to decline offer. Please try again.');
-                            } finally {
-                              setIsDecliningOffer(false);
-                            }
-                          },
-                        },
-                      ]
-                    );
-                  }}
-                >
-                  <Text
+                <>
+                  <TouchableOpacity
                     style={[
-                      styles.declineOfferButtonText,
-                      isDeclineBlockedByActiveBidTimer && styles.declineOfferButtonTextBlocked,
+                      styles.declineOfferButton,
+                      isDeclineBlockedByActiveBidTimer && styles.declineOfferButtonBlocked,
+                      isDecliningOffer && styles.declineOfferButtonDisabled,
                     ]}
+                    activeOpacity={isDeclineBlockedByActiveBidTimer ? 1 : 0.75}
+                    disabled={isDecliningOffer || isDeclineBlockedByActiveBidTimer}
+                    onPress={() => {
+                      if (isDeclineBlockedByActiveBidTimer) return;
+
+                      Alert.alert(
+                        'Decline offer',
+                        'Are you sure you want to decline this offer?',
+                        [
+                          { text: 'Cancel', style: 'cancel' },
+                          {
+                            text: 'Decline',
+                            style: 'destructive',
+                            onPress: async () => {
+                              if (!offer || !driverExternalId) return;
+
+                              try {
+                                setIsDecliningOffer(true);
+                                await removeDriverFromOfferDriver(offer.id, driverExternalId);
+                                await queryClient.invalidateQueries({ queryKey: ['offers'] });
+                                await queryClient.invalidateQueries({
+                                  queryKey: ['offer-detail', offer.id],
+                                });
+                                await queryClient.invalidateQueries({
+                                  queryKey: DRIVER_PARTICIPATION_COUNT_QUERY_KEY,
+                                });
+                                router.replace('/work');
+                              } catch (declineError) {
+                                console.error('[OfferDetailScreen] Failed to decline offer', declineError);
+                                Alert.alert('Error', 'Failed to decline offer. Please try again.');
+                              } finally {
+                                setIsDecliningOffer(false);
+                              }
+                            },
+                          },
+                        ]
+                      );
+                    }}
                   >
-                    {isDecliningOffer ? 'Declining…' : 'Decline Offer'}
-                  </Text>
-                </TouchableOpacity>
+                    <Text
+                      style={[
+                        styles.declineOfferButtonText,
+                        isDeclineBlockedByActiveBidTimer && styles.declineOfferButtonTextBlocked,
+                      ]}
+                    >
+                      {isDecliningOffer ? 'Declining…' : 'Decline Offer'}
+                    </Text>
+                  </TouchableOpacity>
+                  {showOfferUpdatedNotice ? (
+                    <OfferUpdatedNotice
+                      bordered={false}
+                      style={styles.offerUpdatedNoticeAfterAction}
+                    />
+                  ) : null}
+                </>
               ) : null}
 
               {isDriver && hasSubmittedRate && !isSelectedOfferDriver ? (
@@ -964,6 +989,14 @@ export default function OfferDetailScreen() {
                   <Text style={styles.offeredRateValue}>
                     ${Number(offer.offered_rate).toLocaleString('en-US')}
                   </Text>
+                  {offeredRatePerMileDisplay ? (
+                    <>
+                      <Text style={styles.offeredRatePerMileTitle}>Offered rate per mile</Text>
+                      <Text style={styles.offeredRatePerMileValue}>
+                        {offeredRatePerMileDisplay}
+                      </Text>
+                    </>
+                  ) : null}
                 </View>
               ) : null}
 
@@ -983,7 +1016,7 @@ export default function OfferDetailScreen() {
                       {formatOfferMiles(offer.loaded_miles)}
                     </Text>
                     <Text style={[styles.distanceTableValue, styles.distanceTableValueBold]}>
-                      {formatOfferMiles(offerDriver?.total_miles)}
+                      {formatOfferMiles(offerTotalMiles)}
                     </Text>
                   </View>
                 </View>
@@ -1255,6 +1288,10 @@ const styles = StyleSheet.create({
   },
   declineOfferButtonTextBlocked: {
     color: colors.neutral.darkGrey,
+  },
+  offerUpdatedNoticeAfterAction: {
+    marginHorizontal: rem(20),
+    marginTop: rem(12),
   },
   createRateButton: {
     ...typography.buttonGreen,
@@ -1572,6 +1609,18 @@ const styles = StyleSheet.create({
   },
   offeredRateValue: {
     fontSize: fp(18),
+    fontFamily: fonts['700'],
+    color: '#166534',
+  },
+  offeredRatePerMileTitle: {
+    marginTop: rem(10),
+    fontSize: fp(13),
+    fontFamily: fonts['600'],
+    color: colors.neutral.darkGrey,
+  },
+  offeredRatePerMileValue: {
+    marginTop: rem(4),
+    fontSize: fp(16),
     fontFamily: fonts['700'],
     color: '#166534',
   },

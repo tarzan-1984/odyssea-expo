@@ -26,6 +26,7 @@ export type YourLoadItem = {
   to_short_address: string;
   driver_rate: number | null;
   loaded_miles: number | null;
+  empty_miles: number | null;
   /** Raw stops from TMS meta_data (parsed from JSON strings). */
   pick_up_location: TmsLoadLocationPoint[];
   delivery_location: TmsLoadLocationPoint[];
@@ -149,6 +150,7 @@ function normalizeTmsLoadRow(raw: Record<string, unknown>): YourLoadItem {
     to_short_address,
     driver_rate: parseNumberOrNull(meta.driver_rate),
     loaded_miles: parseNumberOrNull(meta.all_miles),
+    empty_miles: parseNumberOrNull(meta.all_empty_miles),
     pick_up_location: pu,
     delivery_location: del,
     raw: {

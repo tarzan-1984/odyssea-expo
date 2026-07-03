@@ -4,6 +4,7 @@ import { colors, fonts, rem, fp } from '@/lib';
 import type { YourLoadItem } from '@/app-api/loads';
 import { labelForDriverLoadStatus } from '@/constants/driverLoadStatuses';
 import { abbreviateStateInLocationString } from '@/utils/formatDriverLocation';
+import { formatRatePerMile, sumLoadedAndEmptyMiles } from '@/utils/ratePerMile';
 
 function backgroundForStatus(status: string): string {
   const s = status.trim().toLowerCase();
@@ -52,6 +53,8 @@ export default function LoadCard({
     item.driver_rate != null && Number.isFinite(item.driver_rate)
       ? `Driver rate: $${item.driver_rate}`
       : '';
+  const totalMiles = sumLoadedAndEmptyMiles(item.loaded_miles, item.empty_miles);
+  const ratePerMilePart = formatRatePerMile(item.driver_rate, totalMiles);
 
   const CardWrap = onPress ? TouchableOpacity : View;
 
@@ -78,26 +81,41 @@ export default function LoadCard({
         ) : null}
       </View>
 
-      {item.reference_number ? (
-        <Text style={styles.loadId} numberOfLines={1}>
-          Reference number: {item.reference_number}
-        </Text>
+      {(item.reference_number || ratePart) ? (
+        <View style={styles.metaRow}>
+          {item.reference_number ? (
+            <Text style={[styles.loadId, styles.metaLeft]} numberOfLines={1}>
+              Reference number: {item.reference_number}
+            </Text>
+          ) : (
+            <View style={styles.metaLeft} />
+          )}
+          {ratePart ? (
+            <Text style={[styles.meta, styles.metaRightText]} numberOfLines={1}>
+              {ratePart}
+            </Text>
+          ) : (
+            <View style={styles.metaRight} />
+          )}
+        </View>
       ) : null}
 
-      {loadedPart || ratePart ? (
-        <View style={styles.loadedRow}>
+      {(loadedPart || ratePerMilePart) ? (
+        <View style={styles.metaRow}>
           {loadedPart ? (
-            <Text style={[styles.meta, styles.metaFlex]} numberOfLines={1}>
+            <Text style={[styles.meta, styles.metaLeft]} numberOfLines={1}>
               {loadedPart}
             </Text>
           ) : (
-            <View style={styles.metaFlex} />
+            <View style={styles.metaLeft} />
           )}
-          {ratePart ? (
-            <Text style={styles.meta} numberOfLines={1}>
-              {ratePart}
+          {ratePerMilePart ? (
+            <Text style={[styles.meta, styles.metaRightText]} numberOfLines={1}>
+              Rate per mile: {ratePerMilePart}
             </Text>
-          ) : null}
+          ) : (
+            <View style={styles.metaRight} />
+          )}
         </View>
       ) : null}
     </CardWrap>
@@ -117,7 +135,6 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: rem(8),
-    marginBottom: rem(6),
   },
   statusBadge: {
     paddingHorizontal: rem(10),
@@ -136,26 +153,35 @@ const styles = StyleSheet.create({
     color: colors.primary.blue,
   },
   loadId: {
-    marginTop: rem(2),
     fontSize: fp(12),
     fontFamily: fonts['600'],
     color: colors.neutral.darkGrey,
   },
-  loadedRow: {
+  metaRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: rem(8),
-    marginTop: rem(4),
+    marginTop: rem(6),
+  },
+  metaLeft: {
+    flex: 1,
+    minWidth: 0,
+  },
+  metaRight: {
+    flex: 1,
+    minWidth: 0,
+    maxWidth: '48%',
+  },
+  metaRightText: {
+    flex: 1,
+    minWidth: 0,
+    maxWidth: '48%',
+    textAlign: 'right',
   },
   meta: {
     fontSize: fp(13),
     fontFamily: fonts['400'],
     color: colors.neutral.darkGrey,
   },
-  metaFlex: {
-    flex: 1,
-    minWidth: 0,
-  },
 });
-

@@ -132,6 +132,7 @@ export interface CreateOfferPayload {
   driverIds: string[];
   route: OfferRoutePoint[];
   loadedMiles: number;
+  offeredRate?: number;
   driverEmptyMiles?: Record<string, number>;
   weight: number;
   commodity?: string;

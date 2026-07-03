@@ -43,6 +43,7 @@ import { fetchRouteForPoints, type RoutePoint } from '@/services/offerRouteServi
 import { useWebSocket } from '@/context/WebSocketContext';
 import { chatApi } from '@/app-api/chatApi';
 import { eventBus, AppEvents } from '@/services/EventBus';
+import { formatRatePerMile, sumLoadedAndEmptyMiles } from '@/utils/ratePerMile';
 
 const MAP_MAX_HEIGHT = Dimensions.get('window').height * 0.25;
 const SCREEN_WIDTH = Dimensions.get('window').width;
@@ -290,7 +291,8 @@ function isDriverSlotMarked(value: unknown): boolean {
 function humanizeUnderscores(raw: string): string {
   const t = raw.trim();
   if (!t) return '';
-  return t.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const humanized = t.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return humanized.charAt(0).toUpperCase() + humanized.slice(1);
 }
 
 function isAttachedDriverIdSet(value: unknown): boolean {
@@ -1100,6 +1102,11 @@ export default function LoadDetailScreen() {
   const allEmptyMilesRaw = cleanText(meta.all_empty_miles);
   const loadedMilesUi = allMilesRaw ? formatMilesFromString(allMilesRaw) : '—';
   const emptyMilesUi = allEmptyMilesRaw ? formatMilesFromString(allEmptyMilesRaw) : '—';
+  const totalMilesForRate = sumLoadedAndEmptyMiles(
+    loadData?.loaded_miles,
+    loadData?.empty_miles,
+  );
+  const driverRatePerMileDisplay = formatRatePerMile(loadData?.driver_rate, totalMilesForRate);
 
   const factoringStatusRaw = cleanText(meta.factoring_status);
   const factoringStatusDisplay = useMemo(
@@ -1705,6 +1712,15 @@ export default function LoadDetailScreen() {
                       {driverRateDisplay || '—'}
                     </Text>
                   </View>
+
+                  {driverRatePerMileDisplay ? (
+                    <View style={styles.loadInfoRow}>
+                      <Text style={styles.loadInfoLabel}>Rate per mile</Text>
+                      <Text style={styles.loadInfoValue} numberOfLines={2}>
+                        {driverRatePerMileDisplay}
+                      </Text>
+                    </View>
+                  ) : null}
 
                   <View style={styles.loadInfoRow}>
                     <Text style={styles.loadInfoLabel}>Driver phone</Text>

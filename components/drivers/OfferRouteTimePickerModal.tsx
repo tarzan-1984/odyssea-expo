@@ -8,10 +8,17 @@ import {
   StyleSheet,
   Modal,
   Platform,
+  Switch,
+  ScrollView,
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import ScrollPicker from 'react-native-wheel-scrollview-picker';
 import { colors, fonts, fp, rem } from '@/lib';
+import {
+  END_TIME_AFTER_START_ERROR,
+  formatOfferDateTimeRange,
+  parseOfferDateTimeField,
+} from '@/utils/offerDateTimeRange';
 
 const MONTH_LABELS = [
   'Jan',
@@ -47,57 +54,39 @@ function buildYearList(): string[] {
 
 const YEARS = buildYearList();
 
-/** Matches web DateTimePicker / flatpickr output (lowercase am/pm). */
-export function formatOfferRouteDateTime(d: Date): string {
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  const year = d.getFullYear();
-  let h24 = d.getHours();
-  const minute = d.getMinutes();
-  const ampm: 'am' | 'pm' = h24 >= 12 ? 'pm' : 'am';
-  let h12 = h24 % 12;
-  if (h12 === 0) h12 = 12;
-  const minStr = String(minute).padStart(2, '0');
-  return `${month}/${day}/${year} ${h12}:${minStr} ${ampm}`;
-}
+type Time12Parts = {
+  hour: number;
+  minute: number;
+  ampm: 'AM' | 'PM';
+};
 
-function parseDateTimeFromString(str: string): Date | null {
-  const trimmed = str.trim();
-  const m = trimmed.match(
-    /^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})\s*(am|pm)$/i
-  );
-  if (!m) return null;
-  const month = parseInt(m[1], 10) - 1;
-  const day = parseInt(m[2], 10);
-  const year = parseInt(m[3], 10);
-  let hour = parseInt(m[4], 10);
-  const minute = parseInt(m[5], 10);
-  const period = m[6].toLowerCase();
-  if (period === 'pm' && hour < 12) hour += 12;
-  if (period === 'am' && hour === 12) hour = 0;
-  const d = new Date(year, month, day, hour, minute, 0, 0);
-  if (
-    d.getFullYear() !== year ||
-    d.getMonth() !== month ||
-    d.getDate() !== day
-  ) {
-    return null;
+function dateTo12hParts(date: Date): Time12Parts {
+  const h24 = date.getHours();
+  const minute = date.getMinutes();
+  if (h24 >= 12) {
+    return {
+      ampm: 'PM',
+      hour: h24 === 12 ? 12 : h24 - 12,
+      minute,
+    };
   }
-  return d;
+  return {
+    ampm: 'AM',
+    hour: h24 === 0 ? 12 : h24,
+    minute,
+  };
 }
 
-function parseTimeOnlyFromString(str: string): Date | null {
-  const trimmed = str.trim();
-  const timeMatch = trimmed.match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-  if (!timeMatch) return null;
-  let hour = parseInt(timeMatch[1], 10);
-  const minute = parseInt(timeMatch[2], 10);
-  const ampm = timeMatch[3].toUpperCase() as 'AM' | 'PM';
-  const d = new Date();
-  if (ampm === 'PM' && hour < 12) hour += 12;
-  if (ampm === 'AM' && hour === 12) hour = 0;
-  d.setHours(hour, minute, 0, 0);
-  return d;
+function partsToDate(base: Date, parts: Time12Parts): Date {
+  const next = new Date(base);
+  let h24: number;
+  if (parts.ampm === 'AM') {
+    h24 = parts.hour === 12 ? 0 : parts.hour;
+  } else {
+    h24 = parts.hour === 12 ? 12 : parts.hour + 12;
+  }
+  next.setHours(h24, parts.minute, 0, 0);
+  return next;
 }
 
 const PICKER_STYLE = {
@@ -129,6 +118,11 @@ export default function OfferRouteTimePickerModal({
   const [hour, setHour] = useState(12);
   const [minute, setMinute] = useState(0);
   const [ampm, setAmpm] = useState<'AM' | 'PM'>('PM');
+  const [endTimeEnabled, setEndTimeEnabled] = useState(false);
+  const [endHour, setEndHour] = useState(12);
+  const [endMinute, setEndMinute] = useState(0);
+  const [endAmpm, setEndAmpm] = useState<'AM' | 'PM'>('PM');
+  const [rangeError, setRangeError] = useState('');
 
   const dayStrings = useMemo(() => {
     const max = daysInMonth(year, monthIndex);
@@ -137,37 +131,45 @@ export default function OfferRouteTimePickerModal({
 
   useEffect(() => {
     if (!visible) return;
-    const parsed = parseDateTimeFromString(initialTime) ?? parseTimeOnlyFromString(initialTime);
-    if (parsed) {
-      setYear(parsed.getFullYear());
-      setMonthIndex(parsed.getMonth());
-      setDay(parsed.getDate());
-      const h24 = parsed.getHours();
-      const m = parsed.getMinutes();
-      setMinute(m);
-      if (h24 >= 12) {
-        setAmpm('PM');
-        setHour(h24 === 12 ? 12 : h24 - 12);
+    setRangeError('');
+
+    const { start, end } = parseOfferDateTimeField(initialTime);
+    if (start) {
+      setYear(start.getFullYear());
+      setMonthIndex(start.getMonth());
+      setDay(start.getDate());
+      const startParts = dateTo12hParts(start);
+      setHour(startParts.hour);
+      setMinute(startParts.minute);
+      setAmpm(startParts.ampm);
+
+      if (end) {
+        const endParts = dateTo12hParts(end);
+        setEndHour(endParts.hour);
+        setEndMinute(endParts.minute);
+        setEndAmpm(endParts.ampm);
+        setEndTimeEnabled(true);
       } else {
-        setAmpm('AM');
-        setHour(h24 === 0 ? 12 : h24);
+        setEndTimeEnabled(false);
+        setEndHour(12);
+        setEndMinute(0);
+        setEndAmpm('PM');
       }
-    } else {
-      const now = new Date();
-      setYear(now.getFullYear());
-      setMonthIndex(now.getMonth());
-      setDay(now.getDate());
-      const h = now.getHours();
-      const m = now.getMinutes();
-      setMinute(m);
-      if (h >= 12) {
-        setAmpm('PM');
-        setHour(h === 12 ? 12 : h - 12);
-      } else {
-        setAmpm('AM');
-        setHour(h === 0 ? 12 : h);
-      }
+      return;
     }
+
+    const now = new Date();
+    setYear(now.getFullYear());
+    setMonthIndex(now.getMonth());
+    setDay(now.getDate());
+    const nowParts = dateTo12hParts(now);
+    setHour(nowParts.hour);
+    setMinute(nowParts.minute);
+    setAmpm(nowParts.ampm);
+    setEndTimeEnabled(false);
+    setEndHour(12);
+    setEndMinute(0);
+    setEndAmpm('PM');
   }, [visible, initialTime]);
 
   useEffect(() => {
@@ -179,20 +181,46 @@ export default function OfferRouteTimePickerModal({
   const handleSet = useCallback(() => {
     const max = daysInMonth(year, monthIndex);
     const safeDay = Math.min(day, max);
-    let h24: number;
-    if (ampm === 'AM') {
-      h24 = hour === 12 ? 0 : hour;
+    const start = new Date(year, monthIndex, safeDay, 0, 0, 0, 0);
+    const startWithTime = partsToDate(start, { hour, minute, ampm });
+
+    if (endTimeEnabled) {
+      const endWithTime = partsToDate(start, {
+        hour: endHour,
+        minute: endMinute,
+        ampm: endAmpm,
+      });
+      if (endWithTime.getTime() <= startWithTime.getTime()) {
+        setRangeError(END_TIME_AFTER_START_ERROR);
+        return;
+      }
+      onSet(formatOfferDateTimeRange(startWithTime, endWithTime));
     } else {
-      h24 = hour === 12 ? 12 : hour + 12;
+      onSet(formatOfferDateTimeRange(startWithTime, null));
     }
-    const d = new Date(year, monthIndex, safeDay, h24, minute, 0, 0);
-    onSet(formatOfferRouteDateTime(d));
+
     onClose();
-  }, [year, monthIndex, day, hour, minute, ampm, onSet, onClose]);
+  }, [
+    year,
+    monthIndex,
+    day,
+    hour,
+    minute,
+    ampm,
+    endTimeEnabled,
+    endHour,
+    endMinute,
+    endAmpm,
+    onSet,
+    onClose,
+  ]);
 
   const hourIndex = HOURS_12.indexOf(String(hour));
   const minuteIndex = MINUTES.indexOf(String(minute).padStart(2, '0'));
   const ampmIndex = ampm === 'AM' ? 0 : 1;
+  const endHourIndex = HOURS_12.indexOf(String(endHour));
+  const endMinuteIndex = MINUTES.indexOf(String(endMinute).padStart(2, '0'));
+  const endAmpmIndex = endAmpm === 'AM' ? 0 : 1;
   const dayIndex = Math.max(0, dayStrings.indexOf(String(day)));
   const yearIndex = Math.max(0, YEARS.indexOf(String(year)));
   const monthPickerIndex = monthIndex >= 0 && monthIndex < 12 ? monthIndex : 0;
@@ -236,6 +264,11 @@ export default function OfferRouteTimePickerModal({
             </TouchableOpacity>
           </View>
 
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            bounces={false}
+            keyboardShouldPersistTaps="handled"
+          >
           <Text style={styles.sectionLabel}>Date</Text>
           <View style={styles.dateRow}>
             <View style={styles.pickerWrapWide}>
@@ -293,6 +326,67 @@ export default function OfferRouteTimePickerModal({
             </View>
           </View>
 
+          <View style={styles.endTimeHeader}>
+            <Text style={styles.endTimeLabel}>To (optional)</Text>
+            <Switch
+              value={endTimeEnabled}
+              onValueChange={(value) => {
+                setEndTimeEnabled(value);
+                setRangeError('');
+              }}
+              trackColor={{ false: colors.neutral.lightGrey, true: colors.primary.violet }}
+              thumbColor={colors.neutral.white}
+            />
+          </View>
+
+          {endTimeEnabled ? (
+            <View style={styles.pickersRow}>
+              <View style={styles.pickerWrap}>
+                <ScrollPicker
+                  dataSource={HOURS_12}
+                  selectedIndex={endHourIndex >= 0 ? endHourIndex : 0}
+                  onValueChange={(val) => {
+                    if (val) {
+                      setEndHour(parseInt(String(val), 10));
+                      setRangeError('');
+                    }
+                  }}
+                  {...PICKER_STYLE}
+                />
+              </View>
+              <Text style={styles.colon}>:</Text>
+              <View style={styles.pickerWrap}>
+                <ScrollPicker
+                  dataSource={MINUTES}
+                  selectedIndex={endMinuteIndex >= 0 ? endMinuteIndex : 0}
+                  onValueChange={(val) => {
+                    if (val !== undefined) {
+                      setEndMinute(parseInt(String(val), 10));
+                      setRangeError('');
+                    }
+                  }}
+                  {...PICKER_STYLE}
+                />
+              </View>
+              <View style={styles.pickerWrap}>
+                <ScrollPicker
+                  dataSource={AM_PM}
+                  selectedIndex={endAmpmIndex}
+                  onValueChange={(val) => {
+                    if (val) {
+                      setEndAmpm(val as 'AM' | 'PM');
+                      setRangeError('');
+                    }
+                  }}
+                  {...PICKER_STYLE}
+                />
+              </View>
+            </View>
+          ) : null}
+
+          {rangeError ? <Text style={styles.rangeError}>{rangeError}</Text> : null}
+          </ScrollView>
+
           <TouchableOpacity style={styles.setButton} onPress={handleSet}>
             <Text style={styles.setButtonText}>Set</Text>
           </TouchableOpacity>
@@ -325,6 +419,7 @@ const styles = StyleSheet.create({
     padding: rem(24),
     width: '100%',
     maxWidth: rem(360),
+    maxHeight: '90%',
     zIndex: 10,
   },
   headerRow: {
@@ -360,7 +455,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: rem(20),
+    marginBottom: rem(12),
+  },
+  endTimeHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: rem(4),
+    marginBottom: rem(12),
+  },
+  endTimeLabel: {
+    fontSize: fp(13),
+    fontFamily: fonts['600'],
+    color: colors.neutral.grey,
   },
   pickerWrap: {
     flex: 1,
@@ -392,12 +499,20 @@ const styles = StyleSheet.create({
     color: colors.primary.blue,
     marginHorizontal: rem(4),
   },
+  rangeError: {
+    fontSize: fp(13),
+    fontFamily: fonts['500'],
+    color: colors.semantic.error,
+    marginBottom: rem(8),
+    textAlign: 'center',
+  },
   setButton: {
     height: rem(44),
     backgroundColor: colors.primary.violet,
     borderRadius: 10,
     alignItems: 'center',
     justifyContent: 'center',
+    marginTop: rem(4),
   },
   setButtonText: {
     color: colors.neutral.white,

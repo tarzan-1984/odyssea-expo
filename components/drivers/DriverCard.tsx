@@ -20,6 +20,8 @@ import {
 import { getDriverEquipmentLabels } from '@/utils/driverEquipmentLabels';
 import { colors, fonts, rem, fp } from '@/lib';
 import DriverNotesModal from '@/components/drivers/DriverNotesModal';
+import DriverRatingModal from '@/components/drivers/DriverRatingModal';
+import DriverRatingBadge from '@/components/drivers/DriverRatingBadge';
 import DriverLanguageFlag from '@/components/drivers/DriverLanguageFlag';
 
 interface DriverCardProps {
@@ -42,6 +44,7 @@ export default function DriverCard({
   distanceMiles,
 }: DriverCardProps) {
   const [notesModalOpen, setNotesModalOpen] = useState(false);
+  const [ratingModalOpen, setRatingModalOpen] = useState(false);
   const meta = driver.meta_data;
   const rawStatus = meta?.driver_status;
   const statusLabel = getDriverStatusLabel(rawStatus);
@@ -84,6 +87,7 @@ export default function DriverCard({
 
   const equipment = getDriverEquipmentLabels(meta);
   const ratingAvg = driver.rating?.avg_rating;
+  const ratingsCount = driver.rating?.count ?? 0;
   const notesCount = driver.notes?.count ?? 0;
 
   const toggleExpand = () => {
@@ -204,11 +208,10 @@ export default function DriverCard({
           </TouchableOpacity>
           <View style={styles.ratingOpposite}>
             <Text style={styles.ratingOppositeLabel}>Rating</Text>
-            <Text style={styles.ratingOppositeValue}>
-              {ratingAvg != null && !Number.isNaN(Number(ratingAvg))
-                ? String(ratingAvg)
-                : '—'}
-            </Text>
+            <DriverRatingBadge
+              avgRating={ratingAvg}
+              onPress={() => setRatingModalOpen(true)}
+            />
           </View>
         </View>
 
@@ -265,6 +268,15 @@ export default function DriverCard({
         driverId={String(meta?.driver_id ?? driver.id)}
         driverName={meta?.driver_name?.trim() ? String(meta.driver_name) : 'Driver'}
         notesCount={notesCount}
+      />
+
+      <DriverRatingModal
+        visible={ratingModalOpen}
+        onClose={() => setRatingModalOpen(false)}
+        driverId={String(meta?.driver_id ?? driver.id)}
+        driverName={meta?.driver_name?.trim() ? String(meta.driver_name) : 'Driver'}
+        ratingsCount={ratingsCount}
+        avgRating={ratingAvg ?? null}
       />
     </View>
   );
@@ -453,12 +465,7 @@ const styles = StyleSheet.create({
     fontSize: fp(11),
     fontFamily: fonts['600'],
     color: colors.neutral.grey,
-    marginBottom: rem(2),
-  },
-  ratingOppositeValue: {
-    fontSize: fp(16),
-    fontFamily: fonts['700'],
-    color: colors.neutral.darkGrey,
+    marginBottom: rem(4),
   },
   details: {
     paddingTop: rem(8),

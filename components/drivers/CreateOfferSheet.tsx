@@ -37,6 +37,7 @@ import {
   normalizeLocationForGeocode,
   needsLocationGeocode,
 } from '@/utils/offerRouteLocation';
+import { getRouteChronologyError } from '@/utils/offerDateTimeRange';
 import OfferRouteTimePickerModal from '@/components/drivers/OfferRouteTimePickerModal';
 import OfferRouteStopFlowIcon from '@/icons/OfferRouteStopFlowIcon';
 
@@ -116,6 +117,7 @@ export default function CreateOfferSheet({
   const [routeRows, setRouteRows] = useState<RouteRow[]>(() => [newRow('pickup'), newRow('delivery')]);
   const [timePickerRowId, setTimePickerRowId] = useState<string | null>(null);
   const [weight, setWeight] = useState('');
+  const [offeredRate, setOfferedRate] = useState('');
   /** Trimmed locations in row order; updated on blur / add / remove / reorder (Next `committedLocations`). */
   const [committedLocations, setCommittedLocations] = useState<string[]>([]);
   const [routeRowLocationErrors, setRouteRowLocationErrors] = useState<Record<string, string>>({});
@@ -130,6 +132,7 @@ export default function CreateOfferSheet({
   const resetForm = useCallback(() => {
     setRouteRows([newRow('pickup'), newRow('delivery')]);
     setWeight('');
+    setOfferedRate('');
     setCommittedLocations([]);
     setRouteRowLocationErrors({});
     setCommodity('');
@@ -213,6 +216,13 @@ export default function CreateOfferSheet({
 
   const parseNum = (s: string) => {
     const n = parseFloat(String(s).replace(/,/g, '').trim());
+    return Number.isNaN(n) ? undefined : n;
+  };
+
+  const parseOfferedRate = (s: string): number | undefined => {
+    const trimmed = String(s).replace(/,/g, '').trim();
+    if (!trimmed) return undefined;
+    const n = parseFloat(trimmed);
     return Number.isNaN(n) ? undefined : n;
   };
 
@@ -359,6 +369,8 @@ export default function CreateOfferSheet({
     if (trimmed.some((r) => r.location && !isValidLocationFormat(r.location))) {
       return LOCATION_FORMAT_ERROR;
     }
+    const routeChronologyError = getRouteChronologyError(trimmed.map((r) => r.time));
+    if (routeChronologyError) return routeChronologyError;
     return null;
   };
 
@@ -371,6 +383,18 @@ export default function CreateOfferSheet({
     }
     if (selectedDriverIds.length === 0) {
       setError('Select at least one driver');
+      return;
+    }
+
+    const offeredRateRaw = offeredRate.trim();
+    const parsedOfferedRate =
+      offeredRateRaw === '' ? undefined : parseOfferedRate(offeredRateRaw);
+    if (offeredRateRaw !== '' && parsedOfferedRate == null) {
+      setError('Enter a valid offered rate');
+      return;
+    }
+    if (parsedOfferedRate != null && parsedOfferedRate < 0) {
+      setError('Offered rate must be 0 or greater');
       return;
     }
 
@@ -391,6 +415,7 @@ export default function CreateOfferSheet({
         driverIds: selectedDriverIds,
         route,
         loadedMiles: Math.round(calculatedLoadedMiles!),
+        ...(parsedOfferedRate != null ? { offeredRate: parsedOfferedRate } : {}),
         weight: parseNum(weight)!,
         ...(emptyMiles ? { driverEmptyMiles: emptyMiles } : {}),
         commodity: commodity.trim() || undefined,
@@ -554,9 +579,9 @@ export default function CreateOfferSheet({
                     styles.timeTriggerText,
                     !item.time.trim() && styles.timeTriggerPlaceholder,
                   ]}
-                  numberOfLines={1}
+                  numberOfLines={2}
                 >
-                  {item.time.trim() || 'mm/dd/yyyy --:-- pm'}
+                  {item.time.trim() || 'Select date & time (optional end below)'}
                 </Text>
               </TouchableOpacity>
             </View>
@@ -707,6 +732,16 @@ export default function CreateOfferSheet({
               </View>
             </TouchableOpacity>
           </View>
+
+          <Text style={styles.label}>Offered rate</Text>
+          <TextInput
+            style={styles.input}
+            value={offeredRate}
+            onChangeText={setOfferedRate}
+            keyboardType="decimal-pad"
+            placeholder="e.g. 2500.50"
+            placeholderTextColor={colors.neutral.grey}
+          />
 
           <View style={styles.formRowHalf} ref={weightFieldRef} collapsable={false}>
             <View style={styles.formHalfColumn}>
@@ -1027,13 +1062,11 @@ const styles = StyleSheet.create({
     backgroundColor: colors.neutral.veryLightGrey,
   },
   locationTimeRow: {
-    flexDirection: 'row',
-    alignItems: 'stretch',
+    flexDirection: 'column',
     gap: rem(10),
   },
   locationInput: {
-    flex: 1,
-    minWidth: 0,
+    width: '100%',
     borderWidth: 1,
     borderColor: colors.neutral.lightGrey,
     borderRadius: rem(10),
@@ -1068,9 +1101,7 @@ const styles = StyleSheet.create({
     marginBottom: rem(4),
   },
   timeTrigger: {
-    minWidth: rem(158),
-    maxWidth: rem(200),
-    flexShrink: 0,
+    width: '100%',
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: colors.neutral.lightGrey,
@@ -1083,7 +1114,7 @@ const styles = StyleSheet.create({
     fontSize: fp(14),
     fontFamily: fonts['600'],
     color: colors.neutral.darkGrey,
-    textAlign: 'center',
+    textAlign: 'left',
   },
   timeTriggerPlaceholder: {
     fontFamily: fonts['500'],
@@ -1099,11 +1130,11 @@ const styles = StyleSheet.create({
     minWidth: 0,
   },
   label: {
-    fontSize: fp(12),
-    fontFamily: fonts['600'],
-    color: colors.neutral.grey,
-    marginBottom: rem(4),
-    marginTop: rem(6),
+    fontSize: fp(16),
+    fontFamily: fonts['700'],
+    color: colors.primary.blue,
+    marginBottom: rem(6),
+    marginTop: rem(8),
   },
   inputInHalfColumn: {
     width: '100%',
