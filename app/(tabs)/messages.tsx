@@ -554,9 +554,82 @@ export default function MessagesScreen() {
             </Modal>
           )}
           
-          {/* Search and Filter Section */}
+          {/* Tabs (Chats / Active Loads / Offers) — load screen style */}
+          {!isExpiredDocumentsDriver && (
+            <View style={styles.tabsStickyWrap}>
+              <View style={styles.tabsGrid}>
+                <View style={styles.tabsRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.tabButton,
+                      activeTab === 'chats' && styles.tabButtonActive,
+                    ]}
+                    onPress={() => {
+                      Keyboard.dismiss();
+                      setActiveTab('chats');
+                    }}
+                    activeOpacity={0.85}
+                  >
+                    <Text
+                      style={[
+                        styles.tabText,
+                        activeTab === 'chats' && styles.tabTextActive,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      Chats
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.tabButton,
+                      activeTab === 'shipments' && styles.tabButtonActive,
+                    ]}
+                    onPress={() => {
+                      Keyboard.dismiss();
+                      setActiveTab('shipments');
+                    }}
+                    activeOpacity={0.85}
+                  >
+                    <Text
+                      style={[
+                        styles.tabText,
+                        activeTab === 'shipments' && styles.tabTextActive,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      Active Loads
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.tabButton,
+                      activeTab === 'offers' && styles.tabButtonActive,
+                    ]}
+                    onPress={() => {
+                      Keyboard.dismiss();
+                      setActiveTab('offers');
+                    }}
+                    activeOpacity={0.85}
+                  >
+                    <Text
+                      style={[
+                        styles.tabText,
+                        activeTab === 'offers' && styles.tabTextActive,
+                      ]}
+                      numberOfLines={1}
+                    >
+                      Offers
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+          )}
+
           <View style={styles.searchFilterSection}>
-            {/* First Row: Search Input (full width) */}
             <View style={styles.searchRow}>
               <View style={styles.searchContainer}>
                 <View style={styles.searchIconContainer}>
@@ -571,8 +644,6 @@ export default function MessagesScreen() {
                   value={searchQuery}
                   onChangeText={setSearchQuery}
                   onFocus={() => {
-                    // If the app has just returned from background and the system
-                    // automatically focuses the previous input — immediately blur it.
                     if (preventNextSearchFocusRef.current) {
                       preventNextSearchFocusRef.current = false;
                       Keyboard.dismiss();
@@ -595,75 +666,7 @@ export default function MessagesScreen() {
               </View>
             </View>
 
-            {/* Second Row: Tabs (Chats / Shipments / Offers) */}
-            {!isExpiredDocumentsDriver && (
-              <View style={styles.tabsRow}>
-                <TouchableOpacity
-                  style={[
-                    styles.tabButton,
-                    activeTab === 'chats' && styles.tabButtonActive,
-                  ]}
-                  onPress={() => {
-                      Keyboard.dismiss();
-                      setActiveTab('chats');
-                    }}
-                  activeOpacity={0.8}
-                >
-                  <Text
-                    style={[
-                      styles.tabButtonText,
-                      activeTab === 'chats' && styles.tabButtonTextActive,
-                    ]}
-                  >
-                    Chats
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.tabButton,
-                    activeTab === 'shipments' && styles.tabButtonActive,
-                  ]}
-                  onPress={() => {
-                      Keyboard.dismiss();
-                      setActiveTab('shipments');
-                    }}
-                  activeOpacity={0.8}
-                >
-                  <Text
-                    style={[
-                      styles.tabButtonText,
-                      activeTab === 'shipments' && styles.tabButtonTextActive,
-                    ]}
-                  >
-                    Active Loads
-                  </Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                  style={[
-                    styles.tabButton,
-                    activeTab === 'offers' && styles.tabButtonActive,
-                  ]}
-                  onPress={() => {
-                      Keyboard.dismiss();
-                      setActiveTab('offers');
-                    }}
-                  activeOpacity={0.8}
-                >
-                  <Text
-                    style={[
-                      styles.tabButtonText,
-                      activeTab === 'offers' && styles.tabButtonTextActive,
-                    ]}
-                  >
-                    Offers
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* Third Row: Action Buttons and Filter (equal width) */}
+            {/* Action Buttons and Filter (equal width) */}
             <View style={styles.actionButtonsRow}>
               {/* Mute All Button */}
               <TouchableOpacity
@@ -1083,7 +1086,6 @@ const styles = StyleSheet.create({
     width: '100%',
     position: 'relative',
     zIndex: 20,
-    marginBottom: 8,
   },
   titleContainer: {
     flexDirection: 'row',
@@ -1131,37 +1133,71 @@ const styles = StyleSheet.create({
   searchFilterSection: {
     paddingHorizontal: rem(15),
     marginBottom: rem(17),
+    marginTop: rem(8),
   },
   searchRow: {
     marginBottom: rem(8),
   },
+  tabsStickyWrap: {
+    alignSelf: 'stretch',
+    backgroundColor: '#0d1a2d',
+  },
+  tabsGrid: {
+    width: '100%',
+    backgroundColor: '#0d1a2d',
+  },
   tabsRow: {
     flexDirection: 'row',
-    gap: rem(8),
-    marginBottom: rem(8),
+    width: '100%',
   },
   tabButton: {
     flex: 1,
-    borderRadius: rem(100),
-    height: rem(35),
-    paddingHorizontal: rem(8),
-    justifyContent: 'center',
+    minWidth: 0,
+    paddingVertical: rem(10),
+    paddingHorizontal: rem(4),
     alignItems: 'center',
-    backgroundColor: 'rgba(96, 102, 197, 0.1)',
+    justifyContent: 'center',
+    backgroundColor: colors.primary.blue,
+    borderTopWidth: 2,
+    borderTopColor: 'rgba(255, 255, 255, 0.2)',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.4,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 5,
+      },
+    }),
   },
   tabButtonActive: {
-    backgroundColor: colors.primary.green,
+    backgroundColor: '#0d1a2d',
+    borderTopWidth: 3,
+    borderTopColor: 'rgba(0, 0, 0, 0.6)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.05)',
+    ...Platform.select({
+      ios: {
+        shadowColor: 'transparent',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0,
+        shadowRadius: 0,
+      },
+      android: {
+        elevation: 0,
+      },
+    }),
   },
-  tabButtonText: {
-    fontSize: fp(14),
+  tabText: {
+    fontSize: fp(16),
     fontFamily: fonts['500'],
-    color: colors.primary.blue,
-    opacity: 0.8,
+    color: 'rgba(255, 255, 255, 0.7)',
   },
-  tabButtonTextActive: {
+  tabTextActive: {
     fontFamily: fonts['700'],
-    color: colors.primary.blue,
-    opacity: 1,
+    color: colors.neutral.white,
   },
   actionButtonsRow: {
     flexDirection: "row",

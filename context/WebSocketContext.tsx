@@ -235,10 +235,12 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       // So we should receive userOnline events for other participants
     });
 
-    newSocket.on('deviceDeactivated', async () => {
-      console.log('[WebSocket] deviceDeactivated received — logging out');
+    newSocket.on('deviceDeactivated', async (data?: { reason?: string }) => {
+      console.log('[WebSocket] deviceDeactivated received — logging out', data);
       const { emitForceDeviceLogout } = await import('@/utils/forceDeviceLogout');
-      emitForceDeviceLogout('device_removed');
+      const reason =
+        data?.reason === 'device_blocked' ? 'device_blocked' : 'device_removed';
+      emitForceDeviceLogout(reason);
     });
 
     // Global app_settings changed (mobile throttling + live/test mode). Re-fetch and apply locally.

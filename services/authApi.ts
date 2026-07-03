@@ -1,4 +1,10 @@
 import { API_BASE_URL } from '@/lib/config';
+import { tryBuildMobileDevicePayload } from '@/utils/mobileDevicePayload';
+import {
+	DeviceBlockedError,
+	isDeviceBlockedApiError,
+	parseDeviceBlockedMessage,
+} from '@/utils/forceDeviceLogout';
 
 export interface CheckEmailResponse {
   data: {
@@ -60,23 +66,44 @@ class AuthApiService {
    */
   async checkEmailAndGeneratePassword(email: string): Promise<CheckEmailResponse> {
     try {
+      const devicePayload = await tryBuildMobileDevicePayload().catch(() => null);
+      const body: { email: string; deviceId?: string } = { email };
+      if (devicePayload?.deviceId?.trim()) {
+        body.deviceId = devicePayload.deviceId.trim();
+      }
+
       const response = await fetch(`${this.baseUrl}/v1/auth/login_email`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify(body),
       });
 
+      const responseText = await response.text();
+
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
+        if (isDeviceBlockedApiError(response.status, responseText)) {
+          throw new DeviceBlockedError(parseDeviceBlockedMessage(responseText));
+        }
+        let errorData: { message?: string } = {};
+        try {
+          errorData = JSON.parse(responseText) as { message?: string };
+        } catch {
+          // ignore
+        }
+        const msg =
+          typeof errorData.message === 'string'
+            ? errorData.message
+            : `HTTP error! status: ${response.status}`;
+        throw new Error(msg);
       }
 
-      const data = await response.json();
-      
-      return data;
+      return JSON.parse(responseText) as CheckEmailResponse;
     } catch (error) {
+      if (error instanceof DeviceBlockedError) {
+        throw error;
+      }
       console.error('Auth API Error:', error);
       throw new Error(
         error instanceof Error 

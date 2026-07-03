@@ -54,7 +54,7 @@ async function persistMobileDeviceSyncFingerprint(): Promise<void> {
 
 async function submitMobileDeviceSnapshot(
 	accessToken: string,
-	extra?: { pushToken?: string | null; reactivate?: boolean },
+	extra?: { pushToken?: string | null },
 ): Promise<boolean> {
 	const apiBase = API_BASE_URL;
 	if (!apiBase || !accessToken) {
@@ -64,7 +64,6 @@ async function submitMobileDeviceSnapshot(
 	const body = {
 		...(await tryBuildMobileDevicePayload()),
 		...(extra?.pushToken ? { pushToken: extra.pushToken } : {}),
-		...(extra?.reactivate === true ? { reactivate: true } : {}),
 	};
 
 	try {
@@ -80,22 +79,13 @@ async function submitMobileDeviceSnapshot(
 		if (!res.ok) {
 			const t = await res.text().catch(() => '');
 			const {
-				isDeviceDeactivatedApiError,
 				isDeviceBlockedApiError,
 				emitForceDeviceLogout,
 				DeviceBlockedError,
 				parseDeviceBlockedMessage,
 			} = await import('@/utils/forceDeviceLogout');
 			if (isDeviceBlockedApiError(res.status, t)) {
-				if (extra?.reactivate === true) {
-					throw new DeviceBlockedError(parseDeviceBlockedMessage(t));
-				}
-				emitForceDeviceLogout('device_blocked');
-				return false;
-			}
-			if (isDeviceDeactivatedApiError(res.status, t)) {
-				emitForceDeviceLogout('device_deactivated');
-				return false;
+				throw new DeviceBlockedError(parseDeviceBlockedMessage(t));
 			}
 			console.warn(
 				'[mobileDeviceApi] register failed:',
@@ -106,6 +96,9 @@ async function submitMobileDeviceSnapshot(
 		}
 		return true;
 	} catch (e) {
+		if (e instanceof Error && e.name === 'DeviceBlockedError') {
+			throw e;
+		}
 		console.warn('[mobileDeviceApi] register error:', e);
 		return false;
 	}
@@ -120,10 +113,7 @@ export async function registerMobileDeviceAfterLogin(
 	accessToken: string,
 	extra?: { pushToken?: string | null },
 ): Promise<void> {
-	const ok = await submitMobileDeviceSnapshot(accessToken, {
-		...extra,
-		reactivate: true,
-	});
+	const ok = await submitMobileDeviceSnapshot(accessToken, extra);
 	if (ok) {
 		await persistMobileDeviceSyncFingerprint();
 	}

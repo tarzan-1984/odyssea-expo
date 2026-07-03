@@ -154,7 +154,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
       return result;
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+      const { DeviceBlockedError } = await import('@/utils/forceDeviceLogout');
+      const errorMessage =
+        error instanceof DeviceBlockedError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : 'Unknown error occurred';
       
       setAuthState(prev => ({
         ...prev,
@@ -162,7 +168,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         error: errorMessage,
       }));
 
-      throw error;
+      throw error instanceof DeviceBlockedError
+        ? error
+        : new Error(errorMessage);
     }
   }, []);
 
@@ -249,7 +257,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         } = await import('@/utils/forceDeviceLogout');
         beginLoginDeviceReactivation();
         try {
-        // Re-activate device before persisting session tokens (other hooks read storage and sync settings).
+        // Register device row before persisting session tokens (other hooks read storage and sync settings).
         let pushTokenForDeviceSnapshot: string | null = null;
         try {
           console.log('[AuthContext] Registering push token after login...');

@@ -71,7 +71,13 @@ export default function WelcomeScreen() {
         }
       });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Network error occurred';
+      const { DeviceBlockedError } = await import('@/utils/forceDeviceLogout');
+      const errorMessage =
+        error instanceof DeviceBlockedError
+          ? error.message
+          : error instanceof Error
+            ? error.message
+            : 'Network error occurred';
       setLocalError(errorMessage);
     }
   };
