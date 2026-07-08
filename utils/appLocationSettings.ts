@@ -128,6 +128,7 @@ export async function fetchAppLocationSettingsFromBackend(
       const {
         isDeviceDeactivatedApiError,
         isDeviceBlockedApiError,
+        isSessionInvalidApiError,
         emitForceDeviceLogout,
       } = await import('@/utils/forceDeviceLogout');
       if (
@@ -135,6 +136,8 @@ export async function fetchAppLocationSettingsFromBackend(
         isDeviceBlockedApiError(response.status, t)
       ) {
         emitForceDeviceLogout('device_blocked');
+      } else if (isSessionInvalidApiError(response.status)) {
+        emitForceDeviceLogout('session_invalid');
       }
       return null;
     }

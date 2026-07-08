@@ -59,6 +59,11 @@ export function isDeviceDeactivatedApiError(
 	);
 }
 
+/** JWT accepted but session is no longer valid (user removed from DB, expired token, etc.). */
+export function isSessionInvalidApiError(status: number): boolean {
+	return status === 401;
+}
+
 export function parseDeviceBlockedMessage(bodyText: string): string {
 	try {
 		const json = JSON.parse(bodyText) as {

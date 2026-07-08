@@ -95,8 +95,8 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
     (!!isLoadChat && !!currentUser?.role && LOAD_CHAT_MANAGER_ROLES.includes(currentUser.role));
 
   const [localParticipants, setLocalParticipants] = useState<any[]>([]);
-  const [addedUserIds, setAddedUserIds] = useState<string[]>([]);
-  const [removedUserIds, setRemovedUserIds] = useState<string[]>([]);
+  const [addedParticipants, setAddedParticipants] = useState<Array<{ id: string; role: string }>>([]);
+  const [removedParticipants, setRemovedParticipants] = useState<Array<{ id: string; role: string }>>([]);
   const [addingUserIds, setAddingUserIds] = useState<string[]>([]);
 
   const [showAddSection, setShowAddSection] = useState(false);
@@ -148,8 +148,8 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
   useEffect(() => {
     if (!visible) return;
     setLocalParticipants(chatRoom?.participants || []);
-    setAddedUserIds([]);
-    setRemovedUserIds([]);
+    setAddedParticipants([]);
+    setRemovedParticipants([]);
     setAddingUserIds([]);
     setShowAddSection(false);
     setUsers([]);
@@ -304,8 +304,12 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
     };
 
     setLocalParticipants((prev) => [...(prev || []), tempParticipant as any]);
-    setAddedUserIds((prev) => (prev.includes(user.id) ? prev : [...prev, user.id]));
-    setRemovedUserIds((prev) => prev.filter((id) => id !== user.id));
+    setAddedParticipants((prev) =>
+      prev.some((entry) => entry.id === user.id)
+        ? prev
+        : [...prev, { id: user.id, role: String(user.role || 'USER') }],
+    );
+    setRemovedParticipants((prev) => prev.filter((entry) => entry.id !== user.id));
     setUsers((prev) => prev.filter((u) => u.id !== user.id));
 
     setTimeout(() => {
@@ -313,12 +317,15 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
     }, 100);
   };
 
-  const handleRemoveParticipant = (userId: string) => {
+  const handleRemoveParticipant = (userId: string, userRole?: string) => {
     setLocalParticipants((prev) => (prev || []).filter((p: any) => (p.user?.id || p.userId) !== userId));
-    if (addedUserIds.includes(userId)) {
-      setAddedUserIds((prev) => prev.filter((id) => id !== userId));
+    const role = String(userRole || 'USER');
+    if (addedParticipants.some((entry) => entry.id === userId)) {
+      setAddedParticipants((prev) => prev.filter((entry) => entry.id !== userId));
     } else {
-      setRemovedUserIds((prev) => (prev.includes(userId) ? prev : [...prev, userId]));
+      setRemovedParticipants((prev) =>
+        prev.some((entry) => entry.id === userId) ? prev : [...prev, { id: userId, role }],
+      );
     }
   };
 
@@ -353,15 +360,25 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
       }
 
       // 3) Add participants
-      if (addedUserIds.length > 0) {
-        const uniqueIds = Array.from(new Set(addedUserIds));
-        addParticipants({ chatRoomId: chatRoom.id, participantIds: uniqueIds });
+      if (addedParticipants.length > 0) {
+        const uniqueParticipants = Array.from(
+          new Map(addedParticipants.map((entry) => [entry.id, entry])).values(),
+        );
+        addParticipants({
+          chatRoomId: chatRoom.id,
+          participantIds: uniqueParticipants.map((entry) => entry.id),
+          participants: uniqueParticipants,
+        });
       }
 
       // 4) Remove participants
-      if (removedUserIds.length > 0) {
-        for (const removedId of removedUserIds) {
-          removeParticipant({ chatRoomId: chatRoom.id, participantId: removedId });
+      if (removedParticipants.length > 0) {
+        for (const removed of removedParticipants) {
+          removeParticipant({
+            chatRoomId: chatRoom.id,
+            participantId: removed.id,
+            participantRole: removed.role,
+          });
         }
       }
 
@@ -417,7 +434,7 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
         {showRemove ? (
           <TouchableOpacity
             style={styles.removeBtn}
-            onPress={() => handleRemoveParticipant(userId)}
+            onPress={() => handleRemoveParticipant(userId, role)}
             activeOpacity={0.8}
           >
             <Text style={styles.removeBtnText}>Remove</Text>

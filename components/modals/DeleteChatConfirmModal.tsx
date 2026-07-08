@@ -46,6 +46,7 @@ export default function DeleteChatConfirmModal({
         removeParticipant({
           chatRoomId: chatRoom.id,
           participantId: currentUser.id,
+          participantRole: currentUser.role,
         });
         
         // Remove chat room from local store immediately (optimistic update)

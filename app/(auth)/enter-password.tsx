@@ -19,11 +19,15 @@ export default function EnterPasswordScreen() {
   const router = useRouter();
   const params = useLocalSearchParams();
   const { email, message } = params;
+  const routeMessage = Array.isArray(message) ? message[0] : message;
   const insets = useSafeAreaInsets();
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [bannerMessage, setBannerMessage] = useState<string | null>(
+    routeMessage || null,
+  );
   const { authState, login, clearError } = useAuth();
   
   // Use userEmail from authState if available, otherwise use email from route params
@@ -46,12 +50,20 @@ export default function EnterPasswordScreen() {
     loadSavedPassword();
   }, []);
 
+  useEffect(() => {
+    if (routeMessage) {
+      setBannerMessage(routeMessage);
+    }
+  }, [routeMessage]);
+
   // Simple password validation
   const validatePassword = (password: string): boolean => {
     return password.length >= 6;
   };
 
   const handleSignIn = async () => {
+    setBannerMessage(null);
+
     if (!password.trim()) {
       setLocalError('Password is required');
       return;
@@ -106,14 +118,13 @@ export default function EnterPasswordScreen() {
 
   return (
     <ScreenLayout headerTitle={'Enter Password'} headerButtonText={'Cancel'} onHeaderButtonPress={() => router.back()} footer={Dots}>
-          <View style={[styles.container, message && styles.containerWithMessage]}>
+          <View style={[styles.container, bannerMessage && styles.containerWithMessage]}>
             <Text style={styles.title}>Enter Password</Text>
             
-            {/* Show message from backend if available */}
-            {message && (
+            {bannerMessage && (
               <View style={styles.infoContainer}>
                 <Text style={styles.infoText} accessibilityRole="text">
-                  {message}
+                  {bannerMessage}
                 </Text>
               </View>
             )}
@@ -128,9 +139,10 @@ export default function EnterPasswordScreen() {
                 value={password}
                 onChangeText={(text) => {
                   setPassword(text);
-                  if (localError) setLocalError(null); // Clear error when user types
+                  setBannerMessage(null);
+                  if (localError) setLocalError(null);
                   if (authState.error) clearError();
-                  if (success) setSuccess(null); // Clear success when user types
+                  if (success) setSuccess(null);
                 }}
                 secureTextEntry={!showPassword}
                 autoCapitalize="none"

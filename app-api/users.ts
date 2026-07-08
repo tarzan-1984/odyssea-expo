@@ -53,6 +53,7 @@ export type BackendUserByExternalId = {
 
 /**
  * Find app user in our DB by `externalId` (e.g. TMS user id from load meta `dispatcher_initials`).
+ * Uses `excludeDriver=true` so a duplicate TMS id on a driver row does not shadow the dispatcher.
  */
 export async function getUserByExternalIdFromBackend(
   externalId: string,
@@ -72,7 +73,7 @@ export async function getUserByExternalIdFromBackend(
   }
 
   const response = await fetch(
-    `${API_BASE_URL}/v1/users/external/${encodeURIComponent(trimmed)}`,
+    `${API_BASE_URL}/v1/users/external/${encodeURIComponent(trimmed)}?excludeDriver=true`,
     {
       method: 'GET',
       headers: {

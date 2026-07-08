@@ -7,6 +7,8 @@ import { useAuth } from '@/context/AuthContext';
 import ArrowRight from "@/icons/ArrowRight";
 import { resetPasswordForMobile } from '@/app-api/users';
 
+const PASSWORD_SENT_MESSAGE = 'A new password has been sent to your email';
+
 /**
  * ResetPasswordScreen - Reset password screen
  * User enters email to receive password reset instructions
@@ -18,7 +20,6 @@ export default function ResetPasswordScreen() {
   // Initialize email with userEmail from authState if available
   const [email, setEmail] = useState(authState.userEmail || '');
   const [localError, setLocalError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   // Update email if authState.userEmail changes (e.g., user navigates back and enters email)
@@ -35,9 +36,7 @@ export default function ResetPasswordScreen() {
   };
 
   const handleResetPassword = async () => {
-    // Clear previous errors and success messages
     setLocalError(null);
-    setSuccess(null);
     clearError();
 
     // Validate email
@@ -61,10 +60,14 @@ export default function ResetPasswordScreen() {
       const result = await resetPasswordForMobile(email.trim());
       
       console.log('[ResetPassword] Password reset successful:', result.message);
-      
-      // Show success message
-      setSuccess('A new password has been sent to your email');
-      
+
+      router.replace({
+        pathname: '/enter-password',
+        params: {
+          email: email.trim(),
+          message: PASSWORD_SENT_MESSAGE,
+        },
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Something went wrong. Please try again.';
       setLocalError(errorMessage);
@@ -76,18 +79,9 @@ export default function ResetPasswordScreen() {
 
   return (
     <ScreenLayout headerTitle={''} headerButtonText={'Cancel'} onHeaderButtonPress={() => router.back()}>
-      <View style={[styles.container, (success || localError) && styles.containerWithMessage]}>
+      <View style={styles.container}>
         
         <Text style={styles.title}>Confirm your email to get an updated password.</Text>
-        
-        {/* Show success message */}
-        {success && (
-          <View style={styles.infoContainer}>
-            <Text style={styles.infoText} accessibilityRole="text">
-              {success}
-            </Text>
-          </View>
-        )}
         
         <View style={styles.inputContainer}>
           <TextInput
@@ -99,9 +93,8 @@ export default function ResetPasswordScreen() {
             value={email}
             onChangeText={(text) => {
               setEmail(text);
-              if (localError) setLocalError(null); // Clear error when user types
+              if (localError) setLocalError(null);
               if (authState.error) clearError();
-              if (success) setSuccess(null); // Clear success when user types
             }}
             keyboardType="email-address"
             autoCapitalize="none"
@@ -183,25 +176,6 @@ const styles = StyleSheet.create({
     paddingTop: rem(50),
     paddingHorizontal: rem(26),
     flex: 1,
-  },
-  containerWithMessage: {
-    paddingTop: rem(20), // Minimal top padding when the message is visible
-  },
-  infoContainer: {
-    backgroundColor: 'rgba(52, 199, 89, 0.1)',
-    borderColor: '#34C759',
-    borderWidth: 1,
-    borderRadius: borderRadius.sm10,
-    paddingHorizontal: rem(16),
-    paddingVertical: rem(12),
-    marginBottom: rem(16),
-  },
-  infoText: {
-    color: colors.neutral.white,
-    fontSize: fp(13),
-    fontFamily: fonts["400"],
-    textAlign: 'center',
-    lineHeight: fp(18),
   },
   inputContainer: {
     position: 'relative',

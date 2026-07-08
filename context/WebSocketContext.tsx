@@ -31,8 +31,16 @@ interface WebSocketContextType {
   joinChatRoom: (chatRoomId: string) => void;
   leaveChatRoom: (chatRoomId: string) => void;
   updateChatRoom: (data: { chatRoomId: string; updates: { name?: string; isArchived?: boolean; avatar?: string } }) => void;
-  addParticipants: (data: { chatRoomId: string; participantIds: string[] }) => void;
-  removeParticipant: (data: { chatRoomId: string; participantId: string }) => void;
+  addParticipants: (data: {
+    chatRoomId: string;
+    participantIds?: string[];
+    participants?: Array<{ id: string; role: string }>;
+  }) => void;
+  removeParticipant: (data: {
+    chatRoomId: string;
+    participantId: string;
+    participantRole?: string;
+  }) => void;
   sendMessage: (data: SendMessageData) => void;
   sendTyping: (chatRoomId: string, isTyping: boolean) => void;
   markMessageAsRead: (messageId: string, chatRoomId: string) => void;
@@ -1169,14 +1177,22 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     }
   }, [socket, isConnected]);
 
-  const addParticipants = useCallback((data: { chatRoomId: string; participantIds: string[] }) => {
+  const addParticipants = useCallback((data: {
+    chatRoomId: string;
+    participantIds?: string[];
+    participants?: Array<{ id: string; role: string }>;
+  }) => {
     if (socket && isConnected) {
       console.log('➕ [WebSocket] Adding participants to chat room:', data);
       socket.emit('addParticipants', data);
     }
   }, [socket, isConnected]);
 
-  const removeParticipant = useCallback((data: { chatRoomId: string; participantId: string }) => {
+  const removeParticipant = useCallback((data: {
+    chatRoomId: string;
+    participantId: string;
+    participantRole?: string;
+  }) => {
     if (socket && isConnected) {
       console.log('🚪 [WebSocket] Removing participant from chat room:', data);
       socket.emit('removeParticipant', data);
