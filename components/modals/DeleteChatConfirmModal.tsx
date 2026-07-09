@@ -10,6 +10,9 @@ import { useRouter } from 'expo-router';
 import { useChatStore } from '@/stores/chatStore';
 import { messagesCacheService } from '@/services/MessagesCacheService';
 import { chatCacheService } from '@/services/ChatCacheService';
+import { isMultiUserChatType } from '@/utils/chatRoomTypes';
+import { formatChatPeerDisplayName } from '@/utils/chatPeerDisplayName';
+import { getOfferChatStaffHeaderTitle } from '@/utils/offerChatDisplay';
 
 interface DeleteChatConfirmModalProps {
   isOpen: boolean;
@@ -40,8 +43,8 @@ export default function DeleteChatConfirmModal({
       // Check if user is admin of group chat
       const isCurrentUserAdmin = chatRoom.adminId === currentUser.id;
 
-      if (chatRoom.type === 'GROUP' && !isCurrentUserAdmin) {
-        // For group chats, non-admin users should leave the chat (remove themselves via WebSocket)
+      if (isMultiUserChatType(chatRoom.type) && !isCurrentUserAdmin) {
+        // For group/bid chats, non-admin users should leave the chat (remove themselves via WebSocket)
         // The chat will be removed from store via WebSocket event 'participantRemoved'
         removeParticipant({
           chatRoomId: chatRoom.id,
@@ -65,7 +68,7 @@ export default function DeleteChatConfirmModal({
         // Navigate back to messages list
         router.back();
       } else {
-        // For direct chats or admin deleting group chat, use the delete API
+        // For direct chats or admin deleting group/bid chat, use the delete API
         await chatApi.deleteChatRoom(chatRoom.id);
         
         // Remove chat room from local store
@@ -104,8 +107,8 @@ export default function DeleteChatConfirmModal({
 
     if (chatRoom.type === 'DIRECT') {
       return 'private chat';
-    } else if (chatRoom.type === 'GROUP') {
-      return 'group chat';
+    } else if (isMultiUserChatType(chatRoom.type)) {
+      return chatRoom.type === 'BID' ? 'bid chat' : 'group chat';
     } else if (chatRoom.type === 'LOAD') {
       return 'load chat';
     } else if (chatRoom.type === 'OFFER') {
@@ -120,14 +123,15 @@ export default function DeleteChatConfirmModal({
 
     if (chatRoom.type === 'DIRECT') {
       return 'Are you sure you want to delete this private chat? The conversation will be hidden for you. If the other person sends a message, the chat will reappear.';
-    } else if (chatRoom.type === 'GROUP') {
+    } else if (isMultiUserChatType(chatRoom.type)) {
       // Check if current user is the admin
       const isCurrentUserAdmin = chatRoom.adminId === currentUser?.id;
+      const label = chatRoom.type === 'BID' ? 'bid chat' : 'group chat';
 
       if (isCurrentUserAdmin) {
-        return 'Are you sure you want to delete this group chat? This will permanently delete the chat for all participants.';
+        return `Are you sure you want to delete this ${label}? This will permanently delete the chat for all participants.`;
       } else {
-        return 'Are you sure you want to leave this group chat? You will no longer receive messages from this group.';
+        return `Are you sure you want to leave this ${label}? You will no longer receive messages from this group.`;
       }
     } else if (chatRoom.type === 'LOAD') {
       return 'Are you sure you want to delete this load chat? This will permanently delete the chat and archive all messages for all participants.';
@@ -141,7 +145,7 @@ export default function DeleteChatConfirmModal({
   const getActionText = (): string => {
     if (!chatRoom) return 'Delete';
 
-    if (chatRoom.type === 'GROUP') {
+    if (isMultiUserChatType(chatRoom.type)) {
       // Check if current user is the admin
       const isCurrentUserAdmin = chatRoom.adminId === currentUser?.id;
       return isCurrentUserAdmin ? 'Delete Chat' : 'Leave Chat';
@@ -155,7 +159,7 @@ export default function DeleteChatConfirmModal({
   const getTitle = (): string => {
     if (!chatRoom) return 'Delete Chat';
 
-    if (chatRoom.type === 'GROUP' && chatRoom.adminId !== currentUser?.id) {
+    if (isMultiUserChatType(chatRoom.type) && chatRoom.adminId !== currentUser?.id) {
       return `Leave ${getChatTypeText()}`;
     } else {
       return `Delete ${getChatTypeText()}`;
@@ -166,13 +170,12 @@ export default function DeleteChatConfirmModal({
     if (!chatRoom) return 'Unknown Chat';
 
     if ((chatRoom.type === 'DIRECT' || chatRoom.type === 'OFFER') && chatRoom.participants.length === 2) {
-      // For direct and offer chats, show the other participant's name or chat name
       const otherParticipant = chatRoom.participants.find(p => p.userId !== currentUser?.id);
-      if (chatRoom.type === 'OFFER' && chatRoom.name) {
-        return chatRoom.name;
+      if (chatRoom.type === 'OFFER') {
+        return getOfferChatStaffHeaderTitle(chatRoom, currentUser?.id).replace(/\n/g, ' - ');
       }
       if (otherParticipant && otherParticipant.user) {
-        return `${otherParticipant.user.firstName} ${otherParticipant.user.lastName}`;
+        return formatChatPeerDisplayName(otherParticipant.user);
       }
       return chatRoom.type === 'OFFER' ? 'Offer Chat' : 'Direct Chat';
     }

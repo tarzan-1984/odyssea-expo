@@ -33,8 +33,10 @@ import {
 } from '@/utils/nyWallClock';
 import { chatApi } from '@/app-api/chatApi';
 import { messagesCacheService } from '@/services/MessagesCacheService';
+import { formatChatPeerDisplayName } from '@/utils/chatPeerDisplayName';
 import {
   getDriverOfferChatTitle,
+  getOfferChatStaffHeaderTitle,
   isDriverViewer,
 } from '@/utils/offerChatDisplay';
 
@@ -158,6 +160,10 @@ export default function ChatRoomScreen() {
       return getDriverOfferChatTitle(chatRoom.name);
     }
 
+    if (chatRoom.type === 'OFFER' && chatRoom.participants.length === 2) {
+      return getOfferChatStaffHeaderTitle(chatRoom, authState.user?.id);
+    }
+
     // For DIRECT chats, show the other participant's name
     if (chatRoom.type === 'DIRECT' && chatRoom.participants.length === 2) {
       const otherParticipant = chatRoom.participants.find(
@@ -179,7 +185,7 @@ export default function ChatRoomScreen() {
     }
 
     // Fallback for group chats
-    if (chatRoom.type === 'GROUP' || chatRoom.type === 'LOAD') {
+    if (chatRoom.type === 'GROUP' || chatRoom.type === 'BID' || chatRoom.type === 'LOAD') {
       const participantNames = chatRoom.participants
         .slice(0, 2)
         .map(p => p.user.firstName)
@@ -828,9 +834,9 @@ export default function ChatRoomScreen() {
                   <TouchableOpacity
                     style={styles.headerTitlePressable}
                     activeOpacity={0.8}
-                    disabled={!(chatRoom && (chatRoom.type === 'GROUP' || chatRoom.type === 'LOAD'))}
+                    disabled={!(chatRoom && (chatRoom.type === 'GROUP' || chatRoom.type === 'BID' || chatRoom.type === 'LOAD'))}
                     onPress={() => {
-                      if (chatRoom && (chatRoom.type === 'GROUP' || chatRoom.type === 'LOAD')) {
+                      if (chatRoom && (chatRoom.type === 'GROUP' || chatRoom.type === 'BID' || chatRoom.type === 'LOAD')) {
                         setIsChatInfoModalOpen(true);
                       }
                     }}

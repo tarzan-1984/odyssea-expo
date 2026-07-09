@@ -7,7 +7,7 @@ import {
   type DriversMapSearchFilters,
   type DriverForMap,
 } from '@/app-api/driversSearch';
-import { getStatusLabelForFilter } from '@/constants/driversMapFilters';
+import { driverMapStatusMatchesFilter } from '@/constants/driversMapFilters';
 
 const STALE_TIME_MS = 10 * 60 * 1000; // 10 minutes
 const PAGE_SIZE = 60;
@@ -71,14 +71,14 @@ export function useDriversForMapInfinite(filters: DriversMapSearchFilters) {
     .flatMap((page) => page?.data?.results ?? [])
     .filter((d) => d && typeof d.latitude === 'number' && typeof d.longitude === 'number');
 
-  // Same as Next.js: client-side status filter only when address present (API sends extended_search when no address)
+  // Same as Next.js: client-side status filter only when address present (API sends status_filter when no address)
   const drivers = useMemo(() => {
     const statusFilter = baseParams.statusFilter;
-    if (!statusFilter) return rawDrivers;
+    if (!statusFilter || statusFilter === 'all') return rawDrivers;
     const hasAddressFilter = Boolean(baseParams.addressFilter?.trim());
-    if (!hasAddressFilter) return rawDrivers; // API already filtered via extended_search
-    return rawDrivers.filter(
-      (d) => getStatusLabelForFilter(d.driverStatus) === statusFilter,
+    if (!hasAddressFilter) return rawDrivers; // API already filtered via status_filter
+    return rawDrivers.filter((d) =>
+      driverMapStatusMatchesFilter(d.driverStatus, statusFilter)
     );
   }, [rawDrivers, baseParams.statusFilter, baseParams.addressFilter]);
 

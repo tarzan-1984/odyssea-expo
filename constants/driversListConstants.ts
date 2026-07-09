@@ -75,29 +75,52 @@ export function getContrastTextOnStatusBackground(bgHex: string): '#ffffff' | '#
 
 /**
  * Status picker for drivers list / TMS filters (modal).
- * Excludes Out of service, On vacation, No updates. "Blocked" is admin-only — use
- * getDriverStatusFilterModalOptions(isAdministrator).
+ * Values match TMS status_filter keys. Blocked / Out of service only for
+ * DRIVERS_MAP_RESTRICTED_STATUS_VIEWER_ROLES — use getDriverStatusFilterModalOptions().
  */
 export const DRIVER_STATUS_FILTER_OPTIONS: { value: string; label: string }[] = [
-  { value: '', label: 'All statuses' },
-  { value: 'Available', label: 'Available' },
-  { value: 'Available on', label: 'Available on' },
-  { value: 'Not available', label: 'Not available' },
-  { value: 'Loaded & Enroute', label: 'Loaded & Enroute' },
+  { value: 'all', label: 'All statuses' },
+  { value: 'for_offers', label: 'Default' },
+  { value: 'available', label: 'Available' },
+  { value: 'available_on', label: 'Available on' },
+  { value: 'available_off', label: 'Not available' },
+  { value: 'loaded_enroute', label: 'Loaded & Enroute' },
+  { value: 'on_vocation', label: 'On vacation' },
+  { value: 'expired_documents', label: 'Expired documents' },
 ];
 
+export const DRIVER_STATUS_FILTER_OPTION_BANNED = {
+  value: 'banned',
+  label: 'Out of service',
+} as const;
+
 export const DRIVER_STATUS_FILTER_OPTION_BLOCKED = {
-  value: 'Blocked',
+  value: 'blocked',
   label: 'Blocked',
 } as const;
 
+/** Status values hidden from users without restricted-status viewer roles. */
+export const RESTRICTED_DRIVER_STATUS_FILTER_VALUES = new Set(['blocked', 'banned']);
+
 export function getDriverStatusFilterModalOptions(
-  isAdministrator: boolean
+  canViewRestrictedStatuses: boolean
 ): { value: string; label: string }[] {
-  if (isAdministrator) {
-    return [...DRIVER_STATUS_FILTER_OPTIONS, DRIVER_STATUS_FILTER_OPTION_BLOCKED];
+  if (!canViewRestrictedStatuses) {
+    return DRIVER_STATUS_FILTER_OPTIONS;
   }
-  return DRIVER_STATUS_FILTER_OPTIONS;
+  const options = [...DRIVER_STATUS_FILTER_OPTIONS];
+  // Insert banned/blocked in TMS order: after loaded_enroute, before on_vocation
+  const insertAt = options.findIndex((o) => o.value === 'on_vocation');
+  const restricted = [
+    DRIVER_STATUS_FILTER_OPTION_BANNED,
+    DRIVER_STATUS_FILTER_OPTION_BLOCKED,
+  ];
+  if (insertAt >= 0) {
+    options.splice(insertAt, 0, ...restricted);
+  } else {
+    options.push(...restricted);
+  }
+  return options;
 }
 
 export const RADIUS_MILES_OPTIONS = [
@@ -182,5 +205,22 @@ export function formatDateMmDdYy(date: Date | null): string {
   const m = (date.getMonth() + 1).toString().padStart(2, '0');
   const d = date.getDate().toString().padStart(2, '0');
   const y = date.getFullYear().toString().slice(-2);
-  return `${m}/${d}/${y}`;
+  let hours = date.getHours();
+  const minutes = date.getMinutes().toString().padStart(2, '0');
+  const ampm = hours >= 12 ? 'pm' : 'am';
+  hours = hours % 12;
+  if (hours === 0) hours = 12;
+  return `${m}/${d}/${y} ${hours}:${minutes}${ampm}`;
+}
+
+/** Statuses that show `date_available` instead of location-update timestamps. */
+const DATE_AVAILABLE_STATUSES = new Set([
+  'available_on',
+  'loaded_enroute',
+  'on_vocation',
+]);
+
+export function usesDateAvailableForDisplay(status: string | null | undefined): boolean {
+  if (!status) return false;
+  return DATE_AVAILABLE_STATUSES.has(status.trim().toLowerCase());
 }

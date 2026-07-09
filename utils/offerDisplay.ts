@@ -9,3 +9,12 @@ export function canShowOfferId(user: OfferIdVisibilityUser): boolean {
   const externalId = String(user?.externalId ?? '').trim();
   return role === 'ADMINISTRATOR' && externalId === '83';
 }
+
+export function formatOfferIdSuffix(
+  offerId: string | number | null | undefined,
+  user: OfferIdVisibilityUser,
+): string {
+  if (!canShowOfferId(user) || offerId == null) return '';
+  const id = String(offerId).trim();
+  return id ? ` (id: ${id})` : '';
+}

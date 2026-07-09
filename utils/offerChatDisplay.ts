@@ -1,4 +1,5 @@
 import { abbreviateStateInLocationString } from '@/utils/formatDriverLocation';
+import { formatOfferChatDriverDisplayName } from '@/utils/chatPeerDisplayName';
 
 const ROUTE_SEPARATORS = [' — ', ' - ', ' → ', '–'] as const;
 
@@ -48,4 +49,46 @@ export function getDriverOfferChatTitle(chatName: string | null | undefined): st
 
 export function isDriverViewer(role: string | null | undefined): boolean {
   return role?.trim().toUpperCase() === 'DRIVER';
+}
+
+function getOtherParticipant(
+  chatRoom: {
+    participants: Array<{ user: { id: string } }>;
+  },
+  currentUserId?: string | null,
+) {
+  return chatRoom.participants.find((participant) => participant.user.id !== currentUserId);
+}
+
+/** Staff-facing OFFER chat header: "unit firstName lastName\\nroute" (no offer id). */
+export function getOfferChatStaffHeaderTitle(
+  chatRoom: {
+    name?: string;
+    participants: Array<{
+      user: {
+        id: string;
+        firstName: string;
+        lastName: string;
+        role?: string;
+        externalId?: string | null;
+        unit?: string;
+      };
+    }>;
+  },
+  currentUserId?: string | null,
+): string {
+  const otherParticipant = getOtherParticipant(chatRoom, currentUserId);
+  if (!otherParticipant) {
+    const fallbackLine =
+      chatRoom.name?.split('\n')[0]?.replace(/\(id:\s*[^)]+\)/, '').trim() || 'Unknown Chat';
+    return fallbackLine;
+  }
+
+  const driverName = formatOfferChatDriverDisplayName(otherParticipant.user);
+  const route = parseOfferChatRouteLine(chatRoom.name);
+  if (route) {
+    return `${driverName}\n${formatOfferRouteLineForDriver(route)}`;
+  }
+
+  return driverName;
 }

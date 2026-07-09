@@ -98,8 +98,12 @@ export async function fetchDriversSearchPage(
     searchParams.set('my_search', params.addressFilter);
     searchParams.set('radius', params.radiusFilter);
     searchParams.set('country', params.locationFilter);
-  } else if (!params.addressFilter && params.statusFilter) {
-    searchParams.set('extended_search', params.statusFilter);
+  }
+
+  const trimmedStatus = params.statusFilter?.trim() ?? '';
+  // "all" / empty → omit status_filter (same as Next.js resolveStatusFilterForQuery)
+  if (trimmedStatus && trimmedStatus !== 'all') {
+    searchParams.set('status_filter', trimmedStatus);
   }
 
   const url = `${TMS_DRIVER_SEARCH_URL}?${searchParams.toString()}`;

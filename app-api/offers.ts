@@ -92,6 +92,10 @@ export interface GetOffersResponse {
   };
 }
 
+export interface EditDriverRatePayload {
+  rate: number;
+}
+
 export interface SetDriverRatePayload {
   rate: number;
   rateTimeMinutes: number;
@@ -481,6 +485,45 @@ export async function setDriverRateForOfferDriver(
     throw new Error(
       (data && (data.error || data.message)) ||
         `Failed to set driver rate. Status: ${response.status}`
+    );
+  }
+
+  return data as SetDriverRateResponse;
+}
+
+export async function editDriverRateForOfferDriver(
+  offerId: number,
+  driverExternalId: string,
+  payload: EditDriverRatePayload
+): Promise<SetDriverRateResponse> {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is not configured');
+  }
+
+  const accessToken = await secureStorage.getItemAsync('accessToken');
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
+
+  const url = `${API_BASE_URL}/v1/offers/${offerId}/drivers/${encodeURIComponent(
+    driverExternalId
+  )}/rate`;
+
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      (data && (data.error || data.message)) ||
+        `Failed to edit driver rate. Status: ${response.status}`
     );
   }
 

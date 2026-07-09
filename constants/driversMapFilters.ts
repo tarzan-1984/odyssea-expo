@@ -1,23 +1,44 @@
 /**
- * Filter options for drivers map - same as Next.js drivers-map
+ * Filter options for drivers map - same as Next.js drivers-map / drivers-list TMS keys.
  */
 
-/** Labels for map status picker (no "All statuses" — empty string means all). */
-const DRIVER_MAP_STATUS_LABELS_BASE = [
-  'Available',
-  'Available on',
-  'Not available',
-  'Loaded & Enroute',
-] as const;
+export const DRIVER_MAP_STATUS_FILTER_OPTIONS: { value: string; label: string }[] = [
+  { value: 'available', label: 'Available' },
+  { value: 'available_on', label: 'Available on' },
+  { value: 'available_off', label: 'Not available' },
+  { value: 'loaded_enroute', label: 'Loaded & Enroute' },
+];
+
+export const DRIVER_MAP_STATUS_FILTER_OPTION_BANNED = {
+  value: 'banned',
+  label: 'Out of service',
+} as const;
+
+export const DRIVER_MAP_STATUS_FILTER_OPTION_BLOCKED = {
+  value: 'blocked',
+  label: 'Blocked',
+} as const;
 
 /**
- * Map filters status dropdown: same rules as drivers list (no out-of-service /
- * vacation / no-updates; Blocked only for administrators).
+ * Map filters status dropdown: TMS keys; Blocked / Out of service only for
+ * DRIVERS_MAP_RESTRICTED_STATUS_VIEWER_ROLES.
  */
-export function getDriverMapStatusFilterLabels(isAdministrator: boolean): string[] {
-  const labels = [...DRIVER_MAP_STATUS_LABELS_BASE];
-  if (isAdministrator) labels.push('Blocked');
-  return labels;
+export function getDriverMapStatusFilterOptions(
+  canViewRestrictedStatuses: boolean
+): { value: string; label: string }[] {
+  const options = [...DRIVER_MAP_STATUS_FILTER_OPTIONS];
+  if (canViewRestrictedStatuses) {
+    options.push(
+      DRIVER_MAP_STATUS_FILTER_OPTION_BANNED,
+      DRIVER_MAP_STATUS_FILTER_OPTION_BLOCKED
+    );
+  }
+  return options;
+}
+
+/** @deprecated Use getDriverMapStatusFilterOptions — kept for temporary label compat */
+export function getDriverMapStatusFilterLabels(canViewRestrictedStatuses: boolean): string[] {
+  return getDriverMapStatusFilterOptions(canViewRestrictedStatuses).map((o) => o.label);
 }
 
 export const CAPABILITIES_OPTIONS = [
@@ -71,4 +92,16 @@ export function getStatusLabelForFilter(status: string | null | undefined): stri
     need_update: 'Need update',
   };
   return labels[key] ?? status;
+}
+
+/** Match driver status against TMS filter value or legacy label. */
+export function driverMapStatusMatchesFilter(
+  driverStatus: string | null | undefined,
+  filterValue: string
+): boolean {
+  if (!filterValue || filterValue === 'all') return true;
+  const raw = (driverStatus ?? '').toString().trim().toLowerCase();
+  const fv = filterValue.trim().toLowerCase();
+  if (raw && raw === fv) return true;
+  return getStatusLabelForFilter(driverStatus).trim().toLowerCase() === fv;
 }

@@ -18,6 +18,7 @@ import type { LocationCountryFilter } from '@/constants/driversListConstants';
 import {
   DRIVER_CAPABILITY_FILTER_OPTIONS,
   getDriverStatusFilterModalOptions,
+  RESTRICTED_DRIVER_STATUS_FILTER_VALUES,
   RADIUS_MILES_OPTIONS,
 } from '@/constants/driversListConstants';
 
@@ -34,7 +35,7 @@ function defaultFiltersState(): DriversFiltersState {
     address: '',
     locationFilter: 'USA',
     radiusFilter: '500',
-    statusFilter: '',
+    statusFilter: 'all',
     capabilitiesFilter: [],
   };
 }
@@ -44,42 +45,35 @@ interface DriversFiltersModalProps {
   onClose: () => void;
   initial: DriversFiltersState;
   onApply: (next: DriversFiltersState) => void;
-  /** When false, "Blocked" and legacy removed statuses are not selectable; draft is sanitized if needed. */
-  isAdministrator?: boolean;
+  /** Same as Next.js canViewRestrictedDriverStatusesOnMap */
+  canViewRestrictedStatuses?: boolean;
 }
-
-const DISALLOWED_STATUS_FILTER_FOR_NON_ADMIN = new Set([
-  'Blocked',
-  'Out of service',
-  'On vacation',
-  'No updates',
-]);
 
 export default function DriversFiltersModal({
   visible,
   onClose,
   initial,
   onApply,
-  isAdministrator = false,
+  canViewRestrictedStatuses = false,
 }: DriversFiltersModalProps) {
   const insets = useSafeAreaInsets();
   const [draft, setDraft] = useState<DriversFiltersState>(initial);
   const [statusPickerOpen, setStatusPickerOpen] = useState(false);
 
-  const statusOptions = getDriverStatusFilterModalOptions(isAdministrator);
+  const statusOptions = getDriverStatusFilterModalOptions(canViewRestrictedStatuses);
 
   useEffect(() => {
     if (!visible) return;
     let next = { ...initial };
     if (
-      !isAdministrator &&
+      !canViewRestrictedStatuses &&
       next.statusFilter &&
-      DISALLOWED_STATUS_FILTER_FOR_NON_ADMIN.has(next.statusFilter)
+      RESTRICTED_DRIVER_STATUS_FILTER_VALUES.has(next.statusFilter)
     ) {
-      next = { ...next, statusFilter: '' };
+      next = { ...next, statusFilter: 'all' };
     }
     setDraft(next);
-  }, [visible, initial, isAdministrator]);
+  }, [visible, initial, canViewRestrictedStatuses]);
 
   useEffect(() => {
     if (!visible) setStatusPickerOpen(false);
@@ -118,74 +112,84 @@ export default function DriversFiltersModal({
           style={styles.scroll}
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="on-drag"
-          onScrollBeginDrag={() => Keyboard.dismiss()}
+          onScrollBeginDrag={Keyboard.dismiss}
         >
-          <Text style={styles.sectionLabel}>Address</Text>
+          <Text style={styles.label}>Address</Text>
           <TextInput
             style={styles.input}
             value={draft.address}
-            onChangeText={(t) => setDraft((d) => ({ ...d, address: t }))}
-            placeholder="City, state or ZIP"
+            onChangeText={(address) => setDraft((d) => ({ ...d, address }))}
+            placeholder="Enter address"
             placeholderTextColor={colors.neutral.grey}
+            autoCorrect={false}
           />
 
-          <Text style={styles.sectionLabel}>Location</Text>
-          <View style={styles.rowChips}>
-            {(['USA', 'Canada'] as const).map((c) => (
+          <Text style={styles.label}>Location</Text>
+          <View style={styles.row}>
+            {(['USA', 'Canada'] as const).map((loc) => (
               <TouchableOpacity
-                key={c}
-                style={[styles.chip, draft.locationFilter === c && styles.chipActive]}
-                onPress={() => setDraft((d) => ({ ...d, locationFilter: c }))}
+                key={loc}
+                style={[
+                  styles.chip,
+                  draft.locationFilter === loc && styles.chipActive,
+                ]}
+                onPress={() => setDraft((d) => ({ ...d, locationFilter: loc }))}
               >
                 <Text
-                  style={[styles.chipText, draft.locationFilter === c && styles.chipTextActive]}
+                  style={[
+                    styles.chipText,
+                    draft.locationFilter === loc && styles.chipTextActive,
+                  ]}
                 >
-                  {c}
+                  {loc}
                 </Text>
               </TouchableOpacity>
             ))}
           </View>
 
-          <Text style={styles.sectionLabel}>Radius (miles)</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hScroll}>
-            {RADIUS_MILES_OPTIONS.map((r) => (
+          <Text style={styles.label}>Radius</Text>
+          <View style={styles.rowWrap}>
+            {RADIUS_MILES_OPTIONS.map((miles) => (
               <TouchableOpacity
-                key={r}
-                style={[styles.chip, draft.radiusFilter === r && styles.chipActive]}
-                onPress={() => setDraft((d) => ({ ...d, radiusFilter: r }))}
+                key={miles}
+                style={[
+                  styles.chip,
+                  draft.radiusFilter === miles && styles.chipActive,
+                ]}
+                onPress={() => setDraft((d) => ({ ...d, radiusFilter: miles }))}
               >
-                <Text style={[styles.chipText, draft.radiusFilter === r && styles.chipTextActive]}>
-                  {r}
+                <Text
+                  style={[
+                    styles.chipText,
+                    draft.radiusFilter === miles && styles.chipTextActive,
+                  ]}
+                >
+                  {miles} mi
                 </Text>
               </TouchableOpacity>
             ))}
-          </ScrollView>
+          </View>
 
-          <Text style={styles.sectionLabel}>Status</Text>
+          <Text style={styles.label}>Status</Text>
           <TouchableOpacity
-            style={styles.selectTrigger}
+            style={styles.select}
             onPress={() => setStatusPickerOpen(true)}
-            activeOpacity={0.7}
           >
-            <Text style={styles.selectTriggerText} numberOfLines={1}>
-              {statusLabel}
-            </Text>
-            <Text style={styles.selectChevron}>▼</Text>
+            <Text style={styles.selectText}>{statusLabel}</Text>
           </TouchableOpacity>
 
-          <Text style={styles.sectionLabel}>Capabilities</Text>
-          <View style={styles.capWrap}>
-            {DRIVER_CAPABILITY_FILTER_OPTIONS.map((opt) => {
-              const on = draft.capabilitiesFilter.includes(opt.value);
+          <Text style={styles.label}>Capabilities</Text>
+          <View style={styles.rowWrap}>
+            {DRIVER_CAPABILITY_FILTER_OPTIONS.map((cap) => {
+              const selected = draft.capabilitiesFilter.includes(cap.value);
               return (
                 <TouchableOpacity
-                  key={opt.value}
-                  style={[styles.capChip, on && styles.capChipActive]}
-                  onPress={() => toggleCapability(opt.value)}
+                  key={cap.value}
+                  style={[styles.chip, selected && styles.chipActive]}
+                  onPress={() => toggleCapability(cap.value)}
                 >
-                  <Text style={[styles.capChipText, on && styles.capChipTextActive]}>
-                    {opt.label}
+                  <Text style={[styles.chipText, selected && styles.chipTextActive]}>
+                    {cap.label}
                   </Text>
                 </TouchableOpacity>
               );
@@ -193,69 +197,60 @@ export default function DriversFiltersModal({
           </View>
         </ScrollView>
 
-        <View
-          style={[
-            styles.footerBar,
-            {
-              paddingBottom: Math.max(insets.bottom, rem(12)),
-              paddingTop: rem(12),
-            },
-          ]}
-        >
-          <TouchableOpacity style={styles.btnSecondary} onPress={resetAndApply}>
-            <Text style={styles.btnSecondaryText}>Reset</Text>
+        <View style={[styles.footer, { paddingBottom: insets.bottom + rem(12) }]}>
+          <TouchableOpacity style={styles.resetBtn} onPress={resetAndApply}>
+            <Text style={styles.resetBtnText}>Reset</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={styles.btnPrimary}
+            style={styles.applyBtn}
             onPress={() => {
               onApply(draft);
               onClose();
             }}
           >
-            <Text style={styles.btnPrimaryText}>Apply</Text>
+            <Text style={styles.applyBtnText}>Apply</Text>
           </TouchableOpacity>
         </View>
-
-        {statusPickerOpen ? (
-          <View style={styles.statusOverlay} pointerEvents="box-none">
-            <Pressable
-              style={styles.statusModalBackdrop}
-              onPress={() => setStatusPickerOpen(false)}
-            />
-            <View style={styles.statusModalCenter} pointerEvents="box-none">
-              <View style={styles.statusModalSheet}>
-                <Text style={styles.statusModalTitle}>Status</Text>
-                <FlatList
-                  data={statusOptions}
-                  keyExtractor={(item) => item.value || 'all'}
-                  keyboardShouldPersistTaps="handled"
-                  renderItem={({ item }) => {
-                    const selected = draft.statusFilter === item.value;
-                    return (
-                      <TouchableOpacity
-                        style={[styles.statusPickerRow, selected && styles.statusPickerRowActive]}
-                        onPress={() => {
-                          setDraft((d) => ({ ...d, statusFilter: item.value }));
-                          setStatusPickerOpen(false);
-                        }}
-                      >
-                        <Text
-                          style={[
-                            styles.statusPickerRowText,
-                            selected && styles.statusPickerRowTextActive,
-                          ]}
-                        >
-                          {item.label}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  }}
-                />
-              </View>
-            </View>
-          </View>
-        ) : null}
       </View>
+
+      <Modal
+        visible={statusPickerOpen}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setStatusPickerOpen(false)}
+      >
+        <Pressable
+          style={styles.statusOverlay}
+          onPress={() => setStatusPickerOpen(false)}
+        >
+          <View style={styles.statusSheet}>
+            <Text style={styles.statusSheetTitle}>Status</Text>
+            <FlatList
+              data={statusOptions}
+              keyExtractor={(item) => item.value || 'all'}
+              keyboardShouldPersistTaps="handled"
+              renderItem={({ item }) => {
+                const selected = draft.statusFilter === item.value;
+                return (
+                  <TouchableOpacity
+                    style={[styles.optionItem, selected && styles.optionItemActive]}
+                    onPress={() => {
+                      setDraft((d) => ({ ...d, statusFilter: item.value }));
+                      setStatusPickerOpen(false);
+                    }}
+                  >
+                    <Text
+                      style={[styles.optionText, selected && styles.optionTextActive]}
+                    >
+                      {item.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          </View>
+        </Pressable>
+      </Modal>
     </Modal>
   );
 }
@@ -263,202 +258,150 @@ export default function DriversFiltersModal({
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-    backgroundColor: colors.neutral.white,
+    backgroundColor: colors.neutral.mapGrey,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: rem(20),
-    paddingBottom: rem(16),
+    paddingHorizontal: rem(16),
+    paddingBottom: rem(12),
     backgroundColor: colors.primary.violet,
   },
   title: {
-    fontSize: fp(24),
-    fontFamily: fonts['700'],
+    fontFamily: fonts.semiBold,
+    fontSize: fp(18),
     color: colors.neutral.white,
   },
   close: {
-    fontSize: fp(17),
-    fontFamily: fonts['600'],
+    fontFamily: fonts.medium,
+    fontSize: fp(15),
     color: colors.neutral.white,
   },
-  scroll: {
-    flex: 1,
-    paddingHorizontal: rem(20),
-  },
+  scroll: { flex: 1 },
   scrollContent: {
-    paddingBottom: rem(16),
+    padding: rem(16),
+    paddingBottom: rem(24),
   },
-  sectionLabel: {
-    marginTop: rem(18),
-    marginBottom: rem(8),
+  label: {
+    fontFamily: fonts.medium,
     fontSize: fp(13),
-    fontFamily: fonts['600'],
-    color: colors.neutral.darkGrey,
+    color: colors.neutral.grey,
+    marginBottom: rem(8),
+    marginTop: rem(12),
   },
   input: {
     borderWidth: 1,
     borderColor: colors.neutral.lightGrey,
     borderRadius: rem(10),
-    paddingHorizontal: rem(14),
-    paddingVertical: Platform.OS === 'ios' ? rem(12) : rem(10),
+    paddingHorizontal: rem(12),
+    paddingVertical: Platform.OS === 'ios' ? rem(12) : rem(8),
+    fontFamily: fonts.regular,
     fontSize: fp(15),
-    fontFamily: fonts['400'],
-    color: colors.neutral.darkGrey,
+    color: colors.neutral.black,
+    backgroundColor: colors.neutral.white,
   },
-  rowChips: {
-    flexDirection: 'row',
-    gap: rem(8),
-  },
-  hScroll: {
-    marginHorizontal: -rem(4),
-  },
+  row: { flexDirection: 'row', gap: rem(8) },
+  rowWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: rem(8) },
   chip: {
-    paddingHorizontal: rem(14),
-    paddingVertical: rem(8),
-    borderRadius: rem(20),
     borderWidth: 1,
     borderColor: colors.neutral.lightGrey,
-    marginRight: rem(8),
-    marginBottom: rem(8),
+    borderRadius: rem(20),
+    paddingHorizontal: rem(12),
+    paddingVertical: rem(8),
+    backgroundColor: colors.neutral.white,
   },
   chipActive: {
-    backgroundColor: colors.primary.blue,
     borderColor: colors.primary.blue,
+    backgroundColor: colors.primary.blue,
   },
   chipText: {
-    fontSize: fp(14),
-    fontFamily: fonts['500'],
+    fontFamily: fonts.medium,
+    fontSize: fp(13),
     color: colors.neutral.darkGrey,
   },
-  chipTextActive: {
-    color: colors.neutral.white,
-  },
-  selectTrigger: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+  chipTextActive: { color: colors.neutral.white },
+  select: {
     borderWidth: 1,
     borderColor: colors.neutral.lightGrey,
     borderRadius: rem(10),
-    paddingHorizontal: rem(14),
-    paddingVertical: Platform.OS === 'ios' ? rem(14) : rem(12),
+    paddingHorizontal: rem(12),
+    paddingVertical: rem(12),
     backgroundColor: colors.neutral.white,
   },
-  selectTriggerText: {
-    flex: 1,
+  selectText: {
+    fontFamily: fonts.regular,
     fontSize: fp(15),
-    fontFamily: fonts['500'],
-    color: colors.neutral.darkGrey,
-    marginRight: rem(8),
+    color: colors.neutral.black,
   },
-  selectChevron: {
-    fontSize: fp(12),
-    color: colors.neutral.grey,
-  },
-  capWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: rem(8),
-  },
-  capChip: {
-    paddingHorizontal: rem(10),
-    paddingVertical: rem(6),
-    borderRadius: rem(8),
-    backgroundColor: colors.neutral.lightGrey,
-  },
-  capChipActive: {
-    backgroundColor: colors.primary.blue,
-  },
-  capChipText: {
-    fontSize: fp(12),
-    fontFamily: fonts['500'],
-    color: colors.neutral.darkGrey,
-  },
-  capChipTextActive: {
-    color: colors.neutral.white,
-  },
-  footerBar: {
+  footer: {
     flexDirection: 'row',
     gap: rem(12),
-    paddingHorizontal: rem(20),
+    paddingHorizontal: rem(16),
+    paddingTop: rem(12),
     borderTopWidth: StyleSheet.hairlineWidth,
     borderTopColor: colors.neutral.lightGrey,
     backgroundColor: colors.neutral.white,
   },
-  btnSecondary: {
+  resetBtn: {
     flex: 1,
-    paddingVertical: rem(14),
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: rem(12),
     borderRadius: rem(10),
     borderWidth: 1,
-    borderColor: colors.neutral.lightGrey,
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderColor: colors.neutral.mediumGrey,
   },
-  btnSecondaryText: {
-    fontSize: fp(16),
-    fontFamily: fonts['600'],
+  resetBtnText: {
+    fontFamily: fonts.medium,
+    fontSize: fp(15),
     color: colors.neutral.darkGrey,
   },
-  btnPrimary: {
+  applyBtn: {
     flex: 1,
-    paddingVertical: rem(14),
-    borderRadius: rem(10),
-    backgroundColor: colors.primary.blue,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingVertical: rem(12),
+    borderRadius: rem(10),
+    backgroundColor: colors.primary.blue,
   },
-  btnPrimaryText: {
-    fontSize: fp(16),
-    fontFamily: fonts['700'],
+  applyBtnText: {
+    fontFamily: fonts.semiBold,
+    fontSize: fp(15),
     color: colors.neutral.white,
   },
   statusOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 100,
-    elevation: 100,
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
   },
-  statusModalBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(0, 0, 0, 0.45)',
-  },
-  statusModalCenter: {
-    ...StyleSheet.absoluteFillObject,
-    justifyContent: 'center',
-    paddingHorizontal: rem(24),
-  },
-  statusModalSheet: {
-    maxHeight: '72%',
+  statusSheet: {
+    maxHeight: '70%',
     backgroundColor: colors.neutral.white,
-    borderRadius: rem(14),
-    paddingTop: rem(16),
-    paddingBottom: rem(8),
-    overflow: 'hidden',
+    borderTopLeftRadius: rem(16),
+    borderTopRightRadius: rem(16),
+    paddingBottom: rem(24),
   },
-  statusModalTitle: {
-    fontSize: fp(17),
-    fontFamily: fonts['700'],
-    color: colors.neutral.darkGrey,
-    paddingHorizontal: rem(16),
-    marginBottom: rem(8),
-  },
-  statusPickerRow: {
-    paddingVertical: rem(14),
-    paddingHorizontal: rem(16),
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.neutral.lightGrey,
-  },
-  statusPickerRowActive: {
-    backgroundColor: 'rgba(37, 99, 235, 0.08)',
-  },
-  statusPickerRowText: {
+  statusSheetTitle: {
+    fontFamily: fonts.semiBold,
     fontSize: fp(16),
-    fontFamily: fonts['400'],
+    color: colors.neutral.black,
+    padding: rem(16),
+  },
+  optionItem: {
+    paddingHorizontal: rem(16),
+    paddingVertical: rem(14),
+  },
+  optionItemActive: {
+    backgroundColor: colors.neutral.veryLightGrey,
+  },
+  optionText: {
+    fontFamily: fonts.regular,
+    fontSize: fp(15),
     color: colors.neutral.darkGrey,
   },
-  statusPickerRowTextActive: {
-    fontFamily: fonts['600'],
+  optionTextActive: {
+    fontFamily: fonts.semiBold,
     color: colors.primary.blue,
   },
 });

@@ -26,6 +26,7 @@ import { useChatStore } from '@/stores/chatStore';
 import { chatCacheService } from '@/services/ChatCacheService';
 import LoadChatsArchiveSection from '@/components/LoadChatsArchiveSection';
 import { chatRoomMatchesSearchQuery } from '@/utils/chatSearch';
+import { formatChatPeerDisplayName, formatOfferChatDriverDisplayName } from '@/utils/chatPeerDisplayName';
 
 type FilterType = 'all' | 'muted' | 'unread' | 'favorite';
 
@@ -44,7 +45,7 @@ const filterOptions: FilterOption[] = [
 type MessagesTab = 'chats' | 'shipments' | 'offers';
 
 function isRoomInMessagesTab(room: ChatRoom, tab: MessagesTab): boolean {
-  if (tab === 'chats') return room.type !== 'LOAD' && room.type !== 'OFFER';
+  if (tab === 'chats') return room.type !== 'LOAD' && room.type !== 'OFFER' && room.type !== 'BID';
   if (tab === 'shipments') {
     return room.type === 'LOAD' && room.isLoadArchived !== true;
   }
@@ -301,13 +302,17 @@ export default function MessagesScreen() {
   // Get display name for chat room (for search filtering)
   // Mirrors Next.js ChatList.getChatDisplayName logic
   const getChatDisplayName = (chatRoom: ChatRoom): string => {
-    // For DIRECT chats, always show the other participant's name first
-    if (chatRoom.type === 'DIRECT' && chatRoom.participants.length === 2) {
+    if (
+      (chatRoom.type === 'DIRECT' || chatRoom.type === 'OFFER') &&
+      chatRoom.participants.length === 2
+    ) {
       const otherParticipant = chatRoom.participants.find(
         p => p.user.id !== authState.user?.id
       );
       if (otherParticipant) {
-        return `${otherParticipant.user.firstName} ${otherParticipant.user.lastName}`;
+        return chatRoom.type === 'OFFER'
+          ? formatOfferChatDriverDisplayName(otherParticipant.user)
+          : formatChatPeerDisplayName(otherParticipant.user);
       }
     }
 
@@ -317,7 +322,7 @@ export default function MessagesScreen() {
     }
 
     // For group chats, show participant names
-    if (chatRoom.type === 'GROUP' || chatRoom.type === 'LOAD') {
+    if (chatRoom.type === 'GROUP' || chatRoom.type === 'BID' || chatRoom.type === 'LOAD') {
       const participantNames = chatRoom.participants
         .slice(0, 2)
         .map(p => p.user.firstName)
@@ -333,7 +338,7 @@ export default function MessagesScreen() {
   const filteredChatRooms = useMemo(() => {
     return chatRooms.filter(chatRoom => {
       // Tab filtering (same as Next.js ChatList):
-      // Chats: not LOAD, not OFFER | Shipments: active LOAD only (archive section is separate)
+      // Chats: not LOAD, not OFFER, not BID | Shipments: active LOAD only (archive section is separate)
       // | Offers: OFFER
       if (!isRoomInMessagesTab(chatRoom, activeTab)) return false;
 

@@ -299,7 +299,7 @@ class ChatApiClient {
    */
   async createChatRoom(data: {
     name?: string;
-    type: 'DIRECT' | 'GROUP' | 'LOAD';
+    type: 'DIRECT' | 'GROUP' | 'LOAD' | 'BID';
     loadId?: string;
     avatar?: string;
     participantIds: string[];

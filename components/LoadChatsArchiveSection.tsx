@@ -75,7 +75,7 @@ function getArchiveChatDisplayName(
     return chatRoom.name;
   }
 
-  if (chatRoom.type === 'GROUP' || chatRoom.type === 'LOAD' || chatRoom.type === 'OFFER') {
+  if (chatRoom.type === 'GROUP' || chatRoom.type === 'BID' || chatRoom.type === 'LOAD' || chatRoom.type === 'OFFER') {
     const participantNames = chatRoom.participants
       .slice(0, 2)
       .map((p) => p.user.firstName)

@@ -15,9 +15,15 @@ import { colors, fonts, rem, fp } from '@/lib';
 import BottomNavigation from '@/components/navigation/BottomNavigation';
 import WorkTopMenu from '@/components/work/WorkTopMenu';
 import { useAuth } from '@/context/AuthContext';
-import { canAccessWorkTab, canAccessDriversAndOffers } from '@/constants/roleAccess';
+import {
+  canAccessWorkTab,
+  canAccessDriversAndOffers,
+  canViewRestrictedDriverStatuses,
+} from '@/constants/roleAccess';
 import { useDriversListInfinite } from '@/hooks/useDriversListInfinite';
-import { getDriverStatusLabel } from '@/constants/driversListConstants';
+import {
+  RESTRICTED_DRIVER_STATUS_FILTER_VALUES,
+} from '@/constants/driversListConstants';
 import type { TmsDriver } from '@/app-api/tmsDriverSearch';
 import DriversFiltersModal, {
   type DriversFiltersState,
@@ -27,18 +33,11 @@ import CreateOfferSheet from '@/components/drivers/CreateOfferSheet';
 
 const ITEMS_PER_PAGE = 20;
 
-const DISALLOWED_DRIVER_STATUS_FILTER_FOR_NON_ADMIN = new Set([
-  'Blocked',
-  'Out of service',
-  'On vacation',
-  'No updates',
-]);
-
 const defaultFilters = (): DriversFiltersState => ({
   address: '',
   locationFilter: 'USA',
   radiusFilter: '500',
-  statusFilter: '',
+  statusFilter: 'all',
   capabilitiesFilter: [],
 });
 
@@ -52,6 +51,7 @@ export default function DriversScreen() {
   const canAccessWork = canAccessWorkTab(role);
   const canSeeDrivers = canAccessDriversAndOffers(role);
   const isAdmin = role === 'ADMINISTRATOR';
+  const canViewRestrictedStatuses = canViewRestrictedDriverStatuses(role);
 
   const [appliedFilters, setAppliedFilters] = useState<DriversFiltersState>(defaultFilters);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -117,11 +117,13 @@ export default function DriversScreen() {
       if (Array.isArray(r)) rows.push(...r);
     }
     const statusF = appliedFilters.statusFilter;
-    if (!statusF) return rows;
-    // Match Next.js DriversListTable filteredResults (always filter by status label when set)
-    return rows.filter(
-      (d) => getDriverStatusLabel(d.meta_data?.driver_status) === statusF
-    );
+    if (!statusF || statusF === 'all' || statusF === 'for_offers') return rows;
+    return rows.filter((d) => {
+      const status = String(d.meta_data?.driver_status ?? '')
+        .trim()
+        .toLowerCase();
+      return status === statusF.toLowerCase();
+    });
   }, [data?.pages, appliedFilters.statusFilter]);
 
   useEffect(() => {
@@ -136,13 +138,13 @@ export default function DriversScreen() {
   }, [authState.isAuthenticated, canAccessWork, canSeeDrivers, router]);
 
   useEffect(() => {
-    if (isAdmin) return;
+    if (canViewRestrictedStatuses) return;
     setAppliedFilters((f) =>
-      f.statusFilter && DISALLOWED_DRIVER_STATUS_FILTER_FOR_NON_ADMIN.has(f.statusFilter)
-        ? { ...f, statusFilter: '' }
+      f.statusFilter && RESTRICTED_DRIVER_STATUS_FILTER_VALUES.has(f.statusFilter)
+        ? { ...f, statusFilter: 'all' }
         : f
     );
-  }, [isAdmin]);
+  }, [canViewRestrictedStatuses]);
 
   const canSelect = addressTrimmed.length > 0;
 
@@ -208,7 +210,9 @@ export default function DriversScreen() {
       parts.push(appliedFilters.locationFilter);
       parts.push(`${appliedFilters.radiusFilter} mi`);
     }
-    if (appliedFilters.statusFilter) parts.push(appliedFilters.statusFilter);
+    if (appliedFilters.statusFilter && appliedFilters.statusFilter !== 'all') {
+      parts.push(appliedFilters.statusFilter);
+    }
     if (appliedFilters.capabilitiesFilter.length) {
       parts.push(`${appliedFilters.capabilitiesFilter.length} caps`);
     }
@@ -361,7 +365,7 @@ export default function DriversScreen() {
         onClose={() => setFiltersOpen(false)}
         initial={appliedFilters}
         onApply={applyFilters}
-        isAdministrator={isAdmin}
+        canViewRestrictedStatuses={canViewRestrictedStatuses}
       />
 
       <CreateOfferSheet

@@ -16,7 +16,8 @@ import { findLoadChatAvatarParticipant } from '@/utils/loadChatAvatar';
 import { formatChatRelativeTimeNy } from '@/utils/nyWallClock';
 import type { PendingOutgoingMeta } from '@/utils/optimisticChatMessage';
 import { useAuth } from '@/context/AuthContext';
-import { canShowOfferId } from '@/utils/offerDisplay';
+import { formatChatPeerDisplayName, formatOfferChatDriverDisplayName } from '@/utils/chatPeerDisplayName';
+import { formatOfferIdSuffix } from '@/utils/offerDisplay';
 import {
   getDriverOfferChatTitle,
   isDriverViewer,
@@ -89,7 +90,7 @@ export interface ChatRoomParticipant {
 export interface ChatRoom {
   id: string;
   name?: string;
-  type: 'DIRECT' | 'GROUP' | 'LOAD' | 'OFFER';
+  type: 'DIRECT' | 'GROUP' | 'LOAD' | 'OFFER' | 'BID';
   avatar?: string;
   participants: ChatRoomParticipant[];
   lastMessage?: Message;
@@ -251,7 +252,9 @@ export default function ChatListItem({
         p => p.user.id !== currentUserId
       );
       if (otherParticipant) {
-        return `${otherParticipant.user.firstName} ${otherParticipant.user.lastName}`;
+        return chatRoom.type === 'OFFER'
+          ? formatOfferChatDriverDisplayName(otherParticipant.user)
+          : formatChatPeerDisplayName(otherParticipant.user);
       }
     }
 
@@ -261,7 +264,7 @@ export default function ChatListItem({
     }
 
     // For group chats, show participant names
-    if (chatRoom.type === 'GROUP' || chatRoom.type === 'LOAD') {
+    if (chatRoom.type === 'GROUP' || chatRoom.type === 'BID' || chatRoom.type === 'LOAD') {
       const participantNames = chatRoom.participants
         .slice(0, 2)
         .map(p => p.user.firstName)
@@ -284,8 +287,7 @@ export default function ChatListItem({
 
     const idMatch = chatRoom.name.match(/\(id:\s*(\d+)\)/);
     const offerIdVal = chatRoom.offerId ?? (idMatch ? parseInt(idMatch[1], 10) : null);
-    const idPart =
-      offerIdVal != null && canShowOfferId(authState.user) ? ` (id: ${offerIdVal})` : '';
+    const idPart = formatOfferIdSuffix(offerIdVal, authState.user);
     return `"${routeLine}${idPart}"`;
   };
 

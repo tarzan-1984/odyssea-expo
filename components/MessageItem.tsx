@@ -122,7 +122,7 @@ export default function MessageItem({
 	const shouldShowSenderAvatar =
 		!isSender &&
 		!isSystemMessage &&
-		(normalizedChatType === 'GROUP' || normalizedChatType === 'LOAD');
+		(normalizedChatType === 'GROUP' || normalizedChatType === 'BID' || normalizedChatType === 'LOAD');
 	const incomingMeta = useMemo(
 		() => (isSender ? null : getIncomingMessageMeta(message, chatType)),
 		[isSender, message, chatType]

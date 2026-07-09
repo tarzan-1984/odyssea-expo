@@ -24,3 +24,24 @@ export function canAccessWorkTab(role: string | undefined | null): boolean {
   const r = role.trim().toUpperCase();
   return r === 'DRIVER' || canAccessDriversAndOffers(r);
 }
+
+/**
+ * Same as Next.js DRIVERS_MAP_RESTRICTED_STATUS_VIEWER_ROLES —
+ * who may see Blocked / Out of service (banned) in status filters.
+ */
+export const DRIVERS_MAP_RESTRICTED_STATUS_VIEWER_ROLES = [
+  'RECRUITER',
+  'RECRUITER_TL',
+  'HR_MANAGER',
+  'ADMINISTRATOR',
+  'DRIVER_UPDATES',
+  'MODERATOR',
+] as const;
+
+export function canViewRestrictedDriverStatuses(role: string | undefined | null): boolean {
+  if (!role) return false;
+  const normalized = role.trim().toUpperCase();
+  return (DRIVERS_MAP_RESTRICTED_STATUS_VIEWER_ROLES as readonly string[]).includes(
+    normalized
+  );
+}

@@ -34,6 +34,7 @@ import {
   routeSummary,
   selectDriverForOffer,
   setDriverRateForOfferDriver,
+  editDriverRateForOfferDriver,
 } from '@/app-api/offers';
 import PhoneAppStatusActiveIcon from '@/icons/PhoneAppStatusActiveIcon';
 import PhoneAppStatusInactiveIcon from '@/icons/PhoneAppStatusInactiveIcon';
@@ -43,6 +44,7 @@ import ExtendBidTimeIcon from '@/icons/ExtendBidTimeIcon';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { DRIVER_PARTICIPATION_COUNT_QUERY_KEY } from '@/hooks/useDriverParticipationCount';
 import CreateRateModal from '@/components/offers/CreateRateModal';
+import EditRateModal from '@/components/offers/EditRateModal';
 import ExtendTimeModal from '@/components/offers/ExtendTimeModal';
 import SendPushNotificationModal from '@/components/offers/SendPushNotificationModal';
 import { RectButton } from 'react-native-gesture-handler';
@@ -272,7 +274,9 @@ export default function OfferDetailScreen() {
   }, [authState.isAuthenticated, canAccess, router]);
   const driverExternalId = (authState.user?.externalId ?? '').trim();
   const [createRateModalVisible, setCreateRateModalVisible] = useState(false);
+  const [editRateModalVisible, setEditRateModalVisible] = useState(false);
   const [isSubmittingRate, setIsSubmittingRate] = useState(false);
+  const [isSubmittingRateEdit, setIsSubmittingRateEdit] = useState(false);
   const [extendTimeModalVisible, setExtendTimeModalVisible] = useState(false);
   const [isSubmittingExtendTime, setIsSubmittingExtendTime] = useState(false);
   const [isDecliningOffer, setIsDecliningOffer] = useState(false);
@@ -348,6 +352,7 @@ export default function OfferDetailScreen() {
 
   const hasSubmittedRate = hasDriverRate(driverRate);
   const isBidExpired = hasSubmittedRate && remainingSeconds <= 0;
+  const canEditDriverRate = hasSubmittedRate && remainingSeconds > 0;
   const isDeclineBlockedByActiveBidTimer = hasSubmittedRate && remainingSeconds > 0;
   const showOfferUpdatedNotice = Boolean(offer?.update_date?.trim());
 
@@ -366,6 +371,12 @@ export default function OfferDetailScreen() {
 
     return () => clearInterval(intervalId);
   }, [hasSubmittedRate, driverActionTime]);
+
+  useEffect(() => {
+    if (!canEditDriverRate && editRateModalVisible) {
+      setEditRateModalVisible(false);
+    }
+  }, [canEditDriverRate, editRateModalVisible]);
 
   // Tick for driver bid timers in staff Drivers section
   const [driverTimerTick, setDriverTimerTick] = useState(0);
@@ -683,6 +694,15 @@ export default function OfferDetailScreen() {
                     Your rate for this offer:{' '}
                     <Text style={styles.rateInfoValue}>{formatRateLabel(driverRate)}</Text>
                   </Text>
+                  {canEditDriverRate ? (
+                    <TouchableOpacity
+                      style={styles.editRateButton}
+                      onPress={() => setEditRateModalVisible(true)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.editRateButtonText}>Edit Rate</Text>
+                    </TouchableOpacity>
+                  ) : null}
                   <TouchableOpacity
                     style={styles.extendTimeButton}
                     onPress={() => setExtendTimeModalVisible(true)}
@@ -1106,6 +1126,54 @@ export default function OfferDetailScreen() {
           }
         }}
       />
+      <EditRateModal
+        visible={editRateModalVisible && canEditDriverRate && !isSelectedOfferDriver}
+        currentRate={driverRate}
+        onClose={() => setEditRateModalVisible(false)}
+        isSubmitting={isSubmittingRateEdit}
+        onSubmit={async (rateValue) => {
+          if (!offer || !isDriver) {
+            setEditRateModalVisible(false);
+            return;
+          }
+
+          if (!driverExternalId) {
+            console.warn('[OfferDetailScreen] Missing driver externalId, cannot edit rate');
+            return;
+          }
+
+          Alert.alert(
+            'Edit rate',
+            'Are you sure you want to edit your rate for this load?',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Edit',
+                style: 'destructive',
+                onPress: async () => {
+                  const rateNumber = Number(String(rateValue).replace(/,/g, '').trim());
+
+                  try {
+                    setIsSubmittingRateEdit(true);
+                    const result = await editDriverRateForOfferDriver(offer.id, driverExternalId, {
+                      rate: Number.isNaN(rateNumber) ? 0 : rateNumber,
+                    });
+                    setDriverRate(result.rate ?? (Number.isNaN(rateNumber) ? 0 : rateNumber));
+                    console.log('[OfferDetailScreen] Driver rate edited', result);
+                    Alert.alert('', 'Your rate has been updated.');
+                    setEditRateModalVisible(false);
+                  } catch (err) {
+                    console.error('[OfferDetailScreen] Failed to edit driver rate', err);
+                    Alert.alert('Error', 'Failed to update your rate. Please try again.');
+                  } finally {
+                    setIsSubmittingRateEdit(false);
+                  }
+                },
+              },
+            ]
+          );
+        }}
+      />
       <ExtendTimeModal
         visible={extendTimeModalVisible && !isSelectedOfferDriver}
         onClose={() => setExtendTimeModalVisible(false)}
@@ -1333,6 +1401,23 @@ const styles = StyleSheet.create({
   rateInfoValue: {
     fontFamily: fonts['700'],
     color: colors.neutral.black,
+  },
+  editRateButton: {
+    marginTop: rem(12),
+    minWidth: rem(180),
+    paddingHorizontal: rem(18),
+    height: rem(44),
+    borderRadius: rem(12),
+    borderWidth: 1,
+    borderColor: colors.primary.violet,
+    backgroundColor: colors.neutral.white,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  editRateButtonText: {
+    fontSize: fp(16),
+    fontFamily: fonts['600'],
+    color: colors.primary.violet,
   },
   extendTimeButton: {
     marginTop: rem(12),

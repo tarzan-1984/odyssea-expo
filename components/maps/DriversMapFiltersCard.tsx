@@ -11,7 +11,7 @@ import {
 import { colors, fonts, fp, rem } from '@/lib';
 import SelectArrow from '@/icons/SelectArrow';
 import {
-  getDriverMapStatusFilterLabels,
+  getDriverMapStatusFilterOptions,
   CAPABILITIES_OPTIONS,
   RADIUS_OPTIONS,
   LOCATION_OPTIONS,
@@ -23,13 +23,13 @@ const ADDRESS_DEBOUNCE_MS = 1500;
 interface DriversMapFiltersCardProps {
   filters: DriversMapSearchFilters;
   onChange: (filters: DriversMapSearchFilters) => void;
-  isAdministrator?: boolean;
+  canViewRestrictedStatuses?: boolean;
 }
 
 export default function DriversMapFiltersCard({
   filters,
   onChange,
-  isAdministrator = false,
+  canViewRestrictedStatuses = false,
 }: DriversMapFiltersCardProps) {
   const [statusModalVisible, setStatusModalVisible] = useState(false);
   const [locationModalVisible, setLocationModalVisible] = useState(false);
@@ -51,8 +51,11 @@ export default function DriversMapFiltersCard({
     return () => clearTimeout(timer);
   }, [addressInput, filters, onChange]);
 
+  const statusOptions = getDriverMapStatusFilterOptions(canViewRestrictedStatuses);
   const statusFilter = filters.statusFilter ?? '';
-  const statusLabel = statusFilter || 'All statuses';
+  const statusLabel =
+    statusOptions.find((o) => o.value === statusFilter)?.label ??
+    (statusFilter || 'All statuses');
   const locationFilter = filters.locationFilter ?? 'USA';
   const radiusFilter = filters.radiusFilter ?? '500';
   const radiusLabel = RADIUS_OPTIONS.find((r) => r.value === radiusFilter)?.label ?? '500 miles';
@@ -151,25 +154,25 @@ export default function DriversMapFiltersCard({
               showsVerticalScrollIndicator={true}
               keyboardShouldPersistTaps="handled"
             >
-              {['', ...getDriverMapStatusFilterLabels(isAdministrator)].map((opt) => (
+              {[{ value: '', label: 'All statuses' }, ...statusOptions].map((opt) => (
                   <TouchableOpacity
-                    key={opt || 'all'}
+                    key={opt.value || 'all'}
                     style={[
                       styles.optionItem,
-                      statusFilter === opt && styles.optionItemActive,
+                      statusFilter === opt.value && styles.optionItemActive,
                     ]}
                     onPress={() => {
-                      onChange({ ...filters, statusFilter: opt });
+                      onChange({ ...filters, statusFilter: opt.value });
                       setStatusModalVisible(false);
                     }}
                   >
                     <Text
                       style={[
                         styles.optionText,
-                        statusFilter === opt && styles.optionTextActive,
+                        statusFilter === opt.value && styles.optionTextActive,
                       ]}
                     >
-                      {opt || 'All statuses'}
+                      {opt.label}
                     </Text>
                   </TouchableOpacity>
               ))}

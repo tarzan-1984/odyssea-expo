@@ -4,6 +4,7 @@ import {
   getLoadChatDispatcherAvatarBg,
   getParticipantInitials,
 } from '@/utils/loadChatAvatar';
+import { formatChatPeerDisplayName, formatOfferChatDriverDisplayName } from '@/utils/chatPeerDisplayName';
 import {
   getDriverOfferChatTitle,
   isDriverViewer,
@@ -71,13 +72,14 @@ export function getChatDisplayName(
     return getDriverOfferChatTitle(chatRoom.name);
   }
 
-  // For DIRECT chats, show the other participant's name
-  if (chatRoom.type === 'DIRECT' && chatRoom.participants.length === 2) {
+  if ((chatRoom.type === 'DIRECT' || chatRoom.type === 'OFFER') && chatRoom.participants.length === 2) {
     const otherParticipant = chatRoom.participants.find(
       p => p.user.id !== currentUserId
     );
     if (otherParticipant) {
-      return `${otherParticipant.user.firstName} ${otherParticipant.user.lastName}`;
+      return chatRoom.type === 'OFFER'
+        ? formatOfferChatDriverDisplayName(otherParticipant.user)
+        : formatChatPeerDisplayName(otherParticipant.user);
     }
   }
 
@@ -87,7 +89,7 @@ export function getChatDisplayName(
   }
 
   // For group chats, show participant names
-  if (chatRoom.type === 'GROUP' || chatRoom.type === 'LOAD') {
+  if (chatRoom.type === 'GROUP' || chatRoom.type === 'BID' || chatRoom.type === 'LOAD') {
     const participantNames = chatRoom.participants
       .slice(0, 2)
       .map(p => p.user.firstName)

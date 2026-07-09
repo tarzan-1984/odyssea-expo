@@ -58,7 +58,8 @@ const syncOpenedChatsWithExistingRooms = async (rooms: ChatRoom[]) => {
 };
 
 /**
- * Sort: pinned → unread → (non-pinned) unmuted before muted → newest last message first.
+ * Sort: pinned → (non-pinned) unmuted before muted → newest last message first.
+ * Read/unread status does not affect order.
  * Matches Odyssea-backend-ui chatStore sortChatRoomsByLastMessage.
  */
 const sortChatRoomsByLastMessage = (chatRooms: ChatRoom[]): ChatRoom[] => {
@@ -68,16 +69,9 @@ const sortChatRoomsByLastMessage = (chatRooms: ChatRoom[]): ChatRoom[] => {
     return new Date(bDate).getTime() - new Date(aDate).getTime();
   };
 
-  const hasUnread = (room: ChatRoom) => (room.unreadCount ?? 0) > 0;
-
   return [...chatRooms].sort((a, b) => {
     if (a.isPinned && !b.isPinned) return -1;
     if (!a.isPinned && b.isPinned) return 1;
-
-    const aUnread = hasUnread(a);
-    const bUnread = hasUnread(b);
-    if (aUnread && !bUnread) return -1;
-    if (!aUnread && bUnread) return 1;
 
     if (!a.isPinned && !b.isPinned) {
       if (a.isMuted && !b.isMuted) return 1;

@@ -14,6 +14,8 @@ import { chatApi } from '@/app-api/chatApi';
 import { useChatStore } from '@/stores/chatStore';
 import { useRouter } from 'expo-router';
 import { findDirectChatWithUser } from '@/utils/findDirectChatRoom';
+import { canViewRestrictedDriverStatuses } from '@/constants/roleAccess';
+import { RESTRICTED_DRIVER_STATUS_FILTER_VALUES } from '@/constants/driversListConstants';
 
 interface NonDriverContentProps {
   firstName: string;
@@ -27,13 +29,6 @@ const DEFAULT_FILTERS: DriversMapSearchFilters = {
   locationFilter: 'USA',
   role: 'administrator',
 };
-
-const DISALLOWED_MAP_STATUS_FILTER_FOR_NON_ADMIN = new Set([
-  'Blocked',
-  'Out of service',
-  'On vacation',
-  'No updates',
-]);
 
 function driversToMarkers(drivers: { id: string; externalId: string | null; latitude: number; longitude: number; driverStatus: string | null; status?: string | null }[]) {
   return drivers.map((d) => ({
@@ -59,17 +54,17 @@ export default function NonDriverContent({ firstName }: NonDriverContentProps) {
   const [isChatActionLoading, setIsChatActionLoading] = useState(false);
   const { authState } = useAuth();
   const role = authState.user?.role?.trim().toUpperCase() ?? '';
-  const isAdministrator = role === 'ADMINISTRATOR';
+  const canViewRestrictedStatuses = canViewRestrictedDriverStatuses(role);
   const { chatRooms, isLoading: isLoadingChatRooms, loadChatRooms } = useChatRooms();
 
   useEffect(() => {
-    if (isAdministrator) return;
+    if (canViewRestrictedStatuses) return;
     setFilters((f) =>
-      f.statusFilter && DISALLOWED_MAP_STATUS_FILTER_FOR_NON_ADMIN.has(f.statusFilter)
+      f.statusFilter && RESTRICTED_DRIVER_STATUS_FILTER_VALUES.has(f.statusFilter)
         ? { ...f, statusFilter: '' }
         : f
     );
-  }, [isAdministrator]);
+  }, [canViewRestrictedStatuses]);
   
   // Default region - St. Louis area with wider zoom
   const initialRegion: Region = {
@@ -215,7 +210,7 @@ export default function NonDriverContent({ firstName }: NonDriverContentProps) {
         <DriversMapFiltersCard
           filters={filters}
           onChange={setFilters}
-          isAdministrator={isAdministrator}
+          canViewRestrictedStatuses={canViewRestrictedStatuses}
         />
       </View>
 

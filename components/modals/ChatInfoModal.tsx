@@ -27,6 +27,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useWebSocket } from '@/context/WebSocketContext';
 import { useOnlineStatusContext } from '@/context/OnlineStatusContext';
 import { userMatchesSearchQuery } from '@/utils/chatSearch';
+import { isMultiUserChatType } from '@/utils/chatRoomTypes';
 
 interface UserItem {
   id: string;
@@ -87,7 +88,7 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
   const mainScrollRef = useRef<ScrollView>(null);
   const searchInputRef = useRef<TextInput>(null);
 
-  const isGroupChat = chatRoom?.type === 'GROUP';
+  const isGroupChat = isMultiUserChatType(chatRoom?.type);
   const isLoadChat = chatRoom?.type === 'LOAD';
   const isCurrentUserAdmin = !!chatRoom?.adminId && !!currentUser?.id && chatRoom.adminId === currentUser.id;
   const canManageChat =
@@ -126,7 +127,7 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
   const chatDisplayName = useMemo(() => {
     if (!chatRoom) return 'Chat';
     if (chatRoom.name) return chatRoom.name;
-    if (chatRoom.type === 'GROUP' || chatRoom.type === 'LOAD') {
+    if (isMultiUserChatType(chatRoom.type) || chatRoom.type === 'LOAD') {
       const participantNames = (chatRoom.participants || [])
         .slice(0, 2)
         .map((p: any) => p?.user?.firstName)

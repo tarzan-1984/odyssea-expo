@@ -16,6 +16,7 @@ import {
   getContrastTextOnStatusBackground,
   getDriverStatusColor,
   getDriverStatusLabel,
+  usesDateAvailableForDisplay,
 } from '@/constants/driversListConstants';
 import { getDriverEquipmentLabels } from '@/utils/driverEquipmentLabels';
 import { colors, fonts, rem, fp } from '@/lib';
@@ -61,15 +62,29 @@ export default function DriverCard({
       ? [styles.cardHeaderSecondary, styles.cardHeaderSecondaryOnDark]
       : [styles.cardHeaderSecondary, styles.cardHeaderSecondaryOnLight];
 
-  const dateStr =
-    driver.updated_zipcode || driver.date_updated || meta?.status_date || '';
+  const updatedZipcodeRaw = String(driver.updated_zipcode ?? '').trim();
+  const hasUpdatedZipcode = Boolean(updatedZipcodeRaw);
+  const dateStr = usesDateAvailableForDisplay(rawStatus)
+    ? driver.date_available || ''
+    : driver.updated_zipcode || driver.date_updated || meta?.status_date || '';
   let locationDate: Date | null = null;
   if (dateStr) {
     const parsed = new Date(dateStr.replace(/\s+/, 'T'));
     if (!Number.isNaN(parsed.getTime())) locationDate = parsed;
   }
   const dateDisplay = locationDate ? formatDateMmDdYy(locationDate) : dateStr || '—';
+  const updatedZipcodeDate = hasUpdatedZipcode
+    ? new Date(updatedZipcodeRaw.replace(/\s+/, 'T'))
+    : null;
+  const updatedZipcodeDisplay =
+    updatedZipcodeDate && !Number.isNaN(updatedZipcodeDate.getTime())
+      ? formatDateMmDdYy(updatedZipcodeDate)
+      : updatedZipcodeRaw;
+  const showUpdatedZipcodeLine =
+    hasUpdatedZipcode && updatedZipcodeDisplay !== dateDisplay;
   const olderThan12h =
+    !showUpdatedZipcodeLine &&
+    !usesDateAvailableForDisplay(rawStatus) &&
     locationDate &&
     Date.now() - locationDate.getTime() > 12 * 60 * 60 * 1000;
 
@@ -141,7 +156,13 @@ export default function DriverCard({
       </View>
 
       <View style={[styles.cardBody, selected && styles.cardBodySelected]}>
-        <View style={[styles.locationBlock, olderThan12h && styles.locationStale]}>
+        <View
+          style={[
+            styles.locationBlock,
+            olderThan12h && styles.locationStale,
+            showUpdatedZipcodeLine && styles.locationHasUpdatedZipcode,
+          ]}
+        >
           <Text style={styles.locationTitle}>Location & date</Text>
           <View style={styles.locationCityRow}>
             <Text
@@ -156,6 +177,9 @@ export default function DriverCard({
               {dateDisplay}
             </Text>
           </View>
+          {showUpdatedZipcodeLine ? (
+            <Text style={styles.locationUpdatedZipcode}>{updatedZipcodeDisplay}</Text>
+          ) : null}
         </View>
 
         <View style={styles.phoneDistanceRow}>
@@ -376,6 +400,9 @@ const styles = StyleSheet.create({
   locationStale: {
     backgroundColor: 'rgba(254, 226, 226, 0.7)',
   },
+  locationHasUpdatedZipcode: {
+    backgroundColor: '#f1cfcf',
+  },
   locationTitle: {
     fontSize: fp(11),
     fontFamily: fonts['600'],
@@ -402,6 +429,12 @@ const styles = StyleSheet.create({
   },
   locationDatePart: {
     flexShrink: 0,
+  },
+  locationUpdatedZipcode: {
+    marginTop: rem(2),
+    fontSize: fp(13),
+    fontFamily: fonts['500'],
+    color: colors.primary.blue,
   },
   phoneDistanceRow: {
     flexDirection: 'row',

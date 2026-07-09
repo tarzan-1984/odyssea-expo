@@ -47,6 +47,7 @@ export interface TmsDriverMeta {
 
 export interface TmsDriver {
   id: string;
+  date_available?: string | null;
   date_updated?: string;
   updated_zipcode?: string;
   meta_data?: TmsDriverMeta;
@@ -119,8 +120,12 @@ export async function fetchTmsDriversPage(
     searchParams.set('my_search', addressFilter.trim());
     searchParams.set('radius', radiusFilter);
     searchParams.set('country', locationFilter);
-  } else if (!addressFilter?.trim() && statusFilter) {
-    searchParams.set('extended_search', statusFilter);
+  }
+
+  const trimmedStatus = statusFilter?.trim() ?? '';
+  // "all" / empty → omit status_filter (same as Next.js resolveStatusFilterForQuery)
+  if (trimmedStatus && trimmedStatus !== 'all') {
+    searchParams.set('status_filter', trimmedStatus);
   }
 
   const url = `${getTmsSearchUrl()}?${searchParams.toString()}`;
