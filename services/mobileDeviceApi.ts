@@ -105,7 +105,7 @@ async function submitMobileDeviceSnapshot(
 }
 
 /**
- * Saves a device snapshot to user_devices after login (requires users.externalId on server).
+ * Saves a device snapshot to user_devices after login (links row via users.id / user_devices.user_id).
  * Push delivery continues to use push_tokens; pushToken here is analytics copy only.
  * On success persists version/build fingerprint for syncMobileDeviceIfFingerprintChanged.
  */
@@ -202,5 +202,36 @@ export async function deactivateUserDevice(deviceRowId: string): Promise<boolean
 	} catch (e) {
 		console.warn('[mobileDeviceApi] deactivate error:', e);
 		return false;
+	}
+}
+
+export async function deactivateOtherUserDevices(
+	keepDeviceRowId: string,
+): Promise<{ removed: number } | null> {
+	const apiBase = API_BASE_URL;
+	const accessToken = await getAccessToken();
+	if (!apiBase || !accessToken || !keepDeviceRowId) {
+		return null;
+	}
+
+	try {
+		const res = await fetch(`${apiBase}/v1/auth/mobile-devices/others`, {
+			method: 'DELETE',
+			headers: {
+				'Content-Type': 'application/json',
+				Authorization: `Bearer ${accessToken}`,
+			},
+			body: JSON.stringify({ keepDeviceRowId }),
+		});
+		if (!res.ok) {
+			const t = await res.text().catch(() => '');
+			console.warn('[mobileDeviceApi] deactivate others failed:', res.status, t);
+			return null;
+		}
+		const json = (await res.json()) as { removed?: number };
+		return { removed: Number(json.removed ?? 0) };
+	} catch (e) {
+		console.warn('[mobileDeviceApi] deactivate others error:', e);
+		return null;
 	}
 }

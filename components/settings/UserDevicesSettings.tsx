@@ -9,6 +9,7 @@ import {
 } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import {
+	deactivateOtherUserDevices,
 	deactivateUserDevice,
 	fetchActiveUserDevices,
 	type UserDeviceRow,
@@ -16,12 +17,17 @@ import {
 import { resolveStableDeviceId } from '@/utils/mobileDeviceIdentity';
 import { colors, fonts, rem, fp } from '@/lib';
 
-function formatDeviceLabel(device: UserDeviceRow): string {
-	const name = device.deviceName?.trim() || device.model?.trim();
+function formatDeviceName(device: UserDeviceRow): string {
+	const name = device.deviceName?.trim();
 	if (name) {
 		return name;
 	}
 	return device.platform?.trim() || 'Unknown device';
+}
+
+function formatDeviceModel(device: UserDeviceRow): string | null {
+	const model = device.model?.trim();
+	return model || null;
 }
 
 function formatDeviceSubtitle(device: UserDeviceRow): string {
@@ -39,12 +45,17 @@ function formatDeviceSubtitle(device: UserDeviceRow): string {
 	return parts.join(' · ') || '—';
 }
 
+function formatDeviceLabel(device: UserDeviceRow): string {
+	return formatDeviceName(device);
+}
+
 export default function UserDevicesSettings() {
 	const [devices, setDevices] = useState<UserDeviceRow[]>([]);
 	const [currentDeviceId, setCurrentDeviceId] = useState<string | null>(null);
 	const [isLoading, setIsLoading] = useState(false);
 	const [loadError, setLoadError] = useState<string | null>(null);
 	const [deletingId, setDeletingId] = useState<string | null>(null);
+	const [isDeletingOthers, setIsDeletingOthers] = useState(false);
 
 	const loadDevices = useCallback(async () => {
 		setIsLoading(true);
@@ -72,9 +83,11 @@ export default function UserDevicesSettings() {
 
 	const handleDelete = (device: UserDeviceRow) => {
 		const label = formatDeviceLabel(device);
+		const model = formatDeviceModel(device);
+		const displayLabel = model ? `${label} (${model})` : label;
 		Alert.alert(
 			'Remove device',
-			`Remove "${label}" from your account? It will disappear from this list.`,
+			`Remove "${displayLabel}" from your account? It will disappear from this list.`,
 			[
 				{ text: 'Cancel', style: 'cancel' },
 				{
@@ -101,6 +114,45 @@ export default function UserDevicesSettings() {
 		);
 	};
 
+	const handleDeleteOthers = (currentDevice: UserDeviceRow, otherCount: number) => {
+		Alert.alert(
+			'Remove other devices',
+			`Remove ${otherCount} other device${otherCount === 1 ? '' : 's'} from your account? They will be signed out.`,
+			[
+				{ text: 'Cancel', style: 'cancel' },
+				{
+					text: 'Delete others',
+					style: 'destructive',
+					onPress: async () => {
+						setIsDeletingOthers(true);
+						try {
+							const result = await deactivateOtherUserDevices(currentDevice.id);
+							if (!result) {
+								Alert.alert('Error', 'Failed to remove other devices');
+								return;
+							}
+							setDevices((prev) =>
+								prev.filter((device) => device.id === currentDevice.id),
+							);
+						} catch (error) {
+							console.error('[UserDevicesSettings] Delete others failed:', error);
+							Alert.alert('Error', 'Failed to remove other devices');
+						} finally {
+							setIsDeletingOthers(false);
+						}
+					},
+				},
+			],
+		);
+	};
+
+	const otherDevicesCount = devices.filter((device) => {
+		if (!currentDeviceId || !device.deviceId) {
+			return true;
+		}
+		return device.deviceId !== currentDeviceId;
+	}).length;
+
 	return (
 		<View style={styles.container}>
 			<Text style={styles.title}>Devices</Text>
@@ -124,19 +176,43 @@ export default function UserDevicesSettings() {
 						!!device.deviceId &&
 						device.deviceId === currentDeviceId;
 					const isDeleting = deletingId === device.id;
+					const model = formatDeviceModel(device);
 
 					return (
 						<View key={device.id} style={styles.row}>
 							<View style={styles.rowText}>
 								<Text style={styles.label}>
-									{formatDeviceLabel(device)}
+									{formatDeviceName(device)}
 									{isCurrent ? ' (this device)' : ''}
 								</Text>
+								{model ? (
+									<Text style={styles.model}>{model}</Text>
+								) : null}
 								<Text style={styles.subtitle}>
 									{formatDeviceSubtitle(device)}
 								</Text>
 							</View>
-							{!isCurrent ? (
+							{isCurrent && otherDevicesCount > 0 ? (
+								<TouchableOpacity
+									style={[
+										styles.button,
+										styles.deleteOthersButton,
+										isDeletingOthers && styles.buttonDisabled,
+									]}
+									onPress={() => handleDeleteOthers(device, otherDevicesCount)}
+									disabled={isDeletingOthers || isDeleting}
+									activeOpacity={0.7}
+								>
+									{isDeletingOthers ? (
+										<ActivityIndicator
+											color={colors.neutral.white}
+											size="small"
+										/>
+									) : (
+										<Text style={styles.buttonText}>Delete others</Text>
+									)}
+								</TouchableOpacity>
+							) : !isCurrent ? (
 								<TouchableOpacity
 									style={[
 										styles.button,
@@ -144,7 +220,7 @@ export default function UserDevicesSettings() {
 										isDeleting && styles.buttonDisabled,
 									]}
 									onPress={() => handleDelete(device)}
-									disabled={isDeleting}
+									disabled={isDeleting || isDeletingOthers}
 									activeOpacity={0.7}
 								>
 									{isDeleting ? (
@@ -219,6 +295,12 @@ const styles = StyleSheet.create({
 		color: colors.primary.blue,
 		marginBottom: rem(4),
 	},
+	model: {
+		fontFamily: fonts['500'],
+		fontSize: fp(13),
+		color: colors.neutral.darkGrey,
+		marginBottom: rem(4),
+	},
 	subtitle: {
 		fontFamily: fonts['400'],
 		fontSize: fp(12),
@@ -227,7 +309,7 @@ const styles = StyleSheet.create({
 	},
 	button: {
 		paddingVertical: rem(10),
-		paddingHorizontal: rem(16),
+		paddingHorizontal: rem(12),
 		borderRadius: rem(8),
 		alignItems: 'center',
 		justifyContent: 'center',
@@ -236,12 +318,16 @@ const styles = StyleSheet.create({
 	deleteButton: {
 		backgroundColor: '#FF3B30',
 	},
+	deleteOthersButton: {
+		backgroundColor: '#FF3B30',
+	},
 	buttonDisabled: {
 		opacity: 0.6,
 	},
 	buttonText: {
 		color: '#FFFFFF',
-		fontSize: fp(13),
+		fontSize: fp(12),
 		fontWeight: '600',
+		textAlign: 'center',
 	},
 });
