@@ -110,9 +110,12 @@ export default function CreateOfferSheet({
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
   const scrollContentRef = useRef<View>(null);
+  const offeredRateFieldRef = useRef<View>(null);
   const weightFieldRef = useRef<View>(null);
   const commodityFieldRef = useRef<View>(null);
   const notesFieldRef = useRef<View>(null);
+  /** Skip keyboard dismiss while we programmatically scroll a focused field into view. */
+  const isProgrammaticScrollRef = useRef(false);
   const [driversExpanded, setDriversExpanded] = useState(false);
   const [routeRows, setRouteRows] = useState<RouteRow[]>(() => [newRow('pickup'), newRow('delivery')]);
   const [timePickerRowId, setTimePickerRowId] = useState<string | null>(null);
@@ -156,19 +159,38 @@ export default function CreateOfferSheet({
     Keyboard.dismiss();
   }, []);
 
+  const dismissKeyboardFromUserScroll = useCallback(() => {
+    if (isProgrammaticScrollRef.current) return;
+    Keyboard.dismiss();
+  }, []);
+
   const scrollFieldIntoView = useCallback((
     fieldRef: React.RefObject<View | null>,
     preferScrollToEnd = false
   ) => {
+    // Wait for the soft keyboard to settle. On Android, scrolling too early
+    // (or dismissing on momentum) often closes the keyboard right after focus.
+    const delay = Platform.OS === 'ios' ? 350 : 280;
     setTimeout(() => {
+      isProgrammaticScrollRef.current = true;
+      const clearProgrammaticFlag = () => {
+        setTimeout(() => {
+          isProgrammaticScrollRef.current = false;
+        }, 400);
+      };
+
       if (preferScrollToEnd) {
         scrollRef.current?.scrollToEnd({ animated: true });
+        clearProgrammaticFlag();
         return;
       }
 
       const field = fieldRef.current;
       const content = scrollContentRef.current;
-      if (!field || !content || !scrollRef.current) return;
+      if (!field || !content || !scrollRef.current) {
+        isProgrammaticScrollRef.current = false;
+        return;
+      }
 
       field.measureLayout(
         content,
@@ -177,12 +199,14 @@ export default function CreateOfferSheet({
             y: Math.max(0, y - rem(80)),
             animated: true,
           });
+          clearProgrammaticFlag();
         },
         () => {
           scrollRef.current?.scrollToEnd({ animated: true });
+          clearProgrammaticFlag();
         }
       );
-    }, Platform.OS === 'ios' ? 350 : 150);
+    }, delay);
   }, []);
 
   const handleClose = useCallback(() => {
@@ -562,6 +586,7 @@ export default function CreateOfferSheet({
                 onBlur={() => {
                   void handleAddressBlur(item.id, item.location);
                 }}
+                showSoftInputOnFocus
                 placeholder={
                   item.type === 'pickup'
                     ? 'Enter pick up location'
@@ -626,7 +651,12 @@ export default function CreateOfferSheet({
   );
 
   return (
-    <Modal visible={visible} animationType="slide" onRequestClose={handleClose}>
+    <Modal
+      visible={visible}
+      animationType="slide"
+      onRequestClose={handleClose}
+      statusBarTranslucent={Platform.OS === 'android'}
+    >
       <GestureHandlerRootView style={styles.gestureRoot}>
       <View style={styles.root}>
         <View style={[styles.header, { paddingTop: insets.top + rem(12) }]}>
@@ -638,8 +668,10 @@ export default function CreateOfferSheet({
 
         <KeyboardAvoidingView
           style={styles.keyboardAvoid}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+          // Android: let the system resize the Modal window. `behavior="height"`
+          // fights soft-input and can prevent the keyboard from staying open.
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={0}
         >
         <NestableScrollContainer
           ref={scrollRef}
@@ -647,9 +679,9 @@ export default function CreateOfferSheet({
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
-          onScrollBeginDrag={dismissKeyboard}
-          onMomentumScrollBegin={dismissKeyboard}
+          onScrollBeginDrag={dismissKeyboardFromUserScroll}
           showsVerticalScrollIndicator={false}
+          nestedScrollEnabled
         >
           <View ref={scrollContentRef} collapsable={false}>
           <TouchableOpacity
@@ -733,15 +765,19 @@ export default function CreateOfferSheet({
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.label}>Offered rate</Text>
-          <TextInput
-            style={styles.input}
-            value={offeredRate}
-            onChangeText={setOfferedRate}
-            keyboardType="decimal-pad"
-            placeholder="e.g. 2500.50"
-            placeholderTextColor={colors.neutral.grey}
-          />
+          <View ref={offeredRateFieldRef} collapsable={false}>
+            <Text style={styles.label}>Offered rate</Text>
+            <TextInput
+              style={styles.input}
+              value={offeredRate}
+              onChangeText={setOfferedRate}
+              onFocus={() => scrollFieldIntoView(offeredRateFieldRef)}
+              keyboardType="decimal-pad"
+              showSoftInputOnFocus
+              placeholder="e.g. 2500.50"
+              placeholderTextColor={colors.neutral.grey}
+            />
+          </View>
 
           <View style={styles.formRowHalf} ref={weightFieldRef} collapsable={false}>
             <View style={styles.formHalfColumn}>
@@ -773,6 +809,7 @@ export default function CreateOfferSheet({
                 onChangeText={setWeight}
                 onFocus={() => scrollFieldIntoView(weightFieldRef)}
                 keyboardType="decimal-pad"
+                showSoftInputOnFocus
                 placeholder="e.g. 1,000 lbs"
                 placeholderTextColor={colors.neutral.grey}
               />
@@ -790,6 +827,7 @@ export default function CreateOfferSheet({
               value={commodity}
               onChangeText={setCommodity}
               onFocus={() => scrollFieldIntoView(commodityFieldRef)}
+              showSoftInputOnFocus
               placeholder="Enter commodity"
               placeholderTextColor={colors.neutral.grey}
             />
@@ -821,6 +859,7 @@ export default function CreateOfferSheet({
               onChangeText={setNotes}
               onFocus={() => scrollFieldIntoView(notesFieldRef, true)}
               multiline
+              showSoftInputOnFocus
               placeholder="Enter notes"
               placeholderTextColor={colors.neutral.grey}
             />

@@ -17,6 +17,7 @@ import {
   SOCKET_IO_CLIENT_OPTIONS,
   SOCKET_OFFLINE_UI_DEBOUNCE_MS,
   SOCKET_PERIODIC_RETRY_MS,
+  SOCKET_STUCK_OFFLINE_FORCE_RECREATE_MS,
 } from '@/lib/socketIoClientOptions';
 import { useNetworkReconnect } from '@/hooks/useNetworkReconnect';
 
@@ -26,7 +27,7 @@ interface WebSocketContextType {
   isConnected: boolean;
   /** Debounced offline flag for UI — avoids flicker during brief reconnects. */
   isDisplayOffline: boolean;
-  connect: () => void;
+  connect: (options?: { force?: boolean }) => void;
   disconnect: () => void;
   joinChatRoom: (chatRoomId: string) => void;
   leaveChatRoom: (chatRoomId: string) => void;
@@ -93,11 +94,35 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   const joinedRoomsRef = useRef<Set<string>>(new Set());
   const reconnectTimeoutRef = useRef<number | null>(null);
   const periodicRetryIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const stuckOfflineWatchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectAttempts = useRef(0);
   const maxReconnectAttempts = 20;
   const isConnectingRef = useRef(false);
   const hasConnectedOnceRef = useRef(false);
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  const connectRef = useRef<(options?: { force?: boolean }) => Promise<void>>(async () => {});
+
+  const clearStuckOfflineWatchdog = useCallback(() => {
+    if (stuckOfflineWatchdogRef.current) {
+      clearTimeout(stuckOfflineWatchdogRef.current);
+      stuckOfflineWatchdogRef.current = null;
+    }
+  }, []);
+
+  const scheduleStuckOfflineWatchdog = useCallback(() => {
+    clearStuckOfflineWatchdog();
+    stuckOfflineWatchdogRef.current = setTimeout(() => {
+      stuckOfflineWatchdogRef.current = null;
+      const activeSocket = socketRef.current;
+      if (activeSocket?.connected || isConnectingRef.current) {
+        return;
+      }
+      if (!String(appStateRef.current).match(/active/)) {
+        return;
+      }
+      connectRef.current({ force: true }).catch(() => undefined);
+    }, SOCKET_STUCK_OFFLINE_FORCE_RECREATE_MS);
+  }, [clearStuckOfflineWatchdog]);
 
   const normalizeParticipants = useCallback(
     (participants: any[]) => normalizeChatParticipants(participants),
@@ -115,7 +140,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     }
   }, []);
 
-  const connect = useCallback(async () => {
+  const connect = useCallback(async (options?: { force?: boolean }) => {
     // Do not connect when app is not active; keep WebSocket connection only in active app state.
     if (!String(appStateRef.current).match(/active/)) {
       return;
@@ -125,11 +150,13 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       return;
     }
 
-    if (socket?.connected) {
+    const existingSocket = socketRef.current;
+
+    if (existingSocket?.connected && !options?.force) {
       return;
     }
 
-    if (socket && !socket.connected && socket.active) {
+    if (existingSocket && !existingSocket.connected && existingSocket.active && !options?.force) {
       return;
     }
 
@@ -141,10 +168,13 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     }
 
     // Disconnect stale socket if any
-    if (socket) {
-      (socket as Socket).removeAllListeners();
-      (socket as Socket).disconnect();
+    if (existingSocket) {
+      clearStuckOfflineWatchdog();
+      existingSocket.removeAllListeners();
+      existingSocket.io.removeAllListeners();
+      existingSocket.disconnect();
       setSocket(null);
+      socketRef.current = null;
     }
 
     await proactiveRefreshFromSecureStorage();
@@ -206,6 +236,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
     // Connection event handlers
     newSocket.on('connect', () => {
+      clearStuckOfflineWatchdog();
       if (offlineUiTimerRef.current) {
         clearTimeout(offlineUiTimerRef.current);
         offlineUiTimerRef.current = null;
@@ -285,6 +316,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         offlineUiTimerRef.current = null;
       }, SOCKET_OFFLINE_UI_DEBOUNCE_MS);
       isConnectingRef.current = false;
+      scheduleStuckOfflineWatchdog();
 
       console.log('🔌 [WebSocket] Disconnected, reason:', reason);
 
@@ -304,6 +336,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         offlineUiTimerRef.current = null;
       }, SOCKET_OFFLINE_UI_DEBOUNCE_MS);
       isConnectingRef.current = false;
+      scheduleStuckOfflineWatchdog();
 
       void proactiveRefreshFromSecureStorage().then(async (result) => {
         if (result.outcome === 'refreshed' || result.outcome === 'skipped') {
@@ -333,6 +366,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     newSocket.io.on('reconnect_failed', () => {
       console.error('❌ [WebSocket] Socket.IO reconnection failed');
       isConnectingRef.current = false;
+      scheduleStuckOfflineWatchdog();
 
       if (periodicRetryIntervalRef.current) {
         return;
@@ -343,11 +377,14 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           return;
         }
         const activeSocket = socketRef.current;
-        if (activeSocket?.connected || activeSocket?.active) {
+        if (activeSocket?.connected) {
+          return;
+        }
+        if (!String(appStateRef.current).match(/active/)) {
           return;
         }
         reconnectAttempts.current = 0;
-        connect();
+        connectRef.current({ force: true }).catch(() => undefined);
       }, SOCKET_PERIODIC_RETRY_MS);
     });
 
@@ -1132,9 +1169,12 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
     setSocket(newSocket);
     socketRef.current = newSocket;
-  }, [currentUser, getAuthToken]);
+  }, [currentUser, getAuthToken, clearStuckOfflineWatchdog, scheduleStuckOfflineWatchdog]);
+
+  connectRef.current = connect;
 
   const disconnect = useCallback(() => {
+    clearStuckOfflineWatchdog();
     if (offlineUiTimerRef.current) {
       clearTimeout(offlineUiTimerRef.current);
       offlineUiTimerRef.current = null;
@@ -1142,6 +1182,8 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     setIsDisplayOffline(false);
     if (socket) {
       console.log('🔌 [WebSocket] Disconnecting...');
+      socket.removeAllListeners();
+      socket.io.removeAllListeners();
       socket.disconnect();
       setSocket(null);
       socketRef.current = null;
@@ -1152,9 +1194,13 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
     }
+    if (periodicRetryIntervalRef.current) {
+      clearInterval(periodicRetryIntervalRef.current);
+      periodicRetryIntervalRef.current = null;
+    }
     reconnectAttempts.current = 0;
     isConnectingRef.current = false;
-  }, [socket]);
+  }, [socket, clearStuckOfflineWatchdog]);
 
   const joinChatRoom = useCallback((chatRoomId: string) => {
     if (socket && isConnected) {
@@ -1268,13 +1314,18 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     if (!String(appStateRef.current).match(/active/)) return;
     const activeSocket = socketRef.current;
     if (activeSocket?.connected) return;
-    if (activeSocket?.active || isConnectingRef.current) return;
+    if (isConnectingRef.current) return;
+    // Stuck in Manager reconnect loop — force a fresh client on foreground/network.
+    if (activeSocket?.active) {
+      connectRef.current({ force: true }).catch(() => undefined);
+      return;
+    }
     if (activeSocket && !activeSocket.connected) {
       activeSocket.connect();
       return;
     }
-    connect();
-  }, [currentUser, connect]);
+    connectRef.current().catch(() => undefined);
+  }, [currentUser]);
 
   useNetworkReconnect(nudgeReconnect);
 
@@ -1282,7 +1333,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   useEffect(() => {
     if (currentUser) {
       if (!socket?.connected && !socket?.active && !isConnectingRef.current) {
-        connect();
+        connect().catch(() => undefined);
       }
     } else if (isConnected || socket) {
       disconnect();
@@ -1327,6 +1378,11 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
           }
 
           nudgeReconnect();
+        } else if (!socket?.connected && socket?.active) {
+          // Stuck reconnect while coming to foreground — force recreate.
+          console.log('📱 [WebSocket] App became active with stuck reconnect, forcing recreate...');
+          reconnectAttempts.current = 0;
+          connectRef.current({ force: true }).catch(() => undefined);
         } else if (isConnected && wasInBackground) {
           console.log('✅ [WebSocket] App became active, WebSocket already connected');
         }
@@ -1341,6 +1397,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      clearStuckOfflineWatchdog();
       if (offlineUiTimerRef.current) {
         clearTimeout(offlineUiTimerRef.current);
       }
@@ -1354,7 +1411,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         socket.disconnect();
       }
     };
-  }, [socket]);
+  }, [socket, clearStuckOfflineWatchdog]);
 
   // Removed global auto-join to avoid re-render loops; we join
   // explicitly on chatRoomCreated/addedToChatRoom and when user opens a chat

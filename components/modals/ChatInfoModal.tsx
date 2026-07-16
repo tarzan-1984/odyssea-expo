@@ -16,6 +16,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { colors, fonts, fp, rem, borderRadius } from '@/lib';
 import { ChatRoom } from '@/components/ChatListItem';
@@ -28,6 +29,8 @@ import { useWebSocket } from '@/context/WebSocketContext';
 import { useOnlineStatusContext } from '@/context/OnlineStatusContext';
 import { userMatchesSearchQuery } from '@/utils/chatSearch';
 import { isMultiUserChatType } from '@/utils/chatRoomTypes';
+import { useChatStore } from '@/stores/chatStore';
+import { getChatNavigationPath } from '@/services/NotificationsService';
 
 interface UserItem {
   id: string;
@@ -83,8 +86,10 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
   const { authState } = useAuth();
   const currentUser = authState.user;
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const { isUserOnline } = useOnlineStatusContext();
   const { socket, isConnected, updateChatRoom, addParticipants, removeParticipant } = useWebSocket();
+  const mergeChatRooms = useChatStore((s) => s.mergeChatRooms);
   const mainScrollRef = useRef<ScrollView>(null);
   const searchInputRef = useRef<TextInput>(null);
 
@@ -339,6 +344,32 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
     if (isSaving) return;
     setIsSaving(true);
 
+    const normalizeForkedRoom = (raw: any): ChatRoom | null => {
+      if (!raw?.id) return null;
+      return {
+        ...raw,
+        participants: Array.isArray(raw.participants)
+          ? raw.participants.map((p: any) => ({
+              ...p,
+              user: {
+                ...p.user,
+                avatar: p.user?.avatar ?? p.user?.profilePhoto ?? '',
+                userColor: p.user?.userColor ?? null,
+              },
+            }))
+          : [],
+      } as ChatRoom;
+    };
+
+    const openForkedLoadChat = (room: ChatRoom) => {
+      mergeChatRooms([room]);
+      onClose();
+      router.push(getChatNavigationPath(room.id) as any);
+      if (socket?.connected) {
+        socket.emit('joinChatRoom', { chatRoomId: room.id });
+      }
+    };
+
     try {
       // 1) Upload avatar if picked
       let uploadedAvatarUrl: string | undefined;
@@ -365,11 +396,46 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
         const uniqueParticipants = Array.from(
           new Map(addedParticipants.map((entry) => [entry.id, entry])).values(),
         );
-        addParticipants({
-          chatRoomId: chatRoom.id,
-          participantIds: uniqueParticipants.map((entry) => entry.id),
-          participants: uniqueParticipants,
-        });
+        const addingDriverToLoad =
+          isLoadChat &&
+          uniqueParticipants.some((entry) => String(entry.role || '').toUpperCase() === 'DRIVER');
+
+        if (addingDriverToLoad) {
+          await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              socket.off('loadChatForked', onForked);
+              reject(new Error('Timed out waiting for forked load chat'));
+            }, 15000);
+
+            const onForked = (data: { sourceChatRoomId?: string; chatRooms?: any[] }) => {
+              if (data?.sourceChatRoomId && data.sourceChatRoomId !== chatRoom.id) {
+                return;
+              }
+              clearTimeout(timeout);
+              socket.off('loadChatForked', onForked);
+              const forked = normalizeForkedRoom(data?.chatRooms?.[0]);
+              if (forked) {
+                openForkedLoadChat(forked);
+              } else {
+                onClose();
+              }
+              resolve();
+            };
+
+            socket.on('loadChatForked', onForked);
+            addParticipants({
+              chatRoomId: chatRoom.id,
+              participantIds: uniqueParticipants.map((entry) => entry.id),
+              participants: uniqueParticipants,
+            });
+          });
+        } else {
+          addParticipants({
+            chatRoomId: chatRoom.id,
+            participantIds: uniqueParticipants.map((entry) => entry.id),
+            participants: uniqueParticipants,
+          });
+        }
       }
 
       // 4) Remove participants
@@ -383,7 +449,12 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
         }
       }
 
-      onClose();
+      const addedDrivers = addedParticipants.some(
+        (entry) => String(entry.role || '').toUpperCase() === 'DRIVER',
+      );
+      if (!(isLoadChat && addedDrivers && addedParticipants.length > 0)) {
+        onClose();
+      }
     } catch (e) {
       console.error('[ChatInfoModal] Failed to save:', e);
       Alert.alert('Error', 'Failed to save changes. Please try again.');

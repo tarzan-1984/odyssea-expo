@@ -2,7 +2,7 @@
   "expo": {
     "name": "Odysseia App",
     "slug": "odyssea",
-    "version": "2.2.7",
+    "version": "2.2.8",
     "orientation": "portrait",
     "icon": "./assets/android-adaptive-icon.png",
     "scheme": "odyssea",
@@ -42,7 +42,8 @@
         "foregroundImage": "./assets/android-adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "versionCode": 39,
+      "softwareKeyboardLayoutMode": "resize",
+      "versionCode": 40,
       "package": "com.odyssea.app",
       "googleServicesFile": "./google-services.json",
       "notification": {

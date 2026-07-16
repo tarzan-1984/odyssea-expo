@@ -123,10 +123,8 @@ export async function fetchTmsDriversPage(
   }
 
   const trimmedStatus = statusFilter?.trim() ?? '';
-  // "all" / empty → omit status_filter (same as Next.js resolveStatusFilterForQuery)
-  if (trimmedStatus && trimmedStatus !== 'all') {
-    searchParams.set('status_filter', trimmedStatus);
-  }
+  // "all" / empty → status_filter=all (TMS without the param only returns "available")
+  searchParams.set('status_filter', !trimmedStatus || trimmedStatus === 'all' ? 'all' : trimmedStatus);
 
   const url = `${getTmsSearchUrl()}?${searchParams.toString()}`;
 

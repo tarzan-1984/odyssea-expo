@@ -15,3 +15,9 @@ export const SOCKET_PERIODIC_RETRY_MS = 5000;
 
 /** Debounce before showing offline in UI (avoids flicker on sub-second reconnects). */
 export const SOCKET_OFFLINE_UI_DEBOUNCE_MS = 2000;
+
+/**
+ * If the socket stays disconnected this long (including stuck `socket.active` reconnect),
+ * tear down and create a fresh Socket.IO client.
+ */
+export const SOCKET_STUCK_OFFLINE_FORCE_RECREATE_MS = 12000;
