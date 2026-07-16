@@ -116,6 +116,12 @@ export default function CreateOfferSheet({
   const notesFieldRef = useRef<View>(null);
   /** Skip keyboard dismiss while we programmatically scroll a focused field into view. */
   const isProgrammaticScrollRef = useRef(false);
+  /** Pending field to scroll after keyboard height / layout settle. */
+  const pendingScrollFieldRef = useRef<{
+    fieldRef: React.RefObject<View | null>;
+    preferScrollToEnd: boolean;
+  } | null>(null);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const [driversExpanded, setDriversExpanded] = useState(false);
   const [routeRows, setRouteRows] = useState<RouteRow[]>(() => [newRow('pickup'), newRow('delivery')]);
   const [timePickerRowId, setTimePickerRowId] = useState<string | null>(null);
@@ -164,50 +170,97 @@ export default function CreateOfferSheet({
     Keyboard.dismiss();
   }, []);
 
+  const runScrollFieldIntoView = useCallback((
+    fieldRef: React.RefObject<View | null>,
+    preferScrollToEnd = false
+  ) => {
+    isProgrammaticScrollRef.current = true;
+    const clearProgrammaticFlag = () => {
+      setTimeout(() => {
+        isProgrammaticScrollRef.current = false;
+      }, 400);
+    };
+
+    if (preferScrollToEnd) {
+      scrollRef.current?.scrollToEnd({ animated: true });
+      clearProgrammaticFlag();
+      return;
+    }
+
+    const field = fieldRef.current;
+    const content = scrollContentRef.current;
+    if (!field || !content || !scrollRef.current) {
+      isProgrammaticScrollRef.current = false;
+      return;
+    }
+
+    field.measureLayout(
+      content,
+      (_x, y) => {
+        scrollRef.current?.scrollTo({
+          y: Math.max(0, y - rem(80)),
+          animated: true,
+        });
+        clearProgrammaticFlag();
+      },
+      () => {
+        scrollRef.current?.scrollToEnd({ animated: true });
+        clearProgrammaticFlag();
+      }
+    );
+  }, []);
+
   const scrollFieldIntoView = useCallback((
     fieldRef: React.RefObject<View | null>,
     preferScrollToEnd = false
   ) => {
-    // Wait for the soft keyboard to settle. On Android, scrolling too early
-    // (or dismissing on momentum) often closes the keyboard right after focus.
-    const delay = Platform.OS === 'ios' ? 350 : 280;
+    pendingScrollFieldRef.current = { fieldRef, preferScrollToEnd };
+    // Wait for the soft keyboard to settle. On Android Modal the window often
+    // does not resize, so we also pad content by keyboard height (see effect).
+    const delay = Platform.OS === 'ios' ? 350 : 320;
     setTimeout(() => {
-      isProgrammaticScrollRef.current = true;
-      const clearProgrammaticFlag = () => {
-        setTimeout(() => {
-          isProgrammaticScrollRef.current = false;
-        }, 400);
-      };
-
-      if (preferScrollToEnd) {
-        scrollRef.current?.scrollToEnd({ animated: true });
-        clearProgrammaticFlag();
-        return;
-      }
-
-      const field = fieldRef.current;
-      const content = scrollContentRef.current;
-      if (!field || !content || !scrollRef.current) {
-        isProgrammaticScrollRef.current = false;
-        return;
-      }
-
-      field.measureLayout(
-        content,
-        (_x, y) => {
-          scrollRef.current?.scrollTo({
-            y: Math.max(0, y - rem(80)),
-            animated: true,
-          });
-          clearProgrammaticFlag();
-        },
-        () => {
-          scrollRef.current?.scrollToEnd({ animated: true });
-          clearProgrammaticFlag();
-        }
-      );
+      const pending = pendingScrollFieldRef.current;
+      if (!pending) return;
+      runScrollFieldIntoView(pending.fieldRef, pending.preferScrollToEnd);
     }, delay);
-  }, []);
+  }, [runScrollFieldIntoView]);
+
+  useEffect(() => {
+    if (!visible) {
+      setKeyboardHeight(0);
+      pendingScrollFieldRef.current = null;
+      return;
+    }
+
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const onShow = (e: { endCoordinates: { height: number } }) => {
+      setKeyboardHeight(e.endCoordinates.height);
+    };
+    const onHide = () => {
+      setKeyboardHeight(0);
+      pendingScrollFieldRef.current = null;
+    };
+
+    const showSub = Keyboard.addListener(showEvent, onShow);
+    const hideSub = Keyboard.addListener(hideEvent, onHide);
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, [visible]);
+
+  // After keyboard height updates layout padding, re-scroll the focused field.
+  useEffect(() => {
+    if (keyboardHeight <= 0) return;
+    const pending = pendingScrollFieldRef.current;
+    if (!pending) return;
+    const t = setTimeout(() => {
+      runScrollFieldIntoView(pending.fieldRef, pending.preferScrollToEnd);
+    }, 80);
+    return () => clearTimeout(t);
+  }, [keyboardHeight, runScrollFieldIntoView]);
 
   const handleClose = useCallback(() => {
     dismissKeyboard();
@@ -676,7 +729,17 @@ export default function CreateOfferSheet({
         <NestableScrollContainer
           ref={scrollRef}
           style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            keyboardHeight > 0
+              ? {
+                  // iOS: KeyboardAvoidingView already insets; Android Modal often overlays
+                  // without resizing, so content needs keyboard-height padding to scroll above it.
+                  paddingBottom:
+                    Platform.OS === 'ios' ? rem(40) : keyboardHeight + rem(24),
+                }
+              : null,
+          ]}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           onScrollBeginDrag={dismissKeyboardFromUserScroll}
@@ -867,6 +930,7 @@ export default function CreateOfferSheet({
           </View>
         </NestableScrollContainer>
 
+        {keyboardHeight <= 0 ? (
         <View
           style={[
             styles.submitFooter,
@@ -906,6 +970,7 @@ export default function CreateOfferSheet({
             )}
           </TouchableOpacity>
         </View>
+        ) : null}
         </KeyboardAvoidingView>
 
         <OfferRouteTimePickerModal
