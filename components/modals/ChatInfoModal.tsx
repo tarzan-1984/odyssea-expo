@@ -31,6 +31,7 @@ import { userMatchesSearchQuery } from '@/utils/chatSearch';
 import { isMultiUserChatType } from '@/utils/chatRoomTypes';
 import { useChatStore } from '@/stores/chatStore';
 import { getChatNavigationPath } from '@/services/NotificationsService';
+import { canShowOfferId } from '@/utils/offerDisplay';
 
 interface UserItem {
   id: string;
@@ -95,6 +96,8 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
 
   const isGroupChat = isMultiUserChatType(chatRoom?.type);
   const isLoadChat = chatRoom?.type === 'LOAD';
+  /** LOAD only: show participant externalId next to role for admin externalId 83. */
+  const showParticipantExternalId = isLoadChat && canShowOfferId(currentUser);
   const isCurrentUserAdmin = !!chatRoom?.adminId && !!currentUser?.id && chatRoom.adminId === currentUser.id;
   const canManageChat =
     (!!isGroupChat && isCurrentUserAdmin) ||
@@ -306,6 +309,7 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
         lastName: user.lastName,
         avatar: user.avatar || user.profilePhoto || '',
         role: user.role || 'USER',
+        externalId: user.externalId || null,
       },
     };
 
@@ -402,9 +406,14 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
 
         if (addingDriverToLoad) {
           await new Promise<void>((resolve, reject) => {
-            const timeout = setTimeout(() => {
+            const cleanup = () => {
               socket.off('loadChatForked', onForked);
-              reject(new Error('Timed out waiting for forked load chat'));
+              socket.off('participantsAdded', onAddedInPlace);
+            };
+
+            const timeout = setTimeout(() => {
+              cleanup();
+              reject(new Error('Timed out waiting for driver to be added to load chat'));
             }, 15000);
 
             const onForked = (data: { sourceChatRoomId?: string; chatRooms?: any[] }) => {
@@ -412,7 +421,7 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
                 return;
               }
               clearTimeout(timeout);
-              socket.off('loadChatForked', onForked);
+              cleanup();
               const forked = normalizeForkedRoom(data?.chatRooms?.[0]);
               if (forked) {
                 openForkedLoadChat(forked);
@@ -422,7 +431,30 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
               resolve();
             };
 
+            // Source had no driver — backend attached in place
+            const onAddedInPlace = (data: {
+              chatRoomId?: string;
+              newParticipants?: Array<{ user?: { role?: string }; role?: string }>;
+            }) => {
+              if (data?.chatRoomId !== chatRoom.id) {
+                return;
+              }
+              // Ignore staff-only adds that may accompany a fork
+              const addedDriver = (data.newParticipants || []).some(
+                (p) =>
+                  String(p?.user?.role || p?.role || '').toUpperCase() === 'DRIVER',
+              );
+              if (!addedDriver) {
+                return;
+              }
+              clearTimeout(timeout);
+              cleanup();
+              onClose();
+              resolve();
+            };
+
             socket.on('loadChatForked', onForked);
+            socket.on('participantsAdded', onAddedInPlace);
             addParticipants({
               chatRoomId: chatRoom.id,
               participantIds: uniqueParticipants.map((entry) => entry.id),
@@ -469,6 +501,12 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
     const userId = user?.id || p?.userId;
     const name = `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'Unknown';
     const role = user?.role ? String(user.role) : '';
+    const roleLabel = role ? role.toLowerCase().replace('_', ' ') : '';
+    const participantExternalId = String(user?.externalId ?? '').trim();
+    const roleWithExternalId =
+      showParticipantExternalId && participantExternalId
+        ? `${roleLabel} (${participantExternalId})`
+        : roleLabel;
     const avatar = user?.avatar || user?.profilePhoto;
     const initials = getInitials(name);
     const online = userId ? isUserOnline(userId) : false;
@@ -496,9 +534,9 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
           <Text style={styles.userName} numberOfLines={1}>
             {name}
           </Text>
-          {role ? (
+          {roleWithExternalId ? (
             <Text style={styles.userRole} numberOfLines={1}>
-              {role.toLowerCase().replace('_', ' ')}
+              {roleWithExternalId}
             </Text>
           ) : null}
         </View>
@@ -718,7 +756,13 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
                             </Text>
                             {!!u.role ? (
                               <Text style={styles.userRole} numberOfLines={1}>
-                                {String(u.role).toLowerCase().replace('_', ' ')}
+                                {(() => {
+                                  const label = String(u.role).toLowerCase().replace('_', ' ');
+                                  const extId = String(u.externalId ?? '').trim();
+                                  return showParticipantExternalId && extId
+                                    ? `${label} (${extId})`
+                                    : label;
+                                })()}
                               </Text>
                             ) : null}
                           </View>
