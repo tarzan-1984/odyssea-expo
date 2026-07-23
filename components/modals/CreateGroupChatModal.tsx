@@ -20,6 +20,7 @@ import type { FileData } from '@/utils/chatAttachmentHelpers';
 import { uploadImageViaPresign } from '@/app-api/upload';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
+import { ensureMediaLibraryAccessForPicker } from '@/utils/mediaLibraryPickerAccess';
 
 // Role filter options (mirrors ContactsModal)
 const ROLE_OPTIONS = [
@@ -258,8 +259,8 @@ export default function CreateGroupChatModal({ visible, onClose, onCreated }: Cr
 
   const handlePickAvatar = async () => {
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
+      const hasAccess = await ensureMediaLibraryAccessForPicker();
+      if (!hasAccess) {
         Alert.alert('Photo library permission', 'Photo library permission is required to select photos.');
         return;
       }

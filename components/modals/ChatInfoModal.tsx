@@ -28,6 +28,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useWebSocket } from '@/context/WebSocketContext';
 import { useOnlineStatusContext } from '@/context/OnlineStatusContext';
 import { userMatchesSearchQuery } from '@/utils/chatSearch';
+import { ensureMediaLibraryAccessForPicker } from '@/utils/mediaLibraryPickerAccess';
 import { isMultiUserChatType } from '@/utils/chatRoomTypes';
 import { useChatStore } from '@/stores/chatStore';
 import { getChatNavigationPath } from '@/services/NotificationsService';
@@ -245,8 +246,8 @@ export default function ChatInfoModal({ visible, onClose, chatRoom }: ChatInfoMo
   const handlePickAvatar = async () => {
     if (!canManageChat || !chatRoom) return;
     try {
-      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-      if (status !== 'granted') {
+      const hasAccess = await ensureMediaLibraryAccessForPicker();
+      if (!hasAccess) {
         Alert.alert('Photo library permission', 'Photo library permission is required to select photos.');
         return;
       }

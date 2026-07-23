@@ -14,6 +14,7 @@ import {
 } from '@/utils/chatImageFlowTiming';
 import { prepareChatImageForUpload, prepareChatImagesForUpload } from '@/utils/chatImagePrepare';
 import { toJpegFilename, logPickerImageResult, needsDeviceJpegConversion } from '@/utils/heicUpload';
+import { ensureMediaLibraryAccessForPicker } from '@/utils/mediaLibraryPickerAccess';
 
 export interface FileData {
   uri: string;
@@ -278,8 +279,8 @@ export async function pickPhotoFromGallery(
   callbacks?.onProcessingChange?.(true);
   await yieldToUi();
   try {
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
+    const hasAccess = await ensureMediaLibraryAccessForPicker();
+    if (!hasAccess) {
       Alert.alert('Photo library permission', 'Photo library permission is required to select photos.');
       cancelImageAttachmentFlow('canceled');
       return [];

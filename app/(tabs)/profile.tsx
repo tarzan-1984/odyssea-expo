@@ -12,6 +12,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createSlot } from "@radix-ui/react-slot";
+import { ensureMediaLibraryAccessForPicker } from '@/utils/mediaLibraryPickerAccess';
 
 /**
  * ProfileScreen - Profile screen of the application
@@ -90,9 +91,9 @@ export default function ProfileScreen() {
   }, [resetAuthState, router]);
 
   const handlePickAvatar = useCallback(async () => {
-    // Ask for media library permission
-    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (status !== 'granted') {
+    // Android Photo Picker needs no READ_MEDIA permission; iOS still does.
+    const hasAccess = await ensureMediaLibraryAccessForPicker();
+    if (!hasAccess) {
       alert('Please allow access to Photos to select an photo.');
       return;
     }
