@@ -44,7 +44,7 @@ export default function NonDriverContent({ firstName }: NonDriverContentProps) {
   const router = useRouter();
   const mapRef = useRef<{ animateToRegion: (region: Region, duration?: number) => void }>(null);
   const [filters, setFilters] = useState<DriversMapSearchFilters>(DEFAULT_FILTERS);
-  const { drivers, isLoading, isFetching } = useDriversForMapInfinite(filters);
+  const { drivers } = useDriversForMapInfinite(filters);
   const markers = useMemo(() => driversToMarkers(drivers), [drivers]);
   const [selectedDriver, setSelectedDriver] = useState<any | null>(null);
   const [selectedDriverUserId, setSelectedDriverUserId] = useState<string | null>(null); // DB userId (NOT externalId)

@@ -718,7 +718,7 @@ const OSMMapView = forwardRef<OSMMapViewRef, OSMMapViewProps>(
           style={styles.webview}
           javaScriptEnabled={true}
           domStorageEnabled={true}
-          startInLoadingState={true}
+          startInLoadingState={false}
           scalesPageToFit={true}
           // Prevent navigation to external sites (Leaflet / OpenStreetMap links)
           // so that the map is not replaced by a web page or open a browser

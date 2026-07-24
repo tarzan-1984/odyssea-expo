@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, Modal, Linking, Pressable, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, Modal, Linking, Pressable } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { colors } from '@/lib/colors';
 import { fonts, fp, rem } from '@/lib';
@@ -24,22 +24,9 @@ export default function MandatoryIosUpdateGate({ children }: Props) {
     });
   };
 
-  const blocking = updateState.phase === 'loading';
-
   return (
     <View style={styles.root}>
       {children}
-
-      {blocking && (
-        <View style={styles.blockLayer} pointerEvents="auto">
-          <BlurView intensity={28} tint="dark" style={StyleSheet.absoluteFill} />
-          {updateState.phase === 'loading' && (
-            <View style={styles.loadingBox}>
-              <ActivityIndicator size="large" color={colors.neutral.white} />
-            </View>
-          )}
-        </View>
-      )}
 
       <Modal
         visible={updateState.phase === 'force'}
@@ -74,15 +61,6 @@ export default function MandatoryIosUpdateGate({ children }: Props) {
 const styles = StyleSheet.create({
   root: {
     flex: 1,
-  },
-  blockLayer: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 20000,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingBox: {
-    padding: rem(24),
   },
   modalOverlay: {
     flex: 1,
