@@ -5,7 +5,7 @@ import { colors, fonts } from '@/lib';
 import { rem, fp } from '@/lib';
 
 export default function WebSocketConnectionSettings() {
-  const { isConnected, connect, disconnect } = useWebSocket();
+  const { isConnected, connect } = useWebSocket();
   const [isReconnecting, setIsReconnecting] = useState(false);
 
   const handleReconnect = async () => {
@@ -13,21 +13,13 @@ export default function WebSocketConnectionSettings() {
 
     setIsReconnecting(true);
     try {
-      // Disconnect first if connected
-      if (isConnected) {
-        disconnect();
-        // Wait a bit before reconnecting to ensure clean disconnect
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-      
-      // Attempt to reconnect
-      // Note: connect() is async but doesn't return a promise, so we call it and wait
-      connect();
-      
-      // Wait a moment to allow connection attempt
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      
-      // Show success message
+      // Always force a fresh Socket.IO client. When the socket is stuck in
+      // Manager reconnect (`active` but not `connected`), plain connect() is a no-op.
+      await Promise.resolve(connect({ force: true }));
+
+      // Wait a moment to allow the connection attempt to settle
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+
       Alert.alert(
         'Reconnection initiated',
         'WebSocket reconnection has been initiated. The connection status will update automatically.',

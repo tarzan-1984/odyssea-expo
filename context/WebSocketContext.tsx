@@ -27,7 +27,7 @@ interface WebSocketContextType {
   isConnected: boolean;
   /** Debounced offline flag for UI — avoids flicker during brief reconnects. */
   isDisplayOffline: boolean;
-  connect: (options?: { force?: boolean }) => void;
+  connect: (options?: { force?: boolean }) => Promise<void>;
   disconnect: () => void;
   joinChatRoom: (chatRoomId: string) => void;
   leaveChatRoom: (chatRoomId: string) => void;
