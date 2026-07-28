@@ -3,7 +3,11 @@ import { AppState, AppStateStatus } from 'react-native';
 import { secureStorage } from '@/utils/secureStorage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authApi, CheckEmailResponse, LoginResponse, OtpVerificationResponse } from '@/services/authApi';
-import { registerForPushNotificationsAsync, registerPushTokenToBackend } from '@/services/NotificationsService';
+import {
+  registerForPushNotificationsAsync,
+  registerPushTokenToBackend,
+  unregisterPushTokenFromBackend,
+} from '@/services/NotificationsService';
 import {
   clearMobileDeviceSyncFingerprint,
   registerMobileDeviceAfterLogin,
@@ -799,6 +803,28 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     console.log('🔄 [AuthContext] Resetting auth state and clearing all app data');
     
     try {
+      // Unregister push token on backend while auth credentials are still available.
+      // Otherwise the device keeps receiving pushes for the previous account after logout.
+      const accessTokenForUnregister = await secureStorage
+        .getItemAsync('accessToken')
+        .catch(() => null);
+      const pushTokenForUnregister = await secureStorage
+        .getItemAsync('expoPushToken')
+        .catch(() => null);
+      if (accessTokenForUnregister && pushTokenForUnregister) {
+        try {
+          await unregisterPushTokenFromBackend(
+            pushTokenForUnregister,
+            accessTokenForUnregister
+          );
+        } catch (unregisterError) {
+          console.warn(
+            '⚠️ [AuthContext] Failed to unregister push token on backend:',
+            unregisterError
+          );
+        }
+      }
+
       // Clear secure storage (user data, tokens, location, push token)
       // NOTE: savedEmail and savedPassword are NOT deleted here - they persist for next login
       // They will only be deleted on app reinstall (checked in _layout.tsx)

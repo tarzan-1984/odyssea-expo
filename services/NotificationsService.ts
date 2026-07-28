@@ -448,6 +448,46 @@ export async function registerPushTokenToBackend(
 	}
 }
 
+/**
+ * Unregister push token from backend (call on logout before clearing local auth).
+ * If token is provided - removes only that device token; otherwise removes all tokens for the user.
+ */
+export async function unregisterPushTokenFromBackend(
+	token: string | null | undefined,
+	accessToken: string
+): Promise<boolean> {
+	try {
+		const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL || "";
+		if (!apiBase) {
+			console.warn('[NotificationsService] API base URL not configured');
+			return false;
+		}
+
+		console.log('[NotificationsService] Unregistering push token on backend...');
+		const response = await fetch(`${apiBase}/v1/notifications/unregister-token`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"Authorization": `Bearer ${accessToken}`,
+			},
+			credentials: "include",
+			body: JSON.stringify(token ? { token } : {}),
+		});
+
+		if (response.ok) {
+			console.log('[NotificationsService] ✅ Push token unregistered on backend');
+			return true;
+		} else {
+			const errorText = await response.text().catch(() => '');
+			console.warn('[NotificationsService] Failed to unregister token on backend:', response.status, errorText);
+			return false;
+		}
+	} catch (error) {
+		console.error('[NotificationsService] Error unregistering token on backend:', error);
+		return false;
+	}
+}
+
 export function ensureNotificationListeners(): () => void {
   if (notificationListenersAttached) {
     return () => {};
