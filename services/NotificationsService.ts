@@ -40,14 +40,22 @@ async function handleNotificationTap(data: Record<string, unknown> | null | unde
   }
 
   if (isOfferRelatedPushData(data)) {
-    console.log('[NotificationsService] Offer push tapped → Work / Offers');
+    const offerIdRaw = data?.offerId;
+    const offerId =
+      offerIdRaw != null && String(offerIdRaw).trim() !== ''
+        ? String(offerIdRaw).trim()
+        : null;
+    console.log(
+      '[NotificationsService] Offer push tapped →',
+      offerId ? `offer ${offerId}` : 'Work / Offers'
+    );
     try {
-      await AsyncStorage.setItem(PENDING_OFFERS_NAVIGATION_KEY, '1');
+      await AsyncStorage.setItem(PENDING_OFFERS_NAVIGATION_KEY, offerId ?? '1');
     } catch (storageError) {
       console.warn('[NotificationsService] Failed to save pending offers navigation:', storageError);
     }
     const { eventBus, AppEvents } = await import('@/services/EventBus');
-    eventBus.emit(AppEvents.NavigateToOffers, {});
+    eventBus.emit(AppEvents.NavigateToOffers, offerId ? { offerId } : {});
   }
 }
 

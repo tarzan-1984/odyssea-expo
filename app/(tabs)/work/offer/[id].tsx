@@ -35,10 +35,13 @@ import {
   selectDriverForOffer,
   setDriverRateForOfferDriver,
   editDriverRateForOfferDriver,
+  respondDriverCounterOffer,
 } from '@/app-api/offers';
 import PhoneAppStatusActiveIcon from '@/icons/PhoneAppStatusActiveIcon';
 import PhoneAppStatusInactiveIcon from '@/icons/PhoneAppStatusInactiveIcon';
 import DeactivateOfferIcon from '@/icons/DeactivateOfferIcon';
+import CounterOfferAcceptIcon from '@/icons/CounterOfferAcceptIcon';
+import CounterOfferDeclineIcon from '@/icons/CounterOfferDeclineIcon';
 import OfferUpdatedNotice from '@/components/offers/OfferUpdatedNotice';
 import ExtendBidTimeIcon from '@/icons/ExtendBidTimeIcon';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -281,6 +284,7 @@ export default function OfferDetailScreen() {
   const [isSubmittingExtendTime, setIsSubmittingExtendTime] = useState(false);
   const [isDecliningOffer, setIsDecliningOffer] = useState(false);
   const [isDeactivatingOffer, setIsDeactivatingOffer] = useState(false);
+  const [isRespondingCounterOffer, setIsRespondingCounterOffer] = useState(false);
   const [driverActionKey, setDriverActionKey] = useState<string | null>(null);
   const [pushModalDriver, setPushModalDriver] = useState<OfferDriver | null>(null);
 
@@ -355,6 +359,16 @@ export default function OfferDetailScreen() {
   const canEditDriverRate = hasSubmittedRate && remainingSeconds > 0;
   const isDeclineBlockedByActiveBidTimer = hasSubmittedRate && remainingSeconds > 0;
   const showOfferUpdatedNotice = Boolean(offer?.update_date?.trim());
+  const counterOfferAmount =
+    offerDriver?.counter_offer != null && Number.isFinite(Number(offerDriver.counter_offer))
+      ? Number(offerDriver.counter_offer)
+      : null;
+  const showCounterOfferBanner = Boolean(
+    isDriver &&
+      !isSelectedOfferDriver &&
+      !isDriverRemovedFromOffer &&
+      counterOfferAmount != null
+  );
 
   useEffect(() => {
     if (!hasSubmittedRate) {
@@ -604,6 +618,105 @@ export default function OfferDetailScreen() {
                       : 'Place bid'}
                   </Text>
                 </TouchableOpacity>
+              ) : null}
+
+              {showCounterOfferBanner ? (
+                <View style={styles.counterOfferBanner}>
+                  <Text style={styles.counterOfferBannerTitle}>Counter offer</Text>
+                  <Text style={styles.counterOfferBannerText}>
+                    You have a counter offer of{' '}
+                    <Text style={styles.counterOfferBannerValue}>
+                      {formatRateLabel(counterOfferAmount)}
+                    </Text>
+                  </Text>
+                  <View style={styles.counterOfferActions}>
+                    <TouchableOpacity
+                      style={[
+                        styles.counterOfferAcceptButton,
+                        isRespondingCounterOffer && styles.counterOfferButtonDisabled,
+                      ]}
+                      activeOpacity={0.7}
+                      disabled={isRespondingCounterOffer}
+                      onPress={async () => {
+                        if (!offer || !driverExternalId || isRespondingCounterOffer) return;
+                        try {
+                          setIsRespondingCounterOffer(true);
+                          const result = await respondDriverCounterOffer(
+                            offer.id,
+                            driverExternalId,
+                            'accept'
+                          );
+                          setDriverRate(result.rate ?? counterOfferAmount);
+                          await queryClient.invalidateQueries({ queryKey: ['offers'] });
+                          await queryClient.invalidateQueries({
+                            queryKey: ['offer-detail', offer.id],
+                          });
+                        } catch (err) {
+                          console.error('[OfferDetailScreen] Failed to accept counter offer', err);
+                          Alert.alert(
+                            'Error',
+                            err instanceof Error
+                              ? err.message
+                              : 'Failed to accept counter offer. Please try again.'
+                          );
+                        } finally {
+                          setIsRespondingCounterOffer(false);
+                        }
+                      }}
+                    >
+                      {isRespondingCounterOffer ? (
+                        <Text style={styles.counterOfferAcceptButtonText}>…</Text>
+                      ) : (
+                        <View style={styles.counterOfferAcceptButtonContent}>
+                          <CounterOfferAcceptIcon width={fp(16)} height={fp(15)} />
+                          <Text style={styles.counterOfferAcceptButtonText}>Accept</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.counterOfferDeclineButton,
+                        isRespondingCounterOffer && styles.counterOfferButtonDisabled,
+                      ]}
+                      activeOpacity={0.7}
+                      disabled={isRespondingCounterOffer}
+                      onPress={async () => {
+                        if (!offer || !driverExternalId || isRespondingCounterOffer) return;
+                        try {
+                          setIsRespondingCounterOffer(true);
+                          await respondDriverCounterOffer(
+                            offer.id,
+                            driverExternalId,
+                            'decline'
+                          );
+                          await queryClient.invalidateQueries({ queryKey: ['offers'] });
+                          await queryClient.invalidateQueries({
+                            queryKey: ['offer-detail', offer.id],
+                          });
+                        } catch (err) {
+                          console.error('[OfferDetailScreen] Failed to decline counter offer', err);
+                          Alert.alert(
+                            'Error',
+                            err instanceof Error
+                              ? err.message
+                              : 'Failed to decline counter offer. Please try again.'
+                          );
+                        } finally {
+                          setIsRespondingCounterOffer(false);
+                        }
+                      }}
+                    >
+                      {isRespondingCounterOffer ? (
+                        <Text style={styles.counterOfferDeclineButtonText}>…</Text>
+                      ) : (
+                        <View style={styles.counterOfferDeclineButtonContent}>
+                          <CounterOfferDeclineIcon width={fp(16)} height={fp(15)} />
+                          <Text style={styles.counterOfferDeclineButtonText}>Decline</Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
               ) : null}
 
               {showHazmatBanner ? (
@@ -1385,6 +1498,76 @@ const styles = StyleSheet.create({
   createRateTimerText: {
     fontSize: fp(27),
     fontFamily: fonts['700'],
+  },
+  counterOfferBanner: {
+    marginTop: rem(14),
+    marginHorizontal: rem(20),
+    paddingHorizontal: rem(16),
+    paddingVertical: rem(14),
+    borderRadius: rem(14),
+    backgroundColor: '#FDE68A',
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+  },
+  counterOfferBannerTitle: {
+    fontSize: fp(20),
+    fontFamily: fonts['700'],
+    color: colors.primary.violet,
+    marginBottom: rem(4),
+  },
+  counterOfferBannerText: {
+    fontSize: fp(16),
+    fontFamily: fonts['500'],
+    color: '#78350F',
+  },
+  counterOfferBannerValue: {
+    fontSize: fp(20),
+    fontFamily: fonts['700'],
+    color: colors.primary.violet,
+  },
+  counterOfferActions: {
+    marginTop: rem(12),
+    flexDirection: 'row',
+    gap: rem(10),
+  },
+  counterOfferAcceptButton: {
+    flex: 1,
+    height: rem(44),
+    borderRadius: rem(12),
+    backgroundColor: colors.semantic.success,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  counterOfferAcceptButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rem(6),
+  },
+  counterOfferDeclineButton: {
+    flex: 1,
+    height: rem(44),
+    borderRadius: rem(12),
+    backgroundColor: colors.semantic.error,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  counterOfferDeclineButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rem(6),
+  },
+  counterOfferButtonDisabled: {
+    opacity: 0.6,
+  },
+  counterOfferAcceptButtonText: {
+    fontSize: fp(16),
+    fontFamily: fonts['600'],
+    color: colors.neutral.white,
+  },
+  counterOfferDeclineButtonText: {
+    fontSize: fp(16),
+    fontFamily: fonts['600'],
+    color: colors.neutral.white,
   },
   rateInfoWrap: {
     marginTop: rem(10),

@@ -13,6 +13,7 @@ export interface OfferDriver {
   active: boolean;
   is_selected: boolean;
   rate: number | null;
+  counter_offer?: number | null;
   action_time?: number | null;
   action_time_display?: string | null;
   empty_miles: number | null;
@@ -567,6 +568,57 @@ export async function extendDriverTimeForOfferDriver(
   }
 
   return data as SetDriverRateResponse;
+}
+
+export type RespondCounterOfferAction = 'accept' | 'decline';
+
+export interface RespondDriverCounterOfferResponse {
+  offer_id: number;
+  driver_id: string;
+  rate: number | null;
+  counter_offer: number | null;
+  action: RespondCounterOfferAction;
+}
+
+export async function respondDriverCounterOffer(
+  offerId: number,
+  driverExternalId: string,
+  action: RespondCounterOfferAction
+): Promise<RespondDriverCounterOfferResponse> {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is not configured');
+  }
+
+  const accessToken = await secureStorage.getItemAsync('accessToken');
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
+
+  const url = `${API_BASE_URL}/v1/offers/${offerId}/drivers/${encodeURIComponent(
+    driverExternalId
+  )}/counter-offer/respond`;
+
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ action }),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    const errors = Array.isArray(data?.errors) ? data.errors : [];
+    throw new Error(
+      (typeof errors[0] === 'string' && errors[0]) ||
+        (data && (data.error || data.message)) ||
+        `Failed to ${action} counter offer. Status: ${response.status}`
+    );
+  }
+
+  return data as RespondDriverCounterOfferResponse;
 }
 
 export async function removeDriverFromOfferDriver(

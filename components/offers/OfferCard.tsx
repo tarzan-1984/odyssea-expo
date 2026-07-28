@@ -113,6 +113,7 @@ export default function OfferCard({
   const hasActiveBidTimer = hasSubmittedRate && remainingSeconds > 0;
   const offeredRateLabel = formatOfferRate(offer.offered_rate);
   const driverRateLabel = formatOfferRate(offerDriver?.rate);
+  const counterOfferLabel = formatOfferRate(offerDriver?.counter_offer);
   const loadedMilesLabel = formatLoadedMiles(offer.loaded_miles);
   const showOfferedRatePreview = Boolean(
     isDriver && offerListTab !== 'assigned' && offeredRateLabel,
@@ -125,6 +126,10 @@ export default function OfferCard({
   const offeredRatePerMileLabel = formatRatePerMile(offer.offered_rate, offerTotalMiles);
   const showDriverRatePreview = Boolean(
     isDriver && offerListTab === 'assigned' && driverRateLabel,
+  );
+  /** Driver-only: own rate opposite the bid timer / expired icon */
+  const showDriverRateBesideTimer = Boolean(
+    isDriver && offerListTab !== 'assigned' && hasSubmittedRate && driverRateLabel,
   );
   const showOfferUpdatedNotice = Boolean(offer.update_date?.trim());
 
@@ -241,17 +246,31 @@ export default function OfferCard({
               ) : null}
 
               {hasSubmittedRate ? (
-                <View style={styles.metaRow}>
-                  <View style={styles.metaLeft} />
-                  <View style={styles.metaRight}>
-                    {!isBidExpired ? (
-                      <View style={styles.timerBadge}>
-                        <Text style={styles.timerText}>{formatCountdown(remainingSeconds)}</Text>
+                <View style={styles.bidStatusRow}>
+                  {showDriverRateBesideTimer ? (
+                    <View style={styles.driverRateBlock}>
+                      <Text style={styles.driverRateLabel}>Your bid</Text>
+                      <View style={styles.driverRatePrices}>
+                        <Text style={styles.driverRateValue} numberOfLines={1}>
+                          {driverRateLabel}
+                        </Text>
+                        {counterOfferLabel ? (
+                          <Text style={styles.counterOfferRateValue} numberOfLines={1}>
+                            {counterOfferLabel}
+                          </Text>
+                        ) : null}
                       </View>
-                    ) : (
-                      <OfferBidExpiredIcon width={34} height={28} />
-                    )}
-                  </View>
+                    </View>
+                  ) : (
+                    <View />
+                  )}
+                  {!isBidExpired ? (
+                    <View style={styles.timerBadge}>
+                      <Text style={styles.timerText}>{formatCountdown(remainingSeconds)}</Text>
+                    </View>
+                  ) : (
+                    <OfferBidExpiredIcon width={34} height={28} />
+                  )}
                 </View>
               ) : null}
             </>
@@ -516,6 +535,40 @@ const styles = StyleSheet.create({
   },
   offeredRateMeta: {
     color: colors.primary.offeredRate,
+  },
+  bidStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: rem(8),
+    marginTop: rem(4),
+  },
+  driverRateBlock: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: rem(6),
+    flexShrink: 1,
+  },
+  driverRateLabel: {
+    fontSize: fp(14),
+    fontFamily: fonts['600'],
+    color: colors.primary.offeredRate,
+    lineHeight: fp(22),
+  },
+  driverRatePrices: {
+    alignItems: 'flex-start',
+  },
+  driverRateValue: {
+    fontSize: fp(18),
+    fontFamily: fonts['700'],
+    color: colors.semantic.success,
+    lineHeight: fp(22),
+  },
+  counterOfferRateValue: {
+    fontSize: fp(14),
+    fontFamily: fonts['700'],
+    color: '#CA8A04',
+    lineHeight: fp(18),
   },
   timerBadge: {
     minWidth: rem(88),

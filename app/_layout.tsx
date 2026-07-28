@@ -147,9 +147,14 @@ function RootLayoutNav() {
         router.replace(getChatNavigationPath(data.chatRoomId) as any);
       }
     };
-    const handleNavigateToOffers = () => {
+    const handleNavigateToOffers = (data?: { offerId?: string }) => {
       if (authState.isAuthenticated) {
-        router.replace('/work' as any);
+        const offerId = data?.offerId?.trim();
+        if (offerId && offerId !== '1') {
+          router.replace(`/work/offer/${offerId}` as any);
+        } else {
+          router.replace('/work' as any);
+        }
       }
     };
 
@@ -178,7 +183,11 @@ function RootLayoutNav() {
           router.replace(getChatNavigationPath(pendingChatId) as any);
         } else if (pendingOffers) {
           await AsyncStorage.removeItem(PENDING_OFFERS_NAVIGATION_KEY);
-          router.replace('/work' as any);
+          if (pendingOffers !== '1') {
+            router.replace(`/work/offer/${pendingOffers}` as any);
+          } else {
+            router.replace('/work' as any);
+          }
         }
       } catch (error) {
         console.error('[RootLayoutNav] Failed to check pending navigation:', error);
