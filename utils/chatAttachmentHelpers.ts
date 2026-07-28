@@ -13,8 +13,12 @@ import {
   completeDevicePickerExportFlow,
 } from '@/utils/chatImageFlowTiming';
 import { prepareChatImageForUpload, prepareChatImagesForUpload } from '@/utils/chatImagePrepare';
-import { toJpegFilename, logPickerImageResult, needsDeviceJpegConversion } from '@/utils/heicUpload';
+import { toJpegFilename, logPickerImageResult, logPickerAssetSelected, needsDeviceJpegConversion } from '@/utils/heicUpload';
 import { ensureMediaLibraryAccessForPicker } from '@/utils/mediaLibraryPickerAccess';
+import {
+  formatPhotoFlowErrorMessage,
+  reportClientError,
+} from '@/utils/reportClientError';
 
 export interface FileData {
   uri: string;
@@ -90,6 +94,19 @@ export async function uploadAttachmentFiles(
           return await prepareChatImageForUpload(withMime);
         } catch (error) {
           console.warn('[chatAttachmentHelpers] Device JPEG prepare failed, using original file:', error);
+          await reportClientError({
+            feature: 'chat_photo_prepare_fallback',
+            stage: 'prepare',
+            message: formatPhotoFlowErrorMessage(error),
+            error,
+            details: {
+              filename: withMime.name,
+              mimeType: withMime.mimeType,
+              uriScheme: withMime.uri.includes(':')
+                ? withMime.uri.slice(0, withMime.uri.indexOf(':'))
+                : 'unknown',
+            },
+          });
         }
       }
       return withMime;
@@ -199,6 +216,17 @@ export async function capturePhoto(
       originalName: rawName !== filename ? rawName : undefined,
     };
 
+    await logPickerAssetSelected({
+      stage: 'Camera',
+      uri: asset.uri,
+      filename,
+      mimeType,
+      originalFilename: rawName,
+      sizeBytes: asset.fileSize || undefined,
+      width: asset.width,
+      height: asset.height,
+    });
+
     completeDevicePickerExportFlow({
       fileCount: 1,
       fileNames: [rawFile.name],
@@ -229,8 +257,16 @@ export async function capturePhoto(
       sizeBytes: prepared.size,
     });
     return [prepared];
-  } catch {
+  } catch (error) {
     cancelImageAttachmentFlow('error');
+    console.error('[chatAttachmentHelpers] capturePhoto failed:', error);
+    await reportClientError({
+      feature: 'chat_photo_camera',
+      stage: 'capture_or_prepare',
+      message: formatPhotoFlowErrorMessage(error),
+      error,
+    });
+    Alert.alert('Photo failed', formatPhotoFlowErrorMessage(error));
     return [];
   } finally {
     callbacks?.onProcessingChange?.(false);
@@ -318,6 +354,22 @@ export async function pickPhotoFromGallery(
     const pickerDurationMs = Date.now() - pickerStartedAt;
     const rawFiles = assets.map((asset, i) => fileDataFromGalleryAsset(asset, i));
 
+    await Promise.all(
+      rawFiles.map((file, i) =>
+        logPickerAssetSelected({
+          stage: 'Gallery',
+          index: i,
+          uri: file.uri,
+          filename: file.name,
+          mimeType: file.mimeType,
+          originalFilename: file.originalName,
+          sizeBytes: file.size,
+          width: file.width,
+          height: file.height,
+        }),
+      ),
+    );
+
     completeDevicePickerExportFlow({
       fileCount: rawFiles.length,
       fileNames: rawFiles.map((f) => f.name),
@@ -358,7 +410,13 @@ export async function pickPhotoFromGallery(
   } catch (error) {
     console.error('[chatAttachmentHelpers] Error picking photo from gallery:', error);
     cancelImageAttachmentFlow('error');
-    Alert.alert('Error', 'Failed to select photo from gallery. Please try again.');
+    await reportClientError({
+      feature: 'chat_photo_gallery',
+      stage: 'pick_or_prepare',
+      message: formatPhotoFlowErrorMessage(error),
+      error,
+    });
+    Alert.alert('Photo failed', formatPhotoFlowErrorMessage(error));
     return [];
   } finally {
     callbacks?.onProcessingChange?.(false);
@@ -394,6 +452,18 @@ export async function handleUploadAndSend(params: {
     });
     await sendUploadedAttachments(uploaded, sendMessage);
   } catch (error) {
+    console.error('[chatAttachmentHelpers] File upload failed:', error);
+    await reportClientError({
+      feature: 'chat_file_upload',
+      stage: 'upload',
+      message: formatUploadErrorMessage(error),
+      error,
+      details: {
+        fileCount: files.length,
+        fileNames: files.map((f) => f.name).slice(0, 10),
+        chatRoomId,
+      },
+    });
     Alert.alert('Upload failed', formatUploadErrorMessage(error));
   }
 
@@ -470,6 +540,18 @@ async function uploadPhotoAndSend(params: {
     await sendUploadedAttachments(uploaded, sendMessage);
   } catch (error) {
     console.error('[chatAttachmentHelpers] Batch upload failed:', error);
+    await reportClientError({
+      feature: 'chat_photo_upload',
+      stage: 'upload',
+      message: formatUploadErrorMessage(error),
+      error,
+      details: {
+        fileCount: files.length,
+        fileNames: files.map((f) => f.name).slice(0, 10),
+        mimeTypes: files.map((f) => f.mimeType).slice(0, 10),
+        chatRoomId,
+      },
+    });
     Alert.alert('Upload failed', formatUploadErrorMessage(error));
   }
 

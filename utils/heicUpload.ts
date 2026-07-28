@@ -166,6 +166,46 @@ export function logImageFormatConversion(params: {
 	);
 }
 
+/** Log raw picker/camera asset before prepare (URI scheme, mime, size, dims). */
+export async function logPickerAssetSelected(params: {
+	stage: 'Camera' | 'Gallery';
+	index?: number;
+	uri: string;
+	filename: string;
+	mimeType?: string;
+	originalFilename?: string;
+	sizeBytes?: number;
+	width?: number;
+	height?: number;
+}): Promise<ImageFormatLabel> {
+	const containerFormat = await detectImageContainerFormat(params.uri);
+	const format =
+		containerFormat !== 'UNKNOWN'
+			? containerFormat
+			: inferFormatFromMime(params.mimeType) ??
+				inferFormatFromFilename(params.filename);
+
+	const uriScheme = params.uri.includes(':')
+		? params.uri.slice(0, params.uri.indexOf(':'))
+		: 'unknown';
+
+	console.log(CHAT_IMAGE_CONVERT_LOG, `[${params.stage}] selected asset`, {
+		index: params.index,
+		uriScheme,
+		uriPreview: params.uri.slice(0, 120),
+		filename: params.filename,
+		originalFilename: params.originalFilename,
+		mimeType: params.mimeType,
+		format,
+		containerFormat,
+		sizeBytes: params.sizeBytes,
+		width: params.width,
+		height: params.height,
+	});
+
+	return format;
+}
+
 export async function logPickerImageResult(params: {
 	stage: 'Camera' | 'Gallery';
 	index?: number;
@@ -189,6 +229,10 @@ export async function logPickerImageResult(params: {
 		originalFilename: params.originalFilename,
 	});
 
+	const uriScheme = params.resultUri.includes(':')
+		? params.resultUri.slice(0, params.resultUri.indexOf(':'))
+		: 'unknown';
+
 	logImageFormatConversion({
 		stage: params.stage,
 		index: params.index,
@@ -206,6 +250,16 @@ export async function logPickerImageResult(params: {
 			params.originalFilename !== params.resultFilename
 				? params.originalFilename
 				: undefined,
+		sizeBytes: params.sizeBytes,
+	});
+
+	console.log(CHAT_IMAGE_CONVERT_LOG, `[${params.stage}] prepared asset`, {
+		index: params.index,
+		uriScheme,
+		uriPreview: params.resultUri.slice(0, 120),
+		filename: params.resultFilename,
+		mimeType: params.resultMimeType,
+		resultFormat,
 		sizeBytes: params.sizeBytes,
 	});
 }

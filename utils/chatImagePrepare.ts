@@ -179,10 +179,22 @@ export async function prepareChatImageForUpload(
 			? ImageManipulator.SaveFormat.PNG
 			: ImageManipulator.SaveFormat.JPEG;
 
-	const result = await ImageManipulator.manipulateAsync(input.uri, effectiveResizeActions, {
-		compress: HEIC_JPEG_QUALITY,
-		format: saveFormat,
-	});
+	const uriScheme = input.uri.includes(':')
+		? input.uri.slice(0, input.uri.indexOf(':'))
+		: 'unknown';
+
+	let result: ImageManipulator.ImageResult;
+	try {
+		result = await ImageManipulator.manipulateAsync(input.uri, effectiveResizeActions, {
+			compress: HEIC_JPEG_QUALITY,
+			format: saveFormat,
+		});
+	} catch (error) {
+		const reason = error instanceof Error ? error.message : String(error);
+		throw new Error(
+			`manipulateAsync failed (${originalFormat}, scheme=${uriScheme}, mime=${input.mimeType ?? 'n/a'}): ${reason}`,
+		);
+	}
 
 	const jpegName = mustEncodeJpeg ? toJpegFilename(input.name) : input.name;
 	const fileSize = await getFileSize(result.uri, input.size ?? 0);
