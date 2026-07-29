@@ -9,6 +9,13 @@ import {
 	markImageMessageWsSent,
 } from '@/utils/chatImageFlowTiming';
 import {
+	createClientDiagFlowId,
+	reportClientDiag,
+	reportClientError,
+} from '@/utils/reportClientError';
+import { formatUploadErrorMessage } from '@/utils/mimeTypeUpload';
+import { fileLogger } from '@/utils/fileLogger';
+import {
 	chatOutboxService,
 	createClientMessageId,
 	type ChatOutboxItem,
@@ -163,6 +170,11 @@ export function useChatOutboxSend({
 				return true;
 			} catch (error) {
 				console.warn('[useChatOutboxSend] HTTP fallback failed:', error);
+				fileLogger.error('ChatOutbox', 'HTTP_FALLBACK_FAILED', {
+					chatRoomId,
+					clientMessageId,
+					error: error instanceof Error ? error.message : String(error),
+				});
 				return false;
 			}
 		},
@@ -200,6 +212,7 @@ export function useChatOutboxSend({
 
 			try {
 				let uploaded: OutboxUploadedAttachment[] | undefined = item.uploadedAttachments;
+				const flowId = createClientDiagFlowId('outbox');
 
 				if (item.kind === 'media') {
 					if (!uploaded?.length) {
@@ -207,24 +220,52 @@ export function useChatOutboxSend({
 						beginImageSendFlow();
 						const files = outboxLocalToFileData(item.localFiles ?? []);
 						if (files.length === 0) {
+							await reportClientError({
+								feature: 'chat_photo_upload',
+								stage: 'outbox_missing_files',
+								message: 'Missing local files for media retry',
+								flowId,
+								details: {
+									chatRoomId,
+									clientMessageId: item.clientMessageId,
+								},
+							});
 							throw new Error('Missing local files for media retry');
 						}
 
-						const optimisticId = pendingIdForClientMessage(item.clientMessageId);
-						uploaded = await uploadAttachmentFiles(files, (index, status) => {
-							setOptimisticMessages((prev) =>
-								prev.map((msg) => {
-									if (msg.id !== optimisticId) return msg;
-									const uploadStatus =
-										status === 'uploading'
-											? 'uploading'
-											: status === 'done'
-												? 'done'
-												: 'error';
-									return patchOptimisticUploadStatus(msg, index, uploadStatus);
-								}),
-							);
+						await reportClientDiag({
+							feature: 'chat_photo_upload',
+							stage: 'outbox_upload_start',
+							message: `Outbox media upload start (${files.length})`,
+							flowId,
+							details: {
+								chatRoomId,
+								clientMessageId: item.clientMessageId,
+								fileCount: files.length,
+								fileNames: files.map((f) => f.name).slice(0, 10),
+								mimeTypes: files.map((f) => f.mimeType).slice(0, 10),
+							},
 						});
+
+						const optimisticId = pendingIdForClientMessage(item.clientMessageId);
+						uploaded = await uploadAttachmentFiles(
+							files,
+							(index, status) => {
+								setOptimisticMessages((prev) =>
+									prev.map((msg) => {
+										if (msg.id !== optimisticId) return msg;
+										const uploadStatus =
+											status === 'uploading'
+												? 'uploading'
+												: status === 'done'
+													? 'done'
+													: 'error';
+										return patchOptimisticUploadStatus(msg, index, uploadStatus);
+									}),
+								);
+							},
+							{ flowId },
+						);
 						completeImageUploadFlow(uploaded.length);
 						void chatOutboxService.patch(item.clientMessageId, {
 							uploadedAttachments: uploaded,
@@ -249,6 +290,16 @@ export function useChatOutboxSend({
 					}
 
 					if (!uploaded?.length) {
+						await reportClientError({
+							feature: 'chat_photo_upload',
+							stage: 'outbox_empty_upload',
+							message: 'Upload produced no files',
+							flowId,
+							details: {
+								chatRoomId,
+								clientMessageId: item.clientMessageId,
+							},
+						});
 						throw new Error('Upload produced no files');
 					}
 
@@ -269,6 +320,17 @@ export function useChatOutboxSend({
 							item.clientMessageId,
 						);
 					}
+					await reportClientDiag({
+						feature: 'chat_photo_upload',
+						stage: 'outbox_ws_sent',
+						message: `Outbox media WS send dispatched (${uploaded.length})`,
+						flowId,
+						details: {
+							chatRoomId,
+							clientMessageId: item.clientMessageId,
+							uploadedCount: uploaded.length,
+						},
+					});
 					markImageMessageWsSent(uploaded.map((row) => row.fileUrl));
 				} else {
 				await sendMessage(
@@ -292,6 +354,20 @@ export function useChatOutboxSend({
 				scheduleAckTimeout(item.clientMessageId);
 			} catch (error) {
 				console.warn('[useChatOutboxSend] WebSocket dispatch failed:', error);
+				if (item.kind === 'media') {
+					await reportClientError({
+						feature: 'chat_photo_upload',
+						stage: 'outbox_dispatch',
+						message: formatUploadErrorMessage(error),
+						error,
+						details: {
+							chatRoomId,
+							clientMessageId: item.clientMessageId,
+							hasUploaded: Boolean(item.uploadedAttachments?.length),
+							localFileCount: item.localFiles?.length ?? 0,
+						},
+					});
+				}
 				const recovered = await tryHttpFallback(item.clientMessageId);
 				if (!recovered) {
 					markOptimisticFailed(item.clientMessageId);
@@ -356,9 +432,36 @@ export function useChatOutboxSend({
 
 	const sendMediaMessage = useCallback(
 		async (content: string, files: FileData[], replyData?: Message['replyData']) => {
-			if (!chatRoomId || !sender || files.length === 0) return;
+			if (!chatRoomId || !sender || files.length === 0) {
+				await reportClientDiag({
+					feature: 'chat_photo_upload',
+					stage: 'send_media_skipped',
+					message: 'sendMediaMessage skipped',
+					level: 'warn',
+					details: {
+						hasChatRoomId: Boolean(chatRoomId),
+						hasSender: Boolean(sender),
+						fileCount: files.length,
+					},
+				});
+				return;
+			}
 
 			const clientMessageId = createClientMessageId();
+			await reportClientDiag({
+				feature: 'chat_photo_upload',
+				stage: 'send_media_queued',
+				message: `Media message queued (${files.length})`,
+				flowId: clientMessageId,
+				details: {
+					chatRoomId,
+					clientMessageId,
+					fileCount: files.length,
+					fileNames: files.map((f) => f.name).slice(0, 10),
+					mimeTypes: files.map((f) => f.mimeType).slice(0, 10),
+				},
+			});
+
 			const optimistic = createOptimisticPhotoMessage({
 				clientMessageId,
 				chatRoomId,

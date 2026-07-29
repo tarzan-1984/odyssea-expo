@@ -20,6 +20,7 @@ import {
   SOCKET_STUCK_OFFLINE_FORCE_RECREATE_MS,
 } from '@/lib/socketIoClientOptions';
 import { useNetworkReconnect } from '@/hooks/useNetworkReconnect';
+import { fileLogger } from '@/utils/fileLogger';
 
 // WebSocket context interface
 interface WebSocketContextType {
@@ -184,6 +185,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
     if (!token) {
       console.warn('⚠️ [WebSocket] No access token available');
+      fileLogger.warn('WebSocket', 'NO_ACCESS_TOKEN');
       isConnectingRef.current = false;
       return;
     }
@@ -199,12 +201,14 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     // Validate WebSocket URL
     if (!WS_URL) {
       console.error('❌ [WebSocket] WS_URL is not defined');
+      fileLogger.error('WebSocket', 'WS_URL_MISSING');
       isConnectingRef.current = false;
       return;
     }
 
     if (WS_URL.includes('https/')) {
       console.error('❌ [WebSocket] Invalid WebSocket URL:', WS_URL);
+      fileLogger.error('WebSocket', 'WS_URL_INVALID', { WS_URL });
       isConnectingRef.current = false;
       return;
     }
@@ -327,6 +331,7 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
     newSocket.on('connect_error', (error) => {
       console.error('❌ [WebSocket] Connection error:', error.message);
+      fileLogger.error('WebSocket', 'CONNECT_ERROR', { message: error.message });
       setIsConnected(false);
       if (offlineUiTimerRef.current) {
         clearTimeout(offlineUiTimerRef.current);
@@ -361,10 +366,12 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
     newSocket.on('reconnect_error', (error: Error) => {
       console.error(`❌ [WebSocket] Socket.IO reconnection error:`, error.message);
+      fileLogger.error('WebSocket', 'RECONNECT_ERROR', { message: error.message });
     });
 
     newSocket.io.on('reconnect_failed', () => {
       console.error('❌ [WebSocket] Socket.IO reconnection failed');
+      fileLogger.error('WebSocket', 'RECONNECT_FAILED');
       isConnectingRef.current = false;
       scheduleStuckOfflineWatchdog();
 

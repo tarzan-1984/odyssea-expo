@@ -14,6 +14,7 @@ import MessageItem from '@/components/MessageItem';
 import ChatHeaderDropdown from '@/components/ChatHeaderDropdown';
 import { setActiveChatRoomId } from '@/services/ActiveChatService';
 import { type FileData, type UploadQueueItem, useAttachmentPicker } from '@/utils/chatAttachmentHelpers';
+import { reportClientDiag } from '@/utils/reportClientError';
 import { messageReplacesOptimistic } from '@/utils/optimisticChatMessage';
 import { useChatStore } from '@/stores/chatStore';
 import { useChatOutboxSend } from '@/hooks/useChatOutboxSend';
@@ -88,6 +89,17 @@ export default function ChatRoomScreen() {
   const handleFilesSelected = useCallback((files: FileData[]) => {
     if (files.length === 0) return;
     const capped = files.slice(0, 20);
+    void reportClientDiag({
+      feature: 'chat_attach',
+      stage: 'pending_attachments_set',
+      message: `Pending attachments set (${capped.length})`,
+      details: {
+        chatRoomId: chatRoomId ?? null,
+        fileCount: capped.length,
+        fileNames: capped.map((f) => f.name).slice(0, 10),
+        mimeTypes: capped.map((f) => f.mimeType).slice(0, 10),
+      },
+    });
     setPendingAttachments(capped);
     setUploadQueue(
       capped.map((f) => ({
@@ -97,7 +109,7 @@ export default function ChatRoomScreen() {
         status: 'selected' as const,
       }))
     );
-  }, []);
+  }, [chatRoomId]);
   const attachmentPickCallbacks = useMemo(
     () => ({ onProcessingChange: setIsProcessingAttachments }),
     [],

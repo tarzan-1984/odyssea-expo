@@ -120,6 +120,9 @@ export default function LogsSettings() {
       
       <View style={styles.infoContainer}>
         <Text style={styles.infoText}>Log file size: {formatFileSize(fileSize)}</Text>
+        <Text style={styles.hintText}>
+          Includes location, chat, photo upload, and connection errors. Share this file if something fails.
+        </Text>
       </View>
     </View>
   );
@@ -166,6 +169,12 @@ const styles = StyleSheet.create({
   infoText: {
     fontSize: fp(14),
     color: colors.primary.gray,
+  },
+  hintText: {
+    marginTop: rem(6),
+    fontSize: fp(12),
+    color: colors.primary.gray,
+    lineHeight: fp(16),
   },
   button: {
     paddingVertical: rem(10),

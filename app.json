@@ -2,7 +2,7 @@
   "expo": {
     "name": "Odysseia App",
     "slug": "odyssea",
-    "version": "2.3.1",
+    "version": "2.3.2",
     "orientation": "portrait",
     "icon": "./assets/android-adaptive-icon.png",
     "scheme": "odyssea",
@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.odyssea.app",
-      "buildNumber": "44",
+      "buildNumber": "45",
       "icon": "./assets/android-adaptive-icon.png",
       "splash": {
         "image": "./assets/images/splash-icon.png",
@@ -44,7 +44,7 @@
         "backgroundColor": "#ffffff"
       },
       "softwareKeyboardLayoutMode": "resize",
-      "versionCode": 44,
+      "versionCode": 45,
       "package": "com.odyssea.app",
       "googleServicesFile": "./google-services.json",
       "notification": {

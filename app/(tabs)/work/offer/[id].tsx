@@ -866,7 +866,11 @@ export default function OfferDetailScreen() {
                     const canSwipeDriver =
                       !hasAcceptedDriver &&
                       (isRemovedDriver || (!driver.is_selected && !isRemovedDriver));
-                    const canAssignDriver = !hasAcceptedDriver && !isRemovedDriver && !driver.is_selected;
+                    const canAssignDriver =
+                      !hasAcceptedDriver &&
+                      !isRemovedDriver &&
+                      !driver.is_selected &&
+                      hasDriverRate(driver.rate);
                     const canReturnDriver = !hasAcceptedDriver && isRemovedDriver;
                     const canExtendBid =
                       canExtendDriverBidTime(offer, driver) &&

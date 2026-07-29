@@ -7,6 +7,7 @@ import { useChatStore } from '@/stores/chatStore';
 import { useWebSocket } from '@/context/WebSocketContext';
 import { useAuth } from '@/context/AuthContext';
 import { normalizeChatParticipants } from '@/utils/normalizeChatParticipants';
+import { fileLogger } from '@/utils/fileLogger';
 
 const OPENED_CHATS_KEY = '@chat_opened_rooms';
 
@@ -365,10 +366,16 @@ export const useChatRooms = (): UseChatRoomsReturn => {
         })());
       } catch (apiError) {
         console.warn('❌ [useChatRooms] API unavailable, no cached data available:', apiError);
+        fileLogger.error('ChatRooms', 'LOAD_API_UNAVAILABLE', {
+          error: apiError instanceof Error ? apiError.message : String(apiError),
+        });
         setError('Failed to load chat rooms');
       }
     } catch (error) {
       console.error('❌ [useChatRooms] Failed to load chat rooms:', error);
+      fileLogger.error('ChatRooms', 'LOAD_FAILED', {
+        error: error instanceof Error ? error.message : String(error),
+      });
       setError('Failed to load chat rooms');
     } finally {
       setIsLoading(false);
@@ -399,6 +406,9 @@ export const useChatRooms = (): UseChatRoomsReturn => {
       await syncOpenedChatsWithExistingRooms(normalizedApiRooms);
     } catch (error) {
       console.error('❌ [useChatRooms] Failed to refresh chat rooms:', error);
+      fileLogger.error('ChatRooms', 'REFRESH_FAILED', {
+        error: error instanceof Error ? error.message : String(error),
+      });
       setError('Failed to refresh chat rooms');
     } finally {
       setIsLoading(false);

@@ -78,6 +78,8 @@ export async function consumeInitialNotificationResponse(): Promise<void> {
     const data = response.notification.request.content.data as Record<string, unknown> | undefined;
     console.log('[NotificationsService] Initial notification response:', data?.chatRoomId ?? data?.type ?? 'unknown');
     await handleNotificationTap(data);
+    // Clear so a stale tap does not re-open the same chat on later cold starts
+    await Notifications.clearLastNotificationResponseAsync();
   } catch (error) {
     console.warn('[NotificationsService] Failed to consume initial notification response:', error);
   }
@@ -536,6 +538,7 @@ export function addNotificationListeners() {
 		try {
 			const data = response.notification.request.content.data as Record<string, unknown> | undefined;
 			await handleNotificationTap(data);
+			await Notifications.clearLastNotificationResponseAsync();
 		} catch (e) {
 			console.error('[NotificationsService] Failed to handle notification tap:', e);
 		}

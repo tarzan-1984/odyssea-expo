@@ -143,7 +143,10 @@ function RootLayoutNav() {
     const { eventBus, AppEvents } = require('@/services/EventBus');
     const handleNavigateToChat = (data: { chatRoomId: string }) => {
       if (authState.isAuthenticated && data.chatRoomId) {
-        pendingChatNavigationRef.current = data.chatRoomId;
+        // One-shot: do not keep pending id — otherwise every AppState 'active'
+        // would router.replace back into this chat after the user left it.
+        pendingChatNavigationRef.current = null;
+        void AsyncStorage.removeItem(PENDING_CHAT_NAVIGATION_KEY);
         router.replace(getChatNavigationPath(data.chatRoomId) as any);
       }
     };
@@ -178,7 +181,8 @@ function RootLayoutNav() {
         const pendingOffers = await AsyncStorage.getItem(PENDING_OFFERS_NAVIGATION_KEY);
 
         if (pendingChatId) {
-          pendingChatNavigationRef.current = pendingChatId;
+          // Consume once — clearing ref prevents re-open on every foreground
+          pendingChatNavigationRef.current = null;
           await AsyncStorage.removeItem(PENDING_CHAT_NAVIGATION_KEY);
           router.replace(getChatNavigationPath(pendingChatId) as any);
         } else if (pendingOffers) {

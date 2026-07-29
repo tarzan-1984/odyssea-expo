@@ -11,6 +11,7 @@ import { eventBus, AppEvents } from '@/services/EventBus';
 import { proactiveRefreshFromSecureStorage } from '@/utils/accessTokenRefresh';
 import { useChatStore } from '@/stores/chatStore';
 import { tryCompleteImageFlowOnMessage } from '@/utils/chatImageFlowTiming';
+import { fileLogger } from '@/utils/fileLogger';
 import {
   mergeChatRoomParticipants,
 } from '@/utils/normalizeChatParticipants';
@@ -1111,6 +1112,10 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
           setHasMoreMessages(response.hasMore);
         } catch (apiError) {
           console.warn('API unavailable, no cached data available:', apiError);
+          fileLogger.error('ChatRoom', 'LOAD_MESSAGES_API_UNAVAILABLE', {
+            chatRoomId,
+            error: apiError instanceof Error ? apiError.message : String(apiError),
+          });
           setError('Failed to load messages');
           setMessages([]);
           // Update store (defer to avoid updating during render)
@@ -1124,6 +1129,10 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
         // Messages loaded successfully
       } catch (error) {
         console.error('Failed to load messages:', error);
+        fileLogger.error('ChatRoom', 'LOAD_MESSAGES_FAILED', {
+          chatRoomId,
+          error: error instanceof Error ? error.message : String(error),
+        });
         setError('Failed to load messages');
       } finally {
         setIsLoadingMessages(false);
@@ -1311,6 +1320,12 @@ export const useChatRoom = (chatRoomId: string | undefined): UseChatRoomReturn =
         // No need to add optimistic message here
       } catch (error) {
         console.error('Failed to send message:', error);
+        fileLogger.error('ChatRoom', 'SEND_MESSAGE_FAILED', {
+          chatRoomId,
+          hasFile: Boolean(fileData?.fileUrl || (attachments && attachments.length > 0)),
+          attachmentCount: attachments?.length ?? (fileData ? 1 : 0),
+          error: error instanceof Error ? error.message : String(error),
+        });
         throw error;
       } finally {
         setIsSendingMessage(false);

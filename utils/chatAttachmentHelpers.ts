@@ -12,11 +12,17 @@ import {
   completeDeviceImagePrepareFlow,
   completeDevicePickerExportFlow,
 } from '@/utils/chatImageFlowTiming';
-import { prepareChatImageForUpload, prepareChatImagesForUpload } from '@/utils/chatImagePrepare';
+import {
+  prepareChatImageForUpload,
+  prepareChatImageForUploadOrFallback,
+  prepareChatImagesForUploadWithMeta,
+} from '@/utils/chatImagePrepare';
 import { toJpegFilename, logPickerImageResult, logPickerAssetSelected, needsDeviceJpegConversion } from '@/utils/heicUpload';
 import { ensureMediaLibraryAccessForPicker } from '@/utils/mediaLibraryPickerAccess';
 import {
+  createClientDiagFlowId,
   formatPhotoFlowErrorMessage,
+  reportClientDiag,
   reportClientError,
 } from '@/utils/reportClientError';
 
@@ -29,6 +35,27 @@ export interface FileData {
   originalName?: string;
   width?: number;
   height?: number;
+}
+
+function uriScheme(uri?: string): string {
+  if (!uri) return 'missing';
+  const idx = uri.indexOf(':');
+  return idx > 0 ? uri.slice(0, idx) : 'unknown';
+}
+
+function summarizeFilesForDiag(files: FileData[]): Record<string, unknown> {
+  return {
+    fileCount: files.length,
+    files: files.slice(0, 10).map((f) => ({
+      name: f.name,
+      originalName: f.originalName,
+      mimeType: f.mimeType ?? null,
+      size: f.size ?? null,
+      scheme: uriScheme(f.uri),
+      width: f.width ?? null,
+      height: f.height ?? null,
+    })),
+  };
 }
 
 export interface UploadQueueItem {
@@ -78,11 +105,30 @@ export type UploadProgressCallback = (index: number, status: UploadQueueItem['st
 export async function uploadAttachmentFiles(
   files: FileData[],
   onProgress?: UploadProgressCallback,
+  options?: { flowId?: string },
 ): Promise<{ fileUrl: string; fileName: string; fileSize: number }[]> {
   if (files.length === 0) return [];
 
+  const flowId = options?.flowId ?? createClientDiagFlowId('up');
+  const feature = 'chat_photo_upload';
+
+  await reportClientDiag({
+    feature,
+    stage: 'upload_batch_start',
+    message: `uploadAttachmentFiles start (${files.length})`,
+    flowId,
+    details: summarizeFilesForDiag(files),
+  });
+
   const token = await secureStorage.getItemAsync('accessToken').catch(() => null);
   if (!token) {
+    await reportClientError({
+      feature,
+      stage: 'missing_token',
+      message: 'Authentication required',
+      flowId,
+      details: summarizeFilesForDiag(files),
+    });
     throw new Error('Authentication required');
   }
 
@@ -99,12 +145,11 @@ export async function uploadAttachmentFiles(
             stage: 'prepare',
             message: formatPhotoFlowErrorMessage(error),
             error,
+            flowId,
             details: {
               filename: withMime.name,
               mimeType: withMime.mimeType,
-              uriScheme: withMime.uri.includes(':')
-                ? withMime.uri.slice(0, withMime.uri.indexOf(':'))
-                : 'unknown',
+              uriScheme: uriScheme(withMime.uri),
             },
           });
         }
@@ -112,26 +157,58 @@ export async function uploadAttachmentFiles(
       return withMime;
     }),
   );
-  normalized.forEach((_, index) => onProgress?.(index, 'uploading'));
 
-  const uploaded = await uploadChatFilesBatch({
-    files: normalized.map((f) => ({
-      fileUri: f.uri,
-      filename: f.name,
-      mimeType: f.mimeType,
-      originalName: f.originalName,
-    })),
-    accessToken: token,
-    onFileComplete: (index, success) => {
-      onProgress?.(index, success ? 'done' : 'error');
-    },
+  await reportClientDiag({
+    feature,
+    stage: 'presign_start',
+    message: 'Calling uploadChatFilesBatch (presign + S3)',
+    flowId,
+    details: summarizeFilesForDiag(normalized),
   });
 
-  return uploaded.map((item, index) => ({
-    fileUrl: item.fileUrl,
-    fileName: item.fileName,
-    fileSize: item.fileSize || files[index].size || 0,
-  }));
+  normalized.forEach((_, index) => onProgress?.(index, 'uploading'));
+
+  try {
+    const uploaded = await uploadChatFilesBatch({
+      files: normalized.map((f) => ({
+        fileUri: f.uri,
+        filename: f.name,
+        mimeType: f.mimeType,
+        originalName: f.originalName,
+      })),
+      accessToken: token,
+      onFileComplete: (index, success) => {
+        onProgress?.(index, success ? 'done' : 'error');
+      },
+    });
+
+    await reportClientDiag({
+      feature,
+      stage: 'upload_batch_done',
+      message: `uploadAttachmentFiles done (${uploaded.length})`,
+      flowId,
+      details: {
+        uploadedCount: uploaded.length,
+        fileNames: uploaded.map((u) => u.fileName).slice(0, 10),
+      },
+    });
+
+    return uploaded.map((item, index) => ({
+      fileUrl: item.fileUrl,
+      fileName: item.fileName,
+      fileSize: item.fileSize || files[index].size || 0,
+    }));
+  } catch (error) {
+    await reportClientError({
+      feature,
+      stage: 'upload_batch',
+      message: formatUploadErrorMessage(error),
+      error,
+      flowId,
+      details: summarizeFilesForDiag(normalized),
+    });
+    throw error;
+  }
 }
 
 async function sendUploadedAttachments(
@@ -177,27 +254,69 @@ export async function pickFiles(callbacks?: AttachmentPickCallbacks): Promise<Fi
  */
 export async function capturePhoto(
   callbacks?: AttachmentPickCallbacks,
+  options?: { flowId?: string },
 ): Promise<FileData[]> {
+  const flowId = options?.flowId ?? createClientDiagFlowId('cam');
   beginImageAttachmentFlow('camera');
   callbacks?.onProcessingChange?.(true);
   await yieldToUi();
+
+  // Land on backend before native picker so hangs are visible as start-without-finish.
+  await reportClientDiag({
+    feature: 'chat_photo_camera',
+    stage: 'start',
+    message: 'Camera flow started',
+    flowId,
+  });
+
   try {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') {
+      await reportClientDiag({
+        feature: 'chat_photo_camera',
+        stage: 'permission_denied',
+        message: `Camera permission status=${status}`,
+        level: 'warn',
+        flowId,
+        details: { status },
+      });
       Alert.alert('Camera permission', 'Camera permission is required to take photos.');
       cancelImageAttachmentFlow('canceled');
       return [];
     }
+
+    await reportClientDiag({
+      feature: 'chat_photo_camera',
+      stage: 'picker_launch',
+      message: 'Launching camera picker',
+      flowId,
+    });
+
     const pickerStartedAt = Date.now();
     const result = await ImagePicker.launchCameraAsync({
       ...CHAT_IMAGE_PICKER_FAST_OPTIONS,
     });
     if (result.canceled) {
+      await reportClientDiag({
+        feature: 'chat_photo_camera',
+        stage: 'canceled',
+        message: 'Camera picker canceled by user',
+        flowId,
+        details: { pickerDurationMs: Date.now() - pickerStartedAt },
+      });
       cancelImageAttachmentFlow('canceled');
       return [];
     }
     const asset = result.assets?.[0];
     if (!asset) {
+      await reportClientDiag({
+        feature: 'chat_photo_camera',
+        stage: 'empty',
+        message: 'Camera picker returned no assets',
+        level: 'warn',
+        flowId,
+        details: { pickerDurationMs: Date.now() - pickerStartedAt },
+      });
       cancelImageAttachmentFlow('empty');
       return [];
     }
@@ -214,7 +333,20 @@ export async function capturePhoto(
       mimeType,
       size: asset.fileSize || undefined,
       originalName: rawName !== filename ? rawName : undefined,
+      width: asset.width,
+      height: asset.height,
     };
+
+    await reportClientDiag({
+      feature: 'chat_photo_camera',
+      stage: 'picked',
+      message: 'Camera asset selected',
+      flowId,
+      details: {
+        pickerDurationMs,
+        ...summarizeFilesForDiag([rawFile]),
+      },
+    });
 
     await logPickerAssetSelected({
       stage: 'Camera',
@@ -234,16 +366,37 @@ export async function capturePhoto(
       includesGallerySelection: false,
     });
 
+    await reportClientDiag({
+      feature: 'chat_photo_camera',
+      stage: 'prepare_start',
+      message: 'Preparing camera photo for upload',
+      flowId,
+      details: summarizeFilesForDiag([rawFile]),
+    });
+
     const prepareStartedAt = Date.now();
-    const prepared = await prepareChatImageForUpload({
+    const preparedResult = await prepareChatImageForUploadOrFallback({
       ...rawFile,
       width: asset.width,
       height: asset.height,
     });
+    const prepared = preparedResult.file;
+    const prepareDurationMs = Date.now() - prepareStartedAt;
+
+    if (preparedResult.usedFallback) {
+      await reportClientError({
+        feature: 'chat_photo_prepare_fallback',
+        stage: 'prepare',
+        message: preparedResult.error || 'Camera prepare failed, using original',
+        flowId,
+        details: summarizeFilesForDiag([prepared]),
+      });
+    }
+
     completeDeviceImagePrepareFlow({
       fileCount: 1,
       fileNames: [prepared.name],
-      prepareDurationMs: Date.now() - prepareStartedAt,
+      prepareDurationMs,
       pickerDurationMs,
     });
 
@@ -256,6 +409,21 @@ export async function capturePhoto(
       resultMimeType: prepared.mimeType,
       sizeBytes: prepared.size,
     });
+
+    await reportClientDiag({
+      feature: 'chat_photo_camera',
+      stage: 'prepare_done',
+      message: preparedResult.usedFallback
+        ? 'Camera photo prepare used fallback original'
+        : 'Camera photo prepared',
+      flowId,
+      details: {
+        pickerDurationMs,
+        prepareDurationMs,
+        usedFallback: preparedResult.usedFallback,
+        ...summarizeFilesForDiag([prepared]),
+      },
+    });
     return [prepared];
   } catch (error) {
     cancelImageAttachmentFlow('error');
@@ -265,6 +433,7 @@ export async function capturePhoto(
       stage: 'capture_or_prepare',
       message: formatPhotoFlowErrorMessage(error),
       error,
+      flowId,
     });
     Alert.alert('Photo failed', formatPhotoFlowErrorMessage(error));
     return [];
@@ -310,13 +479,30 @@ function fileDataFromGalleryAsset(
  */
 export async function pickPhotoFromGallery(
   callbacks?: AttachmentPickCallbacks,
+  options?: { flowId?: string },
 ): Promise<FileData[]> {
+  const flowId = options?.flowId ?? createClientDiagFlowId('gal');
   beginImageAttachmentFlow('gallery');
   callbacks?.onProcessingChange?.(true);
   await yieldToUi();
+
+  await reportClientDiag({
+    feature: 'chat_photo_gallery',
+    stage: 'start',
+    message: 'Gallery flow started',
+    flowId,
+  });
+
   try {
     const hasAccess = await ensureMediaLibraryAccessForPicker();
     if (!hasAccess) {
+      await reportClientDiag({
+        feature: 'chat_photo_gallery',
+        stage: 'permission_denied',
+        message: 'Photo library permission denied',
+        level: 'warn',
+        flowId,
+      });
       Alert.alert('Photo library permission', 'Photo library permission is required to select photos.');
       cancelImageAttachmentFlow('canceled');
       return [];
@@ -332,6 +518,13 @@ export async function pickPhotoFromGallery(
       mediaTypes = ['images'];
     }
 
+    await reportClientDiag({
+      feature: 'chat_photo_gallery',
+      stage: 'picker_launch',
+      message: 'Launching gallery picker',
+      flowId,
+    });
+
     const pickerStartedAt = Date.now();
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes,
@@ -341,18 +534,44 @@ export async function pickPhotoFromGallery(
     });
 
     if (result.canceled) {
+      await reportClientDiag({
+        feature: 'chat_photo_gallery',
+        stage: 'canceled',
+        message: 'Gallery picker canceled by user',
+        flowId,
+        details: { pickerDurationMs: Date.now() - pickerStartedAt },
+      });
       cancelImageAttachmentFlow('canceled');
       return [];
     }
 
     const assets = result.assets || [];
     if (assets.length === 0) {
+      await reportClientDiag({
+        feature: 'chat_photo_gallery',
+        stage: 'empty',
+        message: 'Gallery picker returned no assets',
+        level: 'warn',
+        flowId,
+        details: { pickerDurationMs: Date.now() - pickerStartedAt },
+      });
       cancelImageAttachmentFlow('empty');
       return [];
     }
 
     const pickerDurationMs = Date.now() - pickerStartedAt;
     const rawFiles = assets.map((asset, i) => fileDataFromGalleryAsset(asset, i));
+
+    await reportClientDiag({
+      feature: 'chat_photo_gallery',
+      stage: 'picked',
+      message: `Gallery selected ${rawFiles.length} photo(s)`,
+      flowId,
+      details: {
+        pickerDurationMs,
+        ...summarizeFilesForDiag(rawFiles),
+      },
+    });
 
     await Promise.all(
       rawFiles.map((file, i) =>
@@ -377,9 +596,30 @@ export async function pickPhotoFromGallery(
       includesGallerySelection: true,
     });
 
+    await reportClientDiag({
+      feature: 'chat_photo_gallery',
+      stage: 'prepare_start',
+      message: 'Preparing gallery photos for upload',
+      flowId,
+      details: summarizeFilesForDiag(rawFiles),
+    });
+
     const prepareStartedAt = Date.now();
-    const files = await prepareChatImagesForUpload(rawFiles);
+    const { files, fallbacks } = await prepareChatImagesForUploadWithMeta(rawFiles);
     const prepareDurationMs = Date.now() - prepareStartedAt;
+
+    if (fallbacks.length > 0) {
+      await reportClientError({
+        feature: 'chat_photo_prepare_fallback',
+        stage: 'prepare',
+        message: `${fallbacks.length} gallery photo(s) used prepare fallback`,
+        flowId,
+        details: {
+          fallbacks: fallbacks.slice(0, 10),
+          ...summarizeFilesForDiag(files),
+        },
+      });
+    }
 
     completeDeviceImagePrepareFlow({
       fileCount: files.length,
@@ -406,6 +646,19 @@ export async function pickPhotoFromGallery(
       }),
     );
 
+    await reportClientDiag({
+      feature: 'chat_photo_gallery',
+      stage: 'prepare_done',
+      message: `Gallery photos prepared (${files.length}, fallbacks=${fallbacks.length})`,
+      flowId,
+      details: {
+        pickerDurationMs,
+        prepareDurationMs,
+        fallbackCount: fallbacks.length,
+        ...summarizeFilesForDiag(files),
+      },
+    });
+
     return files;
   } catch (error) {
     console.error('[chatAttachmentHelpers] Error picking photo from gallery:', error);
@@ -415,6 +668,7 @@ export async function pickPhotoFromGallery(
       stage: 'pick_or_prepare',
       message: formatPhotoFlowErrorMessage(error),
       error,
+      flowId,
     });
     Alert.alert('Photo failed', formatPhotoFlowErrorMessage(error));
     return [];
@@ -458,6 +712,7 @@ export async function handleUploadAndSend(params: {
       stage: 'upload',
       message: formatUploadErrorMessage(error),
       error,
+      flowId: createClientDiagFlowId('file'),
       details: {
         fileCount: files.length,
         fileNames: files.map((f) => f.name).slice(0, 10),
@@ -495,34 +750,81 @@ async function uploadPhotoAndSend(params: {
   sendMessage: ChatSendMessageFn;
   setUploadQueue: React.Dispatch<React.SetStateAction<UploadQueueItem[]>>;
   setIsUploading: React.Dispatch<React.SetStateAction<boolean>>;
+  flowId?: string;
+  source?: 'camera' | 'gallery';
 }) {
-  const { files, chatRoomId, sendMessage, setUploadQueue, setIsUploading } = params;
-  
+  const {
+    files,
+    chatRoomId,
+    sendMessage,
+    setUploadQueue,
+    setIsUploading,
+    source = 'gallery',
+  } = params;
+  const flowId = params.flowId ?? createClientDiagFlowId('up');
+  const feature = 'chat_photo_upload';
+
   console.log('[chatAttachmentHelpers] uploadPhotoAndSend called with:', {
     filesCount: files.length,
     chatRoomId: chatRoomId || 'missing',
-    files: files.map(f => ({ name: f.name, uri: f.uri?.substring(0, 50) + '...', mimeType: f.mimeType, size: f.size })),
+    flowId,
+    source,
+    files: files.map((f) => ({
+      name: f.name,
+      uri: f.uri?.substring(0, 50) + '...',
+      mimeType: f.mimeType,
+      size: f.size,
+    })),
   });
-  
+
   if (files.length === 0) {
+    await reportClientDiag({
+      feature,
+      stage: 'skipped_no_files',
+      message: `Upload skipped: no files after ${source}`,
+      level: 'warn',
+      flowId,
+      details: { source, chatRoomId: chatRoomId ?? null },
+    });
     console.warn('[chatAttachmentHelpers] No files to upload');
     return;
   }
-  
+
   if (!chatRoomId) {
     console.error('[chatAttachmentHelpers] chatRoomId is missing, cannot upload');
+    await reportClientError({
+      feature,
+      stage: 'missing_chat_room',
+      message: 'Chat room ID is missing',
+      flowId,
+      details: { source, ...summarizeFilesForDiag(files) },
+    });
     Alert.alert('Error', 'Chat room ID is missing. Please try again.');
     return;
   }
-  
-  // Reuse upload flow
+
   const token = await secureStorage.getItemAsync('accessToken').catch(() => null);
   if (!token) {
     console.error('[chatAttachmentHelpers] Access token not found, cannot upload');
+    await reportClientError({
+      feature,
+      stage: 'missing_token',
+      message: 'Access token not found',
+      flowId,
+      details: { source, chatRoomId, ...summarizeFilesForDiag(files) },
+    });
     Alert.alert('Error', 'Authentication required. Please log in again.');
     return;
   }
-  
+
+  await reportClientDiag({
+    feature,
+    stage: 'upload_start',
+    message: `Uploading ${files.length} photo(s) to chat`,
+    flowId,
+    details: { source, chatRoomId, ...summarizeFilesForDiag(files) },
+  });
+
   setIsUploading(true);
   setUploadQueue(
     files.map((f) => ({
@@ -538,14 +840,28 @@ async function uploadPhotoAndSend(params: {
       setUploadQueue((q) => q.map((item, i) => (i === index ? { ...item, status } : item)));
     });
     await sendUploadedAttachments(uploaded, sendMessage);
+    await reportClientDiag({
+      feature,
+      stage: 'upload_done',
+      message: `Uploaded and sent ${uploaded.length} photo(s)`,
+      flowId,
+      details: {
+        source,
+        chatRoomId,
+        uploadedCount: uploaded.length,
+        fileNames: uploaded.map((u) => u.fileName).slice(0, 10),
+      },
+    });
   } catch (error) {
     console.error('[chatAttachmentHelpers] Batch upload failed:', error);
     await reportClientError({
-      feature: 'chat_photo_upload',
+      feature,
       stage: 'upload',
       message: formatUploadErrorMessage(error),
       error,
+      flowId,
       details: {
+        source,
         fileCount: files.length,
         fileNames: files.map((f) => f.name).slice(0, 10),
         mimeTypes: files.map((f) => f.mimeType).slice(0, 10),
@@ -578,15 +894,47 @@ export function useAttachmentHandler(
         {
           text: 'Take photo',
           onPress: async () => {
-            const files = await capturePhoto();
-            await uploadPhotoAndSend({ files, chatRoomId, sendMessage, setUploadQueue, setIsUploading });
+            const flowId = createClientDiagFlowId('cam');
+            await reportClientDiag({
+              feature: 'chat_attach',
+              stage: 'source_camera',
+              message: 'User chose Take photo',
+              flowId,
+              details: { chatRoomId: chatRoomId ?? null },
+            });
+            const files = await capturePhoto(undefined, { flowId });
+            await uploadPhotoAndSend({
+              files,
+              chatRoomId,
+              sendMessage,
+              setUploadQueue,
+              setIsUploading,
+              flowId,
+              source: 'camera',
+            });
           },
         },
         {
           text: 'Choose from gallery',
           onPress: async () => {
-            const files = await pickPhotoFromGallery();
-            await uploadPhotoAndSend({ files, chatRoomId, sendMessage, setUploadQueue, setIsUploading });
+            const flowId = createClientDiagFlowId('gal');
+            await reportClientDiag({
+              feature: 'chat_attach',
+              stage: 'source_gallery',
+              message: 'User chose Choose from gallery',
+              flowId,
+              details: { chatRoomId: chatRoomId ?? null },
+            });
+            const files = await pickPhotoFromGallery(undefined, { flowId });
+            await uploadPhotoAndSend({
+              files,
+              chatRoomId,
+              sendMessage,
+              setUploadQueue,
+              setIsUploading,
+              flowId,
+              source: 'gallery',
+            });
           },
         },
         {
@@ -613,15 +961,47 @@ export function useAttachmentPicker(
         {
           text: 'Take photo',
           onPress: async () => {
-            const files = await capturePhoto(callbacks);
+            const flowId = createClientDiagFlowId('cam');
+            await reportClientDiag({
+              feature: 'chat_attach',
+              stage: 'source_camera',
+              message: 'User chose Take photo (picker)',
+              flowId,
+            });
+            const files = await capturePhoto(callbacks, { flowId });
             if (files.length > 0) onFilesSelected(files);
+            else {
+              await reportClientDiag({
+                feature: 'chat_attach',
+                stage: 'picker_no_files',
+                message: 'Camera returned no files to parent picker',
+                level: 'warn',
+                flowId,
+              });
+            }
           },
         },
         {
           text: 'Choose from gallery',
           onPress: async () => {
-            const files = await pickPhotoFromGallery(callbacks);
+            const flowId = createClientDiagFlowId('gal');
+            await reportClientDiag({
+              feature: 'chat_attach',
+              stage: 'source_gallery',
+              message: 'User chose Choose from gallery (picker)',
+              flowId,
+            });
+            const files = await pickPhotoFromGallery(callbacks, { flowId });
             if (files.length > 0) onFilesSelected(files);
+            else {
+              await reportClientDiag({
+                feature: 'chat_attach',
+                stage: 'picker_no_files',
+                message: 'Gallery returned no files to parent picker',
+                level: 'warn',
+                flowId,
+              });
+            }
           },
         },
         {
