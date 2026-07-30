@@ -16,16 +16,52 @@ export const PENDING_CHAT_NAVIGATION_KEY = '@pending_chat_navigation';
 /** Cold start: user tapped an offer-related push before navigation was ready */
 export const PENDING_OFFERS_NAVIGATION_KEY = '@pending_offers_navigation';
 
+/** Cold start: user tapped a load-related push before navigation was ready */
+export const PENDING_LOAD_NAVIGATION_KEY = '@pending_load_navigation';
+
+/** Sentinel when opening list (no specific entity id) */
+const PENDING_LIST_SENTINEL = '1';
+
 export function getChatNavigationPath(chatRoomId: string): string {
   return `/(tabs)/chat/${chatRoomId}`;
+}
+
+export function getOfferNavigationPath(offerId?: string | null): string {
+  const id = offerId?.trim();
+  if (id && id !== PENDING_LIST_SENTINEL) {
+    return `/work/offer/${id}`;
+  }
+  return '/work';
+}
+
+export function getLoadNavigationPath(loadId?: string | null): string {
+  const id = loadId?.trim();
+  if (id && id !== PENDING_LIST_SENTINEL) {
+    return `/work/load/${id}`;
+  }
+  return '/work/loads';
 }
 
 let notificationListenersAttached = false;
 let initialNotificationResponseConsumed = false;
 
-async function handleNotificationTap(data: Record<string, unknown> | null | undefined): Promise<void> {
-  const chatRoomId = data?.chatRoomId as string | undefined;
+function readPushId(
+  data: Record<string, unknown> | null | undefined,
+  ...keys: string[]
+): string | null {
+  if (!data) return null;
+  for (const key of keys) {
+    const raw = data[key];
+    if (raw != null && String(raw).trim() !== '') {
+      return String(raw).trim();
+    }
+  }
+  return null;
+}
 
+async function handleNotificationTap(data: Record<string, unknown> | null | undefined): Promise<void> {
+  // Chat messages always open the chat (even if payload also has offerId/loadId)
+  const chatRoomId = readPushId(data, 'chatRoomId');
   if (chatRoomId) {
     console.log('[NotificationsService] Notification tapped, navigating to chat:', chatRoomId);
     try {
@@ -39,23 +75,35 @@ async function handleNotificationTap(data: Record<string, unknown> | null | unde
     return;
   }
 
-  if (isOfferRelatedPushData(data)) {
-    const offerIdRaw = data?.offerId;
-    const offerId =
-      offerIdRaw != null && String(offerIdRaw).trim() !== ''
-        ? String(offerIdRaw).trim()
-        : null;
+  const offerId = readPushId(data, 'offerId');
+  if (offerId || isOfferRelatedPushData(data)) {
     console.log(
       '[NotificationsService] Offer push tapped →',
       offerId ? `offer ${offerId}` : 'Work / Offers'
     );
     try {
-      await AsyncStorage.setItem(PENDING_OFFERS_NAVIGATION_KEY, offerId ?? '1');
+      await AsyncStorage.setItem(PENDING_OFFERS_NAVIGATION_KEY, offerId ?? PENDING_LIST_SENTINEL);
     } catch (storageError) {
       console.warn('[NotificationsService] Failed to save pending offers navigation:', storageError);
     }
     const { eventBus, AppEvents } = await import('@/services/EventBus');
     eventBus.emit(AppEvents.NavigateToOffers, offerId ? { offerId } : {});
+    return;
+  }
+
+  const loadId = readPushId(data, 'loadId', 'tms_load_id');
+  if (loadId || isLoadRelatedPushData(data)) {
+    console.log(
+      '[NotificationsService] Load push tapped →',
+      loadId ? `load ${loadId}` : 'Work / Loads'
+    );
+    try {
+      await AsyncStorage.setItem(PENDING_LOAD_NAVIGATION_KEY, loadId ?? PENDING_LIST_SENTINEL);
+    } catch (storageError) {
+      console.warn('[NotificationsService] Failed to save pending load navigation:', storageError);
+    }
+    const { eventBus, AppEvents } = await import('@/services/EventBus');
+    eventBus.emit(AppEvents.NavigateToLoad, loadId ? { loadId } : {});
   }
 }
 
@@ -88,6 +136,11 @@ export async function consumeInitialNotificationResponse(): Promise<void> {
 function isOfferRelatedPushData(data: Record<string, unknown> | null | undefined): boolean {
   const t = data?.type;
   return typeof t === 'string' && t.startsWith('offer_');
+}
+
+function isLoadRelatedPushData(data: Record<string, unknown> | null | undefined): boolean {
+  const t = data?.type;
+  return typeof t === 'string' && t.startsWith('load_');
 }
 
 /**

@@ -15,6 +15,10 @@ import OfferBidExpiredIcon from '@/icons/OfferBidExpiredIcon';
 import Swipeable from 'react-native-gesture-handler/Swipeable';
 import { formatRatePerMile, resolveOfferTotalMiles } from '@/utils/ratePerMile';
 import OfferUpdatedNotice from '@/components/offers/OfferUpdatedNotice';
+import {
+  OFFER_ASAP_DRIVER_TIME_LABEL,
+  isOfferAsapTime,
+} from '@/utils/offerDateTimeRange';
 
 function hasHazmat(specialRequirements: unknown): boolean {
   if (!specialRequirements) return false;
@@ -132,6 +136,15 @@ export default function OfferCard({
     isDriver && offerListTab !== 'assigned' && hasSubmittedRate && driverRateLabel,
   );
   const showOfferUpdatedNotice = Boolean(offer.update_date?.trim());
+  const hasAsapDelivery = Boolean(
+    isDriver &&
+      offer.route?.some(
+        (point) =>
+          point.type === 'delivery_location' &&
+          Boolean(point.time?.trim()) &&
+          isOfferAsapTime(point.time),
+      ),
+  );
 
   useEffect(() => {
     if (!hasSubmittedRate) {
@@ -202,6 +215,10 @@ export default function OfferCard({
             {titleText}
             {hazmatIcon}
           </View>
+
+          {hasAsapDelivery ? (
+            <Text style={styles.asapTimeLabel}>{OFFER_ASAP_DRIVER_TIME_LABEL}</Text>
+          ) : null}
 
           {showOfferedRatePreview ||
           showDriverRatePreview ||
@@ -282,6 +299,10 @@ export default function OfferCard({
           {hazmatIcon}
         </View>
       )}
+
+      {hasAsapDelivery && !showMainPreviewRow ? (
+        <Text style={styles.asapTimeLabel}>{OFFER_ASAP_DRIVER_TIME_LABEL}</Text>
+      ) : null}
 
       {isInactiveForDriver ? (
         <View style={styles.unavailableBlock}>
@@ -443,6 +464,12 @@ const styles = StyleSheet.create({
     fontSize: fp(15),
     fontFamily: fonts['600'],
     color: colors.primary.blue,
+  },
+  asapTimeLabel: {
+    marginTop: rem(6),
+    fontSize: fp(12),
+    fontFamily: fonts['500'],
+    color: colors.neutral.darkGrey,
   },
   hiddenImage: {
     opacity: 0,

@@ -25,6 +25,8 @@ export const AppEvents = {
 	NavigateToChat: 'navigate-to-chat',
 	/** Open Work → Offers list, or a specific offer detail when offerId is set */
 	NavigateToOffers: 'navigate-to-offers',
+	/** Open Work → Loads list, or a specific load detail when loadId is set */
+	NavigateToLoad: 'navigate-to-load',
   ChatRoomAdded: 'chatRoomAdded',
   ChatRoomUpdated: 'chatRoomUpdated',
   WebSocketReconnected: 'webSocketReconnected',

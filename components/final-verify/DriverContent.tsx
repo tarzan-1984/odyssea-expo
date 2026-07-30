@@ -68,13 +68,18 @@ function isDriverSelfServiceStatus(status: StatusValue): boolean {
   return DRIVER_SELF_SERVICE_STATUSES.includes(status);
 }
 
-/** Same save rules and hidden ZIP/Date as Not available (not for loaded_enroute). */
+/** Same save rules and hidden ZIP as Not available (not for loaded_enroute). */
 function isInactiveDriverSelfServiceStatus(status: StatusValue): boolean {
   return (
     status === 'available_off' ||
     status === 'on_vocation' ||
     status === 'banned'
   );
+}
+
+/** Date field shown for Available on and On vacation (return / available-from datetime). */
+function showsDateField(status: StatusValue): boolean {
+  return status === 'available_on' || status === 'on_vocation';
 }
 
 /** ZIP field hidden — server resolves zip/city/state from GPS when status is Available. */
@@ -903,7 +908,17 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       const useCurrentDateTime = status === 'available' || status === 'loaded_enroute';
       let zipToSend = zip;
       let dateToSend = date;
-      if (isNotAvailable) {
+      if (status === 'on_vocation') {
+        // On vacation — ZIP from storage (hidden); Date required from form (same status_date as available_on)
+        const savedZip = await AsyncStorage.getItem('@user_zip');
+        zipToSend = (savedZip || zip || '').trim();
+        if (!date || date.trim() === '') {
+          postDriverBanner('Date is required');
+          setTimeout(() => postDriverBanner(null), 3000);
+          return;
+        }
+        dateToSend = date.trim();
+      } else if (isNotAvailable) {
         const savedZip = await AsyncStorage.getItem('@user_zip');
         zipToSend = (savedZip || zip || '').trim();
         dateToSend = formatDateWithTime(new Date());
@@ -1022,7 +1037,8 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         }
       }
 
-      if (!currentLocation) {
+      // Location required for active statuses; inactive (vacation / not available / out of service) can skip GPS
+      if (!currentLocation && !isNotAvailable) {
         postDriverBanner('Location data is required. Please share your location first.');
         setTimeout(() => postDriverBanner(null), 3000);
         return;
@@ -1032,8 +1048,12 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
 
       const statusUpdatePayload = {
         ...(isAvailable ? {} : { zip: zipToSend }),
-        latitude: currentLocation.latitude,
-        longitude: currentLocation.longitude,
+        ...(currentLocation
+          ? {
+              latitude: currentLocation.latitude,
+              longitude: currentLocation.longitude,
+            }
+          : {}),
         lastUpdateIso: getLocalIsoString(),
         driverStatus: status,
         statusDate: dateToSend,
@@ -1064,7 +1084,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
           setFormLocation(locationLineForApi);
           setLocationLabel(locationLineForApi);
         }
-        if (isAvailable && resolved) {
+        if (isAvailable && resolved && currentLocation) {
           await persistResolvedUserLocationToCache({
             latitude: currentLocation.latitude,
             longitude: currentLocation.longitude,
@@ -1088,11 +1108,13 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
         setDriverStatusFromStorage(status);
         previousStatusRef.current = status;
         await updateLocationSharingBasedOnStatus(status, previousStatus);
-        await updateUserLocation(
-          currentLocation.latitude,
-          currentLocation.longitude,
-          zipToPersist
-        );
+        if (currentLocation) {
+          await updateUserLocation(
+            currentLocation.latitude,
+            currentLocation.longitude,
+            zipToPersist
+          );
+        }
         postDriverBanner('Successful status update');
         setTimeout(() => {
           postDriverBanner(null);
@@ -1357,6 +1379,9 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       setFormState('');
       setFormLocation('');
       setLocationLabel(null);
+    } else if (newStatus === 'on_vocation') {
+      // Switching TO on_vocation — clear date; user picks return date/time via popup
+      setDate('');
     } else if (newStatus === 'available') {
       // When "Available" is selected, clear ZIP - coords will come from GPS (loaded_enroute is TMS-only, not in picker)
       zipClearedByStatusSelectRef.current = true;
@@ -1367,7 +1392,7 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
       setLocationLabel(null);
       setTimeout(() => { zipClearedByStatusSelectRef.current = false; }, 2000);
     }
-    // Don't auto-fill date when selecting any status - user enters via popup when available_on
+    // Don't auto-fill date — user enters via popup for available_on / on_vocation
     
     const canEditStatusInApp = isDriverSelfServiceStatus(newStatus);
     setIsStatusDisabled(!canEditStatusInApp);
@@ -1743,26 +1768,18 @@ export default function DriverContent({ onDriverBanner }: DriverContentProps) {
                 )}
           </View>
           
-          {/* Date - hidden for inactive self-service, available, loaded_enroute */}
+          {/* Date - shown for available_on and on_vocation */}
               <View
                 style={[
                   styles.settingsWrap,
-                  (isInactiveDriverSelfServiceStatus(status) ||
-                    status === 'available' ||
-                    status === 'loaded_enroute') && {
+                  !showsDateField(status) && {
                     opacity: 0,
                     height: 0,
                     marginBottom: 0,
                     overflow: 'hidden',
                   },
                 ]}
-                pointerEvents={
-                  isInactiveDriverSelfServiceStatus(status) ||
-                  status === 'available' ||
-                  status === 'loaded_enroute'
-                    ? 'none'
-                    : 'auto'
-                }
+                pointerEvents={showsDateField(status) ? 'auto' : 'none'}
               >
                 <Text style={styles.settingsLabel}>Date</Text>
                 <TouchableOpacity

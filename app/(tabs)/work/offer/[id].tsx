@@ -208,6 +208,12 @@ function getDriverBidSortPriority(driver: OfferDriver, nowUnixSeconds: number): 
   return 2;
 }
 
+function getDriverEmptyMilesSortValue(driver: OfferDriver): number {
+  if (driver.empty_miles == null) return Number.POSITIVE_INFINITY;
+  const miles = Number(driver.empty_miles);
+  return Number.isFinite(miles) ? miles : Number.POSITIVE_INFINITY;
+}
+
 function sortOfferDriversByBidStatus(
   drivers: OfferDriver[],
   nowUnixSeconds: number
@@ -217,18 +223,8 @@ function sortOfferDriversByBidStatus(
     const priorityB = getDriverBidSortPriority(b, nowUnixSeconds);
     if (priorityA !== priorityB) return priorityA - priorityB;
 
-    const actionTimeA = normalizeUnixSeconds(a.action_time);
-    const actionTimeB = normalizeUnixSeconds(b.action_time);
-
-    if (priorityA === 0) {
-      return (actionTimeA ?? Number.MAX_SAFE_INTEGER) - (actionTimeB ?? Number.MAX_SAFE_INTEGER);
-    }
-
-    if (priorityA === 1) {
-      return (actionTimeB ?? 0) - (actionTimeA ?? 0);
-    }
-
-    return 0;
+    // Secondary: Empty miles ascending within Bid / neutral / Skip groups
+    return getDriverEmptyMilesSortValue(a) - getDriverEmptyMilesSortValue(b);
   });
 }
 
@@ -1104,6 +1100,11 @@ export default function OfferDetailScreen() {
                             if (!formatted) {
                               return <Text style={styles.routeStopTime}>—</Text>;
                             }
+                            if (formatted.isAsap) {
+                              return (
+                                <Text style={styles.routeStopTimeAsap}>{formatted.dateLine}</Text>
+                              );
+                            }
                             return (
                               <View style={styles.routeStopTimeColumn}>
                                 <Text style={styles.routeStopTimeDate}>{formatted.dateLine}</Text>
@@ -1331,6 +1332,8 @@ export default function OfferDetailScreen() {
         onClose={() => setPushModalDriver(null)}
         driver={pushModalDriver}
         defaultMessage={offer ? buildExtendBidTimePushMessage(offer) : ''}
+        offerId={offer?.id ?? offerId}
+        offerTitle={offer ? routeSummary(offer.route) || `Offer #${offer.id}` : null}
       />
     </View>
   );
@@ -1682,6 +1685,16 @@ const styles = StyleSheet.create({
   routeStopTime: {
     flexShrink: 0,
     maxWidth: '42%',
+    fontSize: fp(13),
+    fontFamily: fonts['500'],
+    color: colors.neutral.darkGrey,
+    textAlign: 'right',
+  },
+  routeStopTimeAsap: {
+    flexShrink: 1,
+    flexGrow: 1,
+    maxWidth: '52%',
+    marginLeft: rem(8),
     fontSize: fp(13),
     fontFamily: fonts['500'],
     color: colors.neutral.darkGrey,

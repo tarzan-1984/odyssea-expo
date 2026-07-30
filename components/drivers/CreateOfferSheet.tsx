@@ -37,9 +37,14 @@ import {
   normalizeLocationForGeocode,
   needsLocationGeocode,
 } from '@/utils/offerRouteLocation';
-import { getRouteChronologyError } from '@/utils/offerDateTimeRange';
+import {
+  getRouteChronologyError,
+  isOfferAsapTime,
+  OFFER_ASAP_TIME,
+} from '@/utils/offerDateTimeRange';
 import OfferRouteTimePickerModal from '@/components/drivers/OfferRouteTimePickerModal';
 import OfferRouteStopFlowIcon from '@/icons/OfferRouteStopFlowIcon';
+import CustomSwitch from '@/components/common/CustomSwitch';
 
 /** Same as Next.js CreateOfferModal `allLocationsFilledAndValid` */
 function allLocationsFilledAndValid(locs: string[]): boolean {
@@ -137,8 +142,44 @@ export default function CreateOfferSheet({
   const [submitting, setSubmitting] = useState(false);
   /** Remounts NestableDraggableFlatList so invalid drops cannot leave the list stuck (matches web: drop is rejected). */
   const [routeDndListKey, setRouteDndListKey] = useState(0);
+  /** Previous time before ASAP toggle, keyed by row id (same as web CreateOfferModal). */
+  const timeBeforeAsapRef = useRef<Record<string, string>>({});
+
+  const clearAsapFromNonLastRows = useCallback((rows: RouteRow[]): RouteRow[] => {
+    const lastIndex = rows.length - 1;
+    return rows.map((row, i) => {
+      if (i === lastIndex || !isOfferAsapTime(row.time)) return row;
+      delete timeBeforeAsapRef.current[row.id];
+      return { ...row, time: '' };
+    });
+  }, []);
+
+  const handleAsapToggle = useCallback((index: number, enabled: boolean) => {
+    setRouteRows((prev) => {
+      if (index !== prev.length - 1) return prev;
+      const row = prev[index];
+      if (!row || row.type !== 'delivery') return prev;
+      const next = [...prev];
+      if (enabled) {
+        if (!isOfferAsapTime(row.time)) {
+          timeBeforeAsapRef.current[row.id] = row.time;
+        }
+        next[index] = { ...row, time: OFFER_ASAP_TIME };
+      } else {
+        const restored = timeBeforeAsapRef.current[row.id] ?? '';
+        delete timeBeforeAsapRef.current[row.id];
+        next[index] = {
+          ...row,
+          time: isOfferAsapTime(restored) ? '' : restored,
+        };
+      }
+      return next;
+    });
+    if (enabled) setTimePickerRowId(null);
+  }, []);
 
   const resetForm = useCallback(() => {
+    timeBeforeAsapRef.current = {};
     setRouteRows([newRow('pickup'), newRow('delivery')]);
     setWeight('');
     setOfferedRate('');
@@ -522,7 +563,7 @@ export default function CreateOfferSheet({
       if (rows.length < 2) return rows;
       const next = [...rows];
       next.splice(next.length - 1, 0, newRow('pickup'));
-      return next;
+      return clearAsapFromNonLastRows(next);
     });
   };
 
@@ -531,7 +572,7 @@ export default function CreateOfferSheet({
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     }
     setCommittedLocations([]);
-    setRouteRows((rows) => [...rows, newRow('delivery')]);
+    setRouteRows((rows) => clearAsapFromNonLastRows([...rows, newRow('delivery')]));
   };
 
   const removeRow = useCallback(
@@ -541,12 +582,12 @@ export default function CreateOfferSheet({
         if (Platform.OS === 'android') {
           LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
         }
-        const next = rows.filter((_, i) => i !== index);
+        const next = clearAsapFromNonLastRows(rows.filter((_, i) => i !== index));
         commitLocationsFromRows(next);
         return next;
       });
     },
-    [commitLocationsFromRows]
+    [clearAsapFromNonLastRows, commitLocationsFromRows]
   );
 
   const updateRow = useCallback((index: number, field: 'location' | 'time', value: string) => {
@@ -567,17 +608,21 @@ export default function CreateOfferSheet({
       }
       return;
     }
-    setRouteRows(data);
-    commitLocationsFromRows(data);
+    const next = clearAsapFromNonLastRows(data);
+    setRouteRows(next);
+    commitLocationsFromRows(next);
     if (Platform.OS === 'android') {
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     }
-  }, [commitLocationsFromRows]);
+  }, [clearAsapFromNonLastRows, commitLocationsFromRows]);
 
   const renderRouteItem = useCallback(
     ({ item, drag, getIndex }: RenderItemParams<RouteRow>) => {
       const index = getIndex() ?? 0;
       const canReorder = routeRows.length > 2;
+      const isLastDelivery =
+        item.type === 'delivery' && index === routeRows.length - 1;
+      const isAsap = isOfferAsapTime(item.time);
 
       const card = (
         <View style={styles.routeCard}>
@@ -596,25 +641,39 @@ export default function CreateOfferSheet({
                 {item.type === 'pickup' ? 'Pick up' : 'Delivery'}
               </Text>
             </View>
-            <Pressable
-              onLongPress={canReorder ? drag : undefined}
-              delayLongPress={280}
-              style={({ pressed }) => [
-                styles.routeCardHeaderIcon,
-                canReorder && pressed && styles.routeCardDragHandlePressed,
-              ]}
-              disabled={!canReorder}
-              accessibilityLabel={
-                canReorder ? 'Hold and drag to reorder this stop' : undefined
-              }
-              accessibilityRole={canReorder ? 'button' : 'none'}
-            >
-              <OfferRouteStopFlowIcon
-                color={colors.neutral.white}
-                width={rem(30)}
-                height={rem(25)}
-              />
-            </Pressable>
+            <View style={styles.routeCardHeaderRight}>
+              {isLastDelivery ? (
+                <View style={styles.asapSwitchRow}>
+                  <CustomSwitch
+                    value={isAsap}
+                    onValueChange={(checked) => {
+                      const i = getIndex();
+                      if (i !== undefined) handleAsapToggle(i, checked);
+                    }}
+                  />
+                  <Text style={styles.asapLabel}>ASAP</Text>
+                </View>
+              ) : null}
+              <Pressable
+                onLongPress={canReorder ? drag : undefined}
+                delayLongPress={280}
+                style={({ pressed }) => [
+                  styles.routeCardHeaderIcon,
+                  canReorder && pressed && styles.routeCardDragHandlePressed,
+                ]}
+                disabled={!canReorder}
+                accessibilityLabel={
+                  canReorder ? 'Hold and drag to reorder this stop' : undefined
+                }
+                accessibilityRole={canReorder ? 'button' : 'none'}
+              >
+                <OfferRouteStopFlowIcon
+                  color={colors.neutral.white}
+                  width={rem(30)}
+                  height={rem(25)}
+                />
+              </Pressable>
+            </View>
           </View>
           <View style={styles.routeCardBody}>
             <View style={styles.locationTimeRow}>
@@ -648,9 +707,13 @@ export default function CreateOfferSheet({
                 placeholderTextColor={colors.neutral.grey}
               />
               <TouchableOpacity
-                style={styles.timeTrigger}
-                onPress={() => setTimePickerRowId(item.id)}
-                activeOpacity={0.7}
+                style={[styles.timeTrigger, isAsap && styles.timeTriggerAsap]}
+                onPress={() => {
+                  if (isAsap) return;
+                  setTimePickerRowId(item.id);
+                }}
+                activeOpacity={isAsap ? 1 : 0.7}
+                disabled={isAsap}
               >
                 <Text
                   style={[
@@ -700,7 +763,7 @@ export default function CreateOfferSheet({
 
       return <ScaleDecorator>{wrapped}</ScaleDecorator>;
     },
-    [routeRows, removeRow, updateRow, routeRowLocationErrors, handleAddressBlur]
+    [routeRows, removeRow, updateRow, routeRowLocationErrors, handleAddressBlur, handleAsapToggle]
   );
 
   return (
@@ -1118,6 +1181,23 @@ const styles = StyleSheet.create({
     minWidth: 0,
     marginRight: rem(10),
   },
+  routeCardHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexShrink: 0,
+    gap: rem(8),
+  },
+  asapSwitchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rem(6),
+  },
+  asapLabel: {
+    fontSize: fp(13),
+    fontFamily: fonts['600'],
+    color: colors.neutral.white,
+    letterSpacing: 0.2,
+  },
   routeCardTypeIcon: {
     width: rem(42),
     height: rem(42),
@@ -1213,6 +1293,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: rem(8),
     paddingVertical: Platform.OS === 'ios' ? rem(12) : rem(10),
     backgroundColor: colors.neutral.white,
+  },
+  timeTriggerAsap: {
+    opacity: 0.85,
   },
   timeTriggerText: {
     fontSize: fp(14),

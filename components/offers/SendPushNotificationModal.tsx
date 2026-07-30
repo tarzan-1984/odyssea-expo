@@ -25,6 +25,9 @@ interface SendPushNotificationModalProps {
   onClose: () => void;
   driver: SendPushNotificationDriver | null;
   defaultMessage: string;
+  /** Include so tap on push opens this offer */
+  offerId?: number | null;
+  offerTitle?: string | null;
 }
 
 function driverShortLabel(driver: SendPushNotificationDriver): string {
@@ -37,6 +40,8 @@ export default function SendPushNotificationModal({
   onClose,
   driver,
   defaultMessage,
+  offerId,
+  offerTitle,
 }: SendPushNotificationModalProps) {
   const [message, setMessage] = useState(defaultMessage);
   const [sending, setSending] = useState(false);
@@ -83,6 +88,8 @@ export default function SendPushNotificationModal({
         externalId: externalId || null,
         userId: externalId ? null : userId,
         platform: null,
+        offerId: offerId ?? null,
+        offerTitle: offerTitle?.trim() || null,
       });
 
       if (!result.success) {
@@ -99,7 +106,7 @@ export default function SendPushNotificationModal({
     } finally {
       setSending(false);
     }
-  }, [driver, message, onClose, sending]);
+  }, [driver, message, offerId, offerTitle, onClose, sending]);
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={handleClose}>

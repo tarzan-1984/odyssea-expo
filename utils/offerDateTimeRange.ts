@@ -149,11 +149,25 @@ export const ROUTE_CHRONOLOGY_ERROR =
 
 export const END_TIME_AFTER_START_ERROR = 'End time must be after start time';
 
+/** Stored delivery-time value when dispatcher enables ASAP. */
+export const OFFER_ASAP_TIME = 'As soon as possible, negotiable';
+
+/** Driver-facing label when delivery time is ASAP. */
+export const OFFER_ASAP_DRIVER_TIME_LABEL =
+  'As soon as possible, please provide your ETA';
+
+export function isOfferAsapTime(value: string): boolean {
+  const normalized = value.trim().toUpperCase();
+  return (
+    normalized === OFFER_ASAP_TIME.toUpperCase() || normalized === 'ASAP'
+  );
+}
+
 export function getRouteChronologyError(times: string[]): string | null {
   const trimmed = times.map((time) => time.trim());
 
   for (const time of trimmed) {
-    if (!time) continue;
+    if (!time || isOfferAsapTime(time)) continue;
     const { start, end } = parseOfferDateTimeField(time);
     if (start && end && end.getTime() <= start.getTime()) {
       return END_TIME_AFTER_START_ERROR;
@@ -164,6 +178,7 @@ export function getRouteChronologyError(times: string[]): string | null {
     const prevTime = trimmed[i - 1];
     const currTime = trimmed[i];
     if (!prevTime || !currTime) continue;
+    if (isOfferAsapTime(prevTime) || isOfferAsapTime(currTime)) continue;
     const { start: prevStart } = parseOfferDateTimeField(prevTime);
     const { start: currStart } = parseOfferDateTimeField(currTime);
     if (prevStart && currStart && currStart.getTime() < prevStart.getTime()) {

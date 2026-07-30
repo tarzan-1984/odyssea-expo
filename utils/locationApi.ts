@@ -401,8 +401,9 @@ export async function sendLocationUpdateToBackendUser(params: {
   state?: string;
   zip?: string;
   country?: string;
-  latitude: number;
-  longitude: number;
+  /** Optional for inactive statuses (e.g. on_vocation) — status-only update. */
+  latitude?: number;
+  longitude?: number;
   lastUpdateIso?: string;
   /** Omit on background-only pings to avoid overwriting driver status in DB. */
   driverStatus?: string;
@@ -484,10 +485,17 @@ export async function sendLocationUpdateToBackendUser(params: {
     };
 
     const body: Record<string, unknown> = {
-      latitude: params.latitude,
-      longitude: params.longitude,
       lastLocationUpdateAt: params.lastUpdateIso ?? getLocalIsoString(),
     };
+    if (
+      typeof params.latitude === 'number' &&
+      Number.isFinite(params.latitude) &&
+      typeof params.longitude === 'number' &&
+      Number.isFinite(params.longitude)
+    ) {
+      body.latitude = params.latitude;
+      body.longitude = params.longitude;
+    }
     putTrimmed(body, 'location', params.location);
     putTrimmed(body, 'city', params.city);
     putTrimmed(body, 'state', params.state);

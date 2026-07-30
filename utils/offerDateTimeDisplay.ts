@@ -1,5 +1,7 @@
 import {
+  OFFER_ASAP_DRIVER_TIME_LABEL,
   OFFER_DATETIME_RANGE_SEP,
+  isOfferAsapTime,
   parseOfferDateTimeField,
 } from '@/utils/offerDateTimeRange';
 
@@ -33,6 +35,8 @@ function formatDateLine(date: Date): string {
 export type DriverOfferRouteTimeDisplay = {
   dateLine: string;
   timeLine: string;
+  /** Single-line ASAP label instead of date + time. */
+  isAsap?: boolean;
 };
 
 /** Driver offer route stop: date on one line, time range on the next. */
@@ -41,6 +45,14 @@ export function formatOfferRouteTimeForDriver(
 ): DriverOfferRouteTimeDisplay | null {
   const trimmed = value?.trim();
   if (!trimmed) return null;
+
+  if (isOfferAsapTime(trimmed)) {
+    return {
+      dateLine: OFFER_ASAP_DRIVER_TIME_LABEL,
+      timeLine: '',
+      isAsap: true,
+    };
+  }
 
   const { start, end } = parseOfferDateTimeField(trimmed);
   if (!start) return null;

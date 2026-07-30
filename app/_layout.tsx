@@ -28,8 +28,11 @@ import {
   ensureNotificationListeners,
   consumeInitialNotificationResponse,
   getChatNavigationPath,
+  getOfferNavigationPath,
+  getLoadNavigationPath,
   PENDING_CHAT_NAVIGATION_KEY,
   PENDING_OFFERS_NAVIGATION_KEY,
+  PENDING_LOAD_NAVIGATION_KEY,
 } from '@/services/NotificationsService';
 
 ensureNotificationListeners();
@@ -152,20 +155,24 @@ function RootLayoutNav() {
     };
     const handleNavigateToOffers = (data?: { offerId?: string }) => {
       if (authState.isAuthenticated) {
-        const offerId = data?.offerId?.trim();
-        if (offerId && offerId !== '1') {
-          router.replace(`/work/offer/${offerId}` as any);
-        } else {
-          router.replace('/work' as any);
-        }
+        void AsyncStorage.removeItem(PENDING_OFFERS_NAVIGATION_KEY);
+        router.replace(getOfferNavigationPath(data?.offerId) as any);
+      }
+    };
+    const handleNavigateToLoad = (data?: { loadId?: string }) => {
+      if (authState.isAuthenticated) {
+        void AsyncStorage.removeItem(PENDING_LOAD_NAVIGATION_KEY);
+        router.replace(getLoadNavigationPath(data?.loadId) as any);
       }
     };
 
     eventBus.on(AppEvents.NavigateToChat, handleNavigateToChat);
     eventBus.on(AppEvents.NavigateToOffers, handleNavigateToOffers);
+    eventBus.on(AppEvents.NavigateToLoad, handleNavigateToLoad);
     return () => {
       eventBus.off(AppEvents.NavigateToChat, handleNavigateToChat);
       eventBus.off(AppEvents.NavigateToOffers, handleNavigateToOffers);
+      eventBus.off(AppEvents.NavigateToLoad, handleNavigateToLoad);
     };
   }, [authState.isAuthenticated, router]);
 
@@ -179,6 +186,7 @@ function RootLayoutNav() {
           pendingChatNavigationRef.current ||
           (await AsyncStorage.getItem(PENDING_CHAT_NAVIGATION_KEY));
         const pendingOffers = await AsyncStorage.getItem(PENDING_OFFERS_NAVIGATION_KEY);
+        const pendingLoad = await AsyncStorage.getItem(PENDING_LOAD_NAVIGATION_KEY);
 
         if (pendingChatId) {
           // Consume once — clearing ref prevents re-open on every foreground
@@ -187,11 +195,10 @@ function RootLayoutNav() {
           router.replace(getChatNavigationPath(pendingChatId) as any);
         } else if (pendingOffers) {
           await AsyncStorage.removeItem(PENDING_OFFERS_NAVIGATION_KEY);
-          if (pendingOffers !== '1') {
-            router.replace(`/work/offer/${pendingOffers}` as any);
-          } else {
-            router.replace('/work' as any);
-          }
+          router.replace(getOfferNavigationPath(pendingOffers) as any);
+        } else if (pendingLoad) {
+          await AsyncStorage.removeItem(PENDING_LOAD_NAVIGATION_KEY);
+          router.replace(getLoadNavigationPath(pendingLoad) as any);
         }
       } catch (error) {
         console.error('[RootLayoutNav] Failed to check pending navigation:', error);

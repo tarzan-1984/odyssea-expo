@@ -6,6 +6,11 @@ export interface SendCustomPushPayload {
   userId?: string | null;
   externalId?: string | null;
   platform?: 'all' | 'ios' | 'android' | null;
+  /** When set, tap opens this offer detail screen */
+  offerId?: number | string | null;
+  offerTitle?: string | null;
+  /** When set, tap opens this load detail screen (tms_load_id) */
+  loadId?: string | null;
 }
 
 export interface SendCustomPushResponse {
