@@ -4,7 +4,7 @@ import {
 	SyncMessagesBatchRoomResult,
 } from '@/app-api/chatApi';
 import type { ChatRoom, Message } from '@/components/ChatListItem';
-import { chatCacheService } from '@/services/ChatCacheService';
+import { applyChatRoomsFromApi } from '@/services/applyChatRoomsFromApi';
 import { messagesCacheService } from '@/services/MessagesCacheService';
 import { useChatStore } from '@/stores/chatStore';
 import { normalizeChatParticipants } from '@/utils/normalizeChatParticipants';
@@ -121,32 +121,19 @@ export async function catchUpChatsOnReconnect(
 		console.warn('[ChatSync] Could not refresh chat rooms after reconnect:', message);
 		return;
 	}
-	const state = useChatStore.getState();
-	const previousRooms = state.chatRooms;
+	const previousRooms = useChatStore.getState().chatRooms;
 
 	const normalizedRooms: ChatRoom[] = apiRooms.map((room) => ({
 		...room,
 		participants: normalizeChatParticipants(room.participants || []),
 	}));
 
-	const mergedRooms: ChatRoom[] = normalizedRooms.map((apiRoom) => {
-		const storeRoom = previousRooms.find((r) => r.id === apiRoom.id);
-		if (!storeRoom) {
-			return apiRoom;
-		}
-		return {
-			...apiRoom,
-			unreadCount: apiRoom.unreadCount ?? 0,
-			lastMessage: apiRoom.lastMessage ?? storeRoom.lastMessage,
-			updatedAt: apiRoom.updatedAt ?? storeRoom.updatedAt,
-			isMuted: storeRoom.isMuted,
-			isPinned: storeRoom.isPinned,
-		};
+	// Write reconciled list to store AND cache together (prevents UI/cache drift).
+	const mergedRooms = await applyChatRoomsFromApi(normalizedRooms, {
+		trustApiRealtime: true,
 	});
 
-	state.setChatRooms(mergedRooms);
-	await chatCacheService.saveChatRooms(mergedRooms);
-
+	const state = useChatStore.getState();
 	const roomsToSync: SyncMessagesBatchRoomRequest[] = [];
 
 	for (const apiRoom of mergedRooms) {

@@ -1,11 +1,9 @@
 import * as Notifications from 'expo-notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { chatApi } from '@/app-api/chatApi';
-import { chatCacheService } from '@/services/ChatCacheService';
-import { useChatStore } from '@/stores/chatStore';
-import { normalizeChatParticipants } from '@/utils/normalizeChatParticipants';
+import { applyChatRoomsFromApi } from '@/services/applyChatRoomsFromApi';
 import { countTotalUnreadMessages } from '@/utils/chatUnreadCount';
-import type { ChatRoom } from '@/components/ChatListItem';
+import { normalizeChatParticipants } from '@/utils/normalizeChatParticipants';
 
 type SyncOptions = {
 	userId?: string;
@@ -15,7 +13,8 @@ type SyncOptions = {
 
 /**
  * Force-refresh chat rooms from API (trust backend unreadCount).
- * Used when returning from background — WebSocket may have missed messages while inactive.
+ * Always updates both Zustand store and AsyncStorage cache.
+ * Used on initial auth and when returning from background — WebSocket may have missed rooms/messages.
  */
 export async function forceSyncChatRoomsFromApi(options: SyncOptions = {}): Promise<void> {
 	const apiRooms = await chatApi.getChatRooms();
@@ -24,26 +23,9 @@ export async function forceSyncChatRoomsFromApi(options: SyncOptions = {}): Prom
 		participants: normalizeChatParticipants(room.participants || []),
 	}));
 
-	const { chatRooms: currentRooms, setChatRooms } = useChatStore.getState();
-
-	const mergedRooms: ChatRoom[] = normalizedApiRooms.map((apiRoom) => {
-		const storeRoom = currentRooms.find((r) => r.id === apiRoom.id);
-		if (!storeRoom) {
-			return apiRoom as ChatRoom;
-		}
-
-		return {
-			...apiRoom,
-			unreadCount: apiRoom.unreadCount ?? 0,
-			lastMessage: apiRoom.lastMessage ?? storeRoom.lastMessage,
-			updatedAt: apiRoom.updatedAt ?? storeRoom.updatedAt,
-			isMuted: storeRoom.isMuted,
-			isPinned: storeRoom.isPinned,
-		} as ChatRoom;
+	const mergedRooms = await applyChatRoomsFromApi(normalizedApiRooms, {
+		trustApiRealtime: true,
 	});
-
-	setChatRooms(mergedRooms);
-	await chatCacheService.saveChatRooms(mergedRooms);
 
 	const driverStatus =
 		options.driverStatus !== undefined

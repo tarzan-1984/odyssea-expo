@@ -857,8 +857,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       // Clear chat store (Zustand in-memory state)
       const { useChatStore } = await import('@/stores/chatStore');
       const { resetChatRoomsLoaderState } = await import('@/hooks/useChatRooms');
+      const { resetChatRoomsSyncEpoch } = await import('@/services/chatRoomsSyncEpoch');
       useChatStore.getState().reset();
       resetChatRoomsLoaderState();
+      resetChatRoomsSyncEpoch();
       console.log('💾 [AuthContext] Cleared chat store (in-memory state)');
       
       // Clear all AsyncStorage data
