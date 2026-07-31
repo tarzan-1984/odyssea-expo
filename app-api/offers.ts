@@ -18,6 +18,7 @@ export interface OfferDriver {
   action_time_display?: string | null;
   empty_miles: number | null;
   total_miles: number | null;
+  driver_eta?: string | null;
 }
 
 export interface OfferRoutePoint {
@@ -107,6 +108,10 @@ export interface ExtendDriverTimePayload {
   extendTimeMinutes: number;
 }
 
+export interface UpdateDriverEtaPayload {
+  driverEta: string;
+}
+
 export interface SetDriverRateResponse {
   offer_id: number;
   driver_id: string;
@@ -114,6 +119,7 @@ export interface SetDriverRateResponse {
   driver_eta: string | null;
   action_time: number | null;
   action_time_display: string | null;
+  bid_timer_refreshed?: boolean;
 }
 
 export interface RemoveDriverFromOfferResponse {
@@ -490,6 +496,45 @@ export async function setDriverRateForOfferDriver(
   }
 
   return data as SetDriverRateResponse;
+}
+
+export async function updateDriverEtaForOfferDriver(
+  offerId: number,
+  driverExternalId: string,
+  payload: UpdateDriverEtaPayload
+): Promise<SetDriverRateResponse> {
+  if (!API_BASE_URL) {
+    throw new Error('API_BASE_URL is not configured');
+  }
+
+  const accessToken = await secureStorage.getItemAsync('accessToken');
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
+
+  const url = `${API_BASE_URL}/v1/offers/${offerId}/drivers/${encodeURIComponent(
+    driverExternalId
+  )}/eta`;
+
+  const response = await fetch(url, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify(payload),
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(
+      (data && (data.error || data.message)) ||
+        `Failed to update driver ETA. Status: ${response.status}`
+    );
+  }
+
+  return (data.data ?? data) as SetDriverRateResponse;
 }
 
 export async function editDriverRateForOfferDriver(

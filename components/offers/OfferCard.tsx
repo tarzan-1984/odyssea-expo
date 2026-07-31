@@ -19,6 +19,7 @@ import {
   OFFER_ASAP_DRIVER_TIME_LABEL,
   isOfferAsapTime,
 } from '@/utils/offerDateTimeRange';
+import { formatOfferRouteTimeForDriver } from '@/utils/offerDateTimeDisplay';
 
 function hasHazmat(specialRequirements: unknown): boolean {
   if (!specialRequirements) return false;
@@ -69,9 +70,20 @@ function formatOfferRate(value: number | null | undefined): string | null {
   return `$${Number(value).toLocaleString('en-US')}`;
 }
 
-function formatLoadedMiles(value: number | null | undefined): string | null {
+function formatMilesLabel(value: number | null | undefined): string | null {
   if (value == null || !Number.isFinite(value)) return null;
   return value.toLocaleString('en-US', { maximumFractionDigits: 0 });
+}
+
+function formatPickupPreviewLabel(
+  route: OfferRow['route'] | null | undefined,
+): string | null {
+  const pickup = route?.find((point) => point.type === 'pick_up_location');
+  const formatted = formatOfferRouteTimeForDriver(pickup?.time);
+  if (!formatted) return null;
+  if (formatted.isAsap) return `Pick up: ${formatted.dateLine}`;
+  if (formatted.timeLine) return `Pick up: ${formatted.dateLine}, ${formatted.timeLine}`;
+  return `Pick up: ${formatted.dateLine}`;
 }
 
 /**
@@ -118,7 +130,9 @@ export default function OfferCard({
   const offeredRateLabel = formatOfferRate(offer.offered_rate);
   const driverRateLabel = formatOfferRate(offerDriver?.rate);
   const counterOfferLabel = formatOfferRate(offerDriver?.counter_offer);
-  const loadedMilesLabel = formatLoadedMiles(offer.loaded_miles);
+  const loadedMilesLabel = formatMilesLabel(offer.loaded_miles);
+  const emptyMilesLabel = isDriver ? formatMilesLabel(offerDriver?.empty_miles) : null;
+  const pickupPreviewLabel = isDriver ? formatPickupPreviewLabel(offer.route) : null;
   const showOfferedRatePreview = Boolean(
     isDriver && offerListTab !== 'assigned' && offeredRateLabel,
   );
@@ -223,6 +237,8 @@ export default function OfferCard({
           {showOfferedRatePreview ||
           showDriverRatePreview ||
           loadedMilesLabel != null ||
+          emptyMilesLabel != null ||
+          pickupPreviewLabel != null ||
           hasSubmittedRate ? (
             <>
               {showOfferedRatePreview || showDriverRatePreview ? (
@@ -260,6 +276,18 @@ export default function OfferCard({
                     <View style={styles.metaRight} />
                   )}
                 </View>
+              ) : null}
+
+              {emptyMilesLabel != null ? (
+                <Text style={styles.meta} numberOfLines={1}>
+                  Empty: {emptyMilesLabel} mi
+                </Text>
+              ) : null}
+
+              {pickupPreviewLabel != null ? (
+                <Text style={styles.meta} numberOfLines={2}>
+                  {pickupPreviewLabel}
+                </Text>
               ) : null}
 
               {hasSubmittedRate ? (

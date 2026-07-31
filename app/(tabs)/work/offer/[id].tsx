@@ -35,6 +35,7 @@ import {
   selectDriverForOffer,
   setDriverRateForOfferDriver,
   editDriverRateForOfferDriver,
+  updateDriverEtaForOfferDriver,
   respondDriverCounterOffer,
 } from '@/app-api/offers';
 import PhoneAppStatusActiveIcon from '@/icons/PhoneAppStatusActiveIcon';
@@ -48,6 +49,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { DRIVER_PARTICIPATION_COUNT_QUERY_KEY } from '@/hooks/useDriverParticipationCount';
 import CreateRateModal from '@/components/offers/CreateRateModal';
 import EditRateModal from '@/components/offers/EditRateModal';
+import UpdateEtaModal from '@/components/offers/UpdateEtaModal';
 import ExtendTimeModal from '@/components/offers/ExtendTimeModal';
 import SendPushNotificationModal from '@/components/offers/SendPushNotificationModal';
 import { RectButton } from 'react-native-gesture-handler';
@@ -274,8 +276,10 @@ export default function OfferDetailScreen() {
   const driverExternalId = (authState.user?.externalId ?? '').trim();
   const [createRateModalVisible, setCreateRateModalVisible] = useState(false);
   const [editRateModalVisible, setEditRateModalVisible] = useState(false);
+  const [updateEtaModalVisible, setUpdateEtaModalVisible] = useState(false);
   const [isSubmittingRate, setIsSubmittingRate] = useState(false);
   const [isSubmittingRateEdit, setIsSubmittingRateEdit] = useState(false);
+  const [isSubmittingEtaUpdate, setIsSubmittingEtaUpdate] = useState(false);
   const [extendTimeModalVisible, setExtendTimeModalVisible] = useState(false);
   const [isSubmittingExtendTime, setIsSubmittingExtendTime] = useState(false);
   const [isDecliningOffer, setIsDecliningOffer] = useState(false);
@@ -332,6 +336,7 @@ export default function OfferDetailScreen() {
   const isSelectedOfferDriver = Boolean(isDriver && offerDriver?.is_selected);
 
   const [driverRate, setDriverRate] = useState<number | null>(offerDriver?.rate ?? null);
+  const [driverEta, setDriverEta] = useState<string | null>(offerDriver?.driver_eta ?? null);
   const [driverActionTime, setDriverActionTime] = useState<number | null>(
     normalizeUnixSeconds(offerDriver?.action_time)
   );
@@ -341,8 +346,9 @@ export default function OfferDetailScreen() {
 
   useEffect(() => {
     setDriverRate(offerDriver?.rate ?? null);
+    setDriverEta(offerDriver?.driver_eta ?? null);
     setDriverActionTime(normalizeUnixSeconds(offerDriver?.action_time));
-  }, [offer?.id, offerDriver?.rate, offerDriver?.action_time]);
+  }, [offer?.id, offerDriver?.rate, offerDriver?.driver_eta, offerDriver?.action_time]);
 
   useEffect(() => {
     if (!isDriverRemovedFromOffer) return;
@@ -386,7 +392,10 @@ export default function OfferDetailScreen() {
     if (!canEditDriverRate && editRateModalVisible) {
       setEditRateModalVisible(false);
     }
-  }, [canEditDriverRate, editRateModalVisible]);
+    if (!canEditDriverRate && updateEtaModalVisible) {
+      setUpdateEtaModalVisible(false);
+    }
+  }, [canEditDriverRate, editRateModalVisible, updateEtaModalVisible]);
 
   // Tick for driver bid timers in staff Drivers section
   const [driverTimerTick, setDriverTimerTick] = useState(0);
@@ -804,13 +813,22 @@ export default function OfferDetailScreen() {
                     <Text style={styles.rateInfoValue}>{formatRateLabel(driverRate)}</Text>
                   </Text>
                   {canEditDriverRate ? (
-                    <TouchableOpacity
-                      style={styles.editRateButton}
-                      onPress={() => setEditRateModalVisible(true)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={styles.editRateButtonText}>Edit Rate</Text>
-                    </TouchableOpacity>
+                    <View style={styles.rateActionsRow}>
+                      <TouchableOpacity
+                        style={[styles.editRateButton, styles.rateActionButton]}
+                        onPress={() => setUpdateEtaModalVisible(true)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.editRateButtonText}>Update ETA</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.editRateButton, styles.rateActionButton]}
+                        onPress={() => setEditRateModalVisible(true)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.editRateButtonText}>Edit Rate</Text>
+                      </TouchableOpacity>
+                    </View>
                   ) : null}
                   <TouchableOpacity
                     style={styles.extendTimeButton}
@@ -1232,6 +1250,7 @@ export default function OfferDetailScreen() {
             const nextActionTime = normalizeUnixSeconds(result.action_time)
               ?? getFutureUnixSeconds(data.rateTimeMinutes);
             setDriverRate(result.rate ?? (Number.isNaN(rateNumber) ? 0 : rateNumber));
+            setDriverEta(result.driver_eta ?? data.eta);
             setDriverActionTime(nextActionTime);
             console.log('[OfferDetailScreen] Driver rate saved', result);
             Alert.alert('', 'Your rate has been submitted.');
@@ -1290,6 +1309,49 @@ export default function OfferDetailScreen() {
               },
             ]
           );
+        }}
+      />
+      <UpdateEtaModal
+        visible={updateEtaModalVisible && canEditDriverRate && !isSelectedOfferDriver}
+        currentEta={driverEta}
+        onClose={() => setUpdateEtaModalVisible(false)}
+        isSubmitting={isSubmittingEtaUpdate}
+        onSubmit={async (eta) => {
+          if (!offer || !isDriver) {
+            setUpdateEtaModalVisible(false);
+            return;
+          }
+
+          if (!driverExternalId) {
+            console.warn('[OfferDetailScreen] Missing driver externalId, cannot update ETA');
+            return;
+          }
+
+          try {
+            setIsSubmittingEtaUpdate(true);
+            const result = await updateDriverEtaForOfferDriver(offer.id, driverExternalId, {
+              driverEta: eta,
+            });
+            setDriverEta(result.driver_eta ?? eta);
+            const nextActionTime = normalizeUnixSeconds(result.action_time);
+            if (nextActionTime != null) {
+              setDriverActionTime(nextActionTime);
+            }
+            await queryClient.invalidateQueries({ queryKey: ['offers'] });
+            await queryClient.invalidateQueries({ queryKey: ['offer-detail', offer.id] });
+            Alert.alert(
+              '',
+              result.bid_timer_refreshed
+                ? 'Your ETA has been updated. Bid timer has been refreshed.'
+                : 'Your ETA has been updated.',
+            );
+            setUpdateEtaModalVisible(false);
+          } catch (err) {
+            console.error('[OfferDetailScreen] Failed to update driver ETA', err);
+            Alert.alert('Error', 'Failed to update your ETA. Please try again.');
+          } finally {
+            setIsSubmittingEtaUpdate(false);
+          }
         }}
       />
       <ExtendTimeModal
@@ -1604,6 +1666,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  rateActionsRow: {
+    width: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: rem(10),
+    marginTop: rem(12),
+  },
+  rateActionButton: {
+    flex: 1,
+    marginTop: 0,
+    minWidth: 0,
+    paddingHorizontal: rem(10),
+  },
   editRateButtonText: {
     fontSize: fp(16),
     fontFamily: fonts['600'],
@@ -1611,7 +1686,7 @@ const styles = StyleSheet.create({
   },
   extendTimeButton: {
     marginTop: rem(12),
-    minWidth: rem(180),
+    alignSelf: 'stretch',
     paddingHorizontal: rem(18),
     height: rem(44),
     borderRadius: rem(12),
