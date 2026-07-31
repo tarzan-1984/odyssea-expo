@@ -429,7 +429,7 @@ const styles = StyleSheet.create({
   swipeActionWrap: {
     width: rem(148),
     marginBottom: rem(12),
-    justifyContent: 'stretch',
+    alignItems: 'stretch',
   },
   swipeActionButton: {
     flex: 1,

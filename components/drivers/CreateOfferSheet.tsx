@@ -1226,7 +1226,7 @@ const styles = StyleSheet.create({
   routeSwipeActionWrap: {
     width: rem(100),
     marginBottom: rem(14),
-    justifyContent: 'stretch',
+    alignItems: 'stretch',
   },
   routeSwipeDeleteBtn: {
     flex: 1,

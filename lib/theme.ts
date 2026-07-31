@@ -5,6 +5,7 @@
 
 import { colors } from './colors';
 import { fp, rem } from './responsive';
+import type { TextStyle, ViewStyle } from 'react-native';
 
 // Define borderRadius first
 const borderRadiusVar = {
@@ -26,6 +27,23 @@ const fontsVar = {
 };
 
 function buildTypography() {
+  const buttonGreen: ViewStyle = {
+    backgroundColor: colors.primary.green,
+    borderRadius: borderRadiusVar.sm10,
+    width: '100%',
+    height: rem(54),
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: rem(20),
+  };
+
+  const button: TextStyle = {
+    fontSize: fp(16),
+    fontFamily: fontsVar['500'],
+    color: colors.primary.blue,
+  };
+
   return {
     h1: {
       fontSize: fp(36),
@@ -33,65 +51,52 @@ function buildTypography() {
       fontFamily: 'Mulish-Bold',
       color: colors.primary.blue,
       letterSpacing: 2,
-    },
+    } satisfies TextStyle,
     h2: {
       fontSize: fp(28),
       fontWeight: 'bold' as const,
       fontFamily: 'Mulish-Bold',
       color: colors.primary.blue,
       letterSpacing: 1.5,
-    },
+    } satisfies TextStyle,
     h3: {
       fontSize: fp(24),
       fontWeight: 'bold' as const,
       fontFamily: 'Mulish-Bold',
       color: colors.neutral.black,
-    },
+    } satisfies TextStyle,
     body: {
       fontSize: fp(16),
       fontWeight: '500' as const,
       fontFamily: 'Mulish-Medium',
       color: colors.neutral.black,
-    },
+    } satisfies TextStyle,
     bodySecondary: {
       fontSize: fp(16),
       fontWeight: '500' as const,
       fontFamily: 'Mulish-Medium',
       color: colors.neutral.darkGrey,
-    },
-    buttonGreen: {
-      backgroundColor: colors.primary.green,
-      borderRadius: borderRadiusVar.sm10,
-      width: '100%',
-      height: rem(54),
-      flexDirection: 'row' as const,
-      alignItems: 'center' as const,
-      justifyContent: 'center' as const,
-      gap: rem(20),
-    },
-    button: {
-      fontSize: fp(16),
-      fontFamily: fontsVar['500'],
-      color: colors.primary.blue,
-    },
+    } satisfies TextStyle,
+    buttonGreen,
+    button,
     buttonSecondary: {
       fontSize: fp(16),
       fontWeight: '500' as const,
       fontFamily: 'Mulish-Medium',
       color: colors.primary.blue,
-    },
+    } satisfies TextStyle,
     input: {
       fontSize: fp(16),
       fontWeight: '500' as const,
       fontFamily: 'Mulish-Medium',
       color: colors.neutral.black,
-    },
+    } satisfies TextStyle,
     placeholder: {
       fontSize: fp(16),
       fontWeight: '500' as const,
       fontFamily: 'Mulish-Medium',
       color: colors.neutral.darkGrey,
-    },
+    } satisfies TextStyle,
   };
 }
 
