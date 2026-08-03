@@ -38,6 +38,7 @@ import {
 ensureNotificationListeners();
 import PushTokenRegistrar from '@/components/notifications/PushTokenRegistrar';
 import GlobalChatRoomsSync from '@/components/chat/GlobalChatRoomsSync';
+import GlobalChatOutboxFlush from '@/components/chat/GlobalChatOutboxFlush';
 import MandatoryIosUpdateGate from '@/components/common/MandatoryIosUpdateGate';
 
 // Prevent the splash screen from auto-hiding
@@ -626,6 +627,7 @@ export default function RootLayout() {
               {/* Globally ensure push token is generated/registered for logged-in users too */}
                 <PushTokenRegistrar />
                 <GlobalChatRoomsSync />
+                <GlobalChatOutboxFlush />
                 <RootLayoutNav />
               </OnlineStatusProvider>
             </WebSocketProvider>

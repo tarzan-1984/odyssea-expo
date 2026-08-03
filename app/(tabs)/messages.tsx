@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, TextInput, ActivityIndicator, Platform, Keyboard, AppState, AppStateStatus, Modal, Pressable } from 'react-native';
 import type { TextInput as RNTextInput } from 'react-native';
+import { useQuery } from '@tanstack/react-query';
 import { colors, fonts, rem, fp, borderRadius } from '@/lib';
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -27,6 +28,15 @@ import { chatCacheService } from '@/services/ChatCacheService';
 import LoadChatsArchiveSection from '@/components/LoadChatsArchiveSection';
 import { chatRoomMatchesSearchQuery } from '@/utils/chatSearch';
 import { formatChatPeerDisplayName, formatOfferChatDriverDisplayName } from '@/utils/chatPeerDisplayName';
+import {
+  canAccessMyLoadsChatTab,
+  canAccessMyTeamChatTab,
+} from '@/constants/roleAccess';
+import {
+  fetchTrackingTeamsLoadIds,
+  TRACKING_TEAMS_STALE_TIME_MS,
+  trackingTeamsQueryKey,
+} from '@/app-api/trackingTeams';
 
 type FilterType = 'all' | 'muted' | 'unread' | 'favorite';
 
@@ -42,14 +52,29 @@ const filterOptions: FilterOption[] = [
   { value: 'favorite', label: 'Pinned' },
 ];
 
-type MessagesTab = 'chats' | 'shipments' | 'offers';
+type MessagesTab = 'chats' | 'shipments' | 'offers' | 'my-loads' | 'my-team';
 
-function isRoomInMessagesTab(room: ChatRoom, tab: MessagesTab): boolean {
+function isLoadChatInIdSet(room: ChatRoom, loadIdSet: Set<string>): boolean {
+  if (room.type !== 'LOAD' || room.isLoadArchived === true) return false;
+  const loadId = room.loadId?.trim();
+  if (!loadId) return false;
+  return loadIdSet.has(loadId);
+}
+
+function isRoomInMessagesTab(
+  room: ChatRoom,
+  tab: MessagesTab,
+  myLoadsIdSet: Set<string>,
+  myTeamIdSet: Set<string>,
+): boolean {
   if (tab === 'chats') return room.type !== 'LOAD' && room.type !== 'OFFER' && room.type !== 'BID';
   if (tab === 'shipments') {
     return room.type === 'LOAD' && room.isLoadArchived !== true;
   }
-  return room.type === 'OFFER';
+  if (tab === 'offers') return room.type === 'OFFER';
+  if (tab === 'my-loads') return isLoadChatInIdSet(room, myLoadsIdSet);
+  if (tab === 'my-team') return isLoadChatInIdSet(room, myTeamIdSet);
+  return false;
 }
 
 /**
@@ -86,6 +111,44 @@ export default function MessagesScreen() {
   // When the list is empty, some hook dependencies can change and re-trigger focus effects,
   // causing "Loading chats..." <-> "No chats yet" flicker.
   const hasAttemptedInitialEmptyLoadRef = React.useRef<boolean>(false);
+
+  const showMyLoadsTab = canAccessMyLoadsChatTab(authState.user?.role);
+  const showMyTeamTab = canAccessMyTeamChatTab(authState.user?.role);
+
+  const { data: myLoadsIds = [], isFetching: isFetchingMyLoads } = useQuery({
+    queryKey: trackingTeamsQueryKey('mine'),
+    queryFn: () => fetchTrackingTeamsLoadIds('mine'),
+    enabled: showMyLoadsTab,
+    staleTime: TRACKING_TEAMS_STALE_TIME_MS,
+    gcTime: TRACKING_TEAMS_STALE_TIME_MS,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+
+  const { data: myTeamIds = [], isFetching: isFetchingMyTeam } = useQuery({
+    queryKey: trackingTeamsQueryKey('team'),
+    queryFn: () => fetchTrackingTeamsLoadIds('team'),
+    enabled: showMyTeamTab,
+    staleTime: TRACKING_TEAMS_STALE_TIME_MS,
+    gcTime: TRACKING_TEAMS_STALE_TIME_MS,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+
+  const myLoadsIdSet = useMemo(() => new Set(myLoadsIds), [myLoadsIds]);
+  const myTeamIdSet = useMemo(() => new Set(myTeamIds), [myTeamIds]);
+
+  useEffect(() => {
+    if (!showMyLoadsTab && activeTab === 'my-loads') {
+      setActiveTab('chats');
+    }
+  }, [showMyLoadsTab, activeTab, setActiveTab]);
+
+  useEffect(() => {
+    if (!showMyTeamTab && activeTab === 'my-team') {
+      setActiveTab(showMyLoadsTab ? 'my-loads' : 'chats');
+    }
+  }, [showMyTeamTab, showMyLoadsTab, activeTab, setActiveTab]);
   
   // Load driver status from AsyncStorage
   const loadDriverStatus = React.useCallback(async () => {
@@ -199,9 +262,11 @@ export default function MessagesScreen() {
 
   // Determine if all chats are muted (mirrors Next.js logic)
   const allChatsMuted = useMemo(() => {
-    const tabScopedRooms = chatRooms.filter((room) => isRoomInMessagesTab(room, activeTab));
+    const tabScopedRooms = chatRooms.filter((room) =>
+      isRoomInMessagesTab(room, activeTab, myLoadsIdSet, myTeamIdSet),
+    );
     return tabScopedRooms.length > 0 && tabScopedRooms.every((room) => room.isMuted);
-  }, [chatRooms, activeTab]);
+  }, [chatRooms, activeTab, myLoadsIdSet, myTeamIdSet]);
 
   // Smart mute/unmute function (mirrors Next.js handleSmartMuteToggle)
   const handleSmartMuteToggle = async () => {
@@ -219,7 +284,7 @@ export default function MessagesScreen() {
     try {
       // Get all unmuted chat room IDs
       const unmutedChatRoomIds = chatRooms
-        .filter((room) => isRoomInMessagesTab(room, activeTab))
+        .filter((room) => isRoomInMessagesTab(room, activeTab, myLoadsIdSet, myTeamIdSet))
         .filter(room => !room.isMuted)
         .map(room => room.id);
 
@@ -249,7 +314,7 @@ export default function MessagesScreen() {
     try {
       // Get all muted chat room IDs
       const mutedChatRoomIds = chatRooms
-        .filter((room) => isRoomInMessagesTab(room, activeTab))
+        .filter((room) => isRoomInMessagesTab(room, activeTab, myLoadsIdSet, myTeamIdSet))
         .filter(room => room.isMuted)
         .map(room => room.id);
 
@@ -282,7 +347,7 @@ export default function MessagesScreen() {
     if (!userId) return;
 
     const unreadChatRoomIds = chatRooms
-      .filter((room) => isRoomInMessagesTab(room, activeTab))
+      .filter((room) => isRoomInMessagesTab(room, activeTab, myLoadsIdSet, myTeamIdSet))
       .filter((room) => (room.unreadCount || 0) > 0)
       .map((room) => room.id);
 
@@ -339,8 +404,8 @@ export default function MessagesScreen() {
     return chatRooms.filter(chatRoom => {
       // Tab filtering (same as Next.js ChatList):
       // Chats: not LOAD, not OFFER, not BID | Shipments: active LOAD only (archive section is separate)
-      // | Offers: OFFER
-      if (!isRoomInMessagesTab(chatRoom, activeTab)) return false;
+      // | Offers: OFFER | My Loads / My Team: LOAD filtered by TMS load ids
+      if (!isRoomInMessagesTab(chatRoom, activeTab, myLoadsIdSet, myTeamIdSet)) return false;
 
       // Filter out blocked chats for drivers with expired_documents status
       const userRole = authState.user?.role;
@@ -368,7 +433,12 @@ export default function MessagesScreen() {
         chatRoom,
         debouncedSearchQuery,
         getChatDisplayName,
-        { includeParticipantPhones: activeTab === 'shipments' },
+        {
+          includeParticipantPhones:
+            activeTab === 'shipments' ||
+            activeTab === 'my-loads' ||
+            activeTab === 'my-team',
+        },
       );
 
       // For DIRECT chats, also search by firstName and lastName separately
@@ -404,7 +474,7 @@ export default function MessagesScreen() {
 
       return matchesSearch && matchesFilter;
     });
-  }, [chatRooms, activeTab, debouncedSearchQuery, selectedFilter, authState.user?.id, authState.user?.role, driverStatus]);
+  }, [chatRooms, activeTab, debouncedSearchQuery, selectedFilter, authState.user?.id, authState.user?.role, driverStatus, myLoadsIdSet, myTeamIdSet]);
 
   const handleChatPress = (chatRoom: ChatRoom) => {
     setSelectedChatId(chatRoom.id);
@@ -630,6 +700,59 @@ export default function MessagesScreen() {
                     </Text>
                   </TouchableOpacity>
                 </View>
+
+                {(showMyLoadsTab || showMyTeamTab) && (
+                  <View style={styles.tabsRowSecondary}>
+                    {showMyLoadsTab && (
+                      <TouchableOpacity
+                        style={[
+                          styles.tabButton,
+                          styles.tabButtonSecondary,
+                          activeTab === 'my-loads' && styles.tabButtonActive,
+                        ]}
+                        onPress={() => {
+                          Keyboard.dismiss();
+                          setActiveTab('my-loads');
+                        }}
+                        activeOpacity={0.85}
+                      >
+                        <Text
+                          style={[
+                            styles.tabText,
+                            activeTab === 'my-loads' && styles.tabTextActive,
+                          ]}
+                          numberOfLines={1}
+                        >
+                          My Loads
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                    {showMyTeamTab && (
+                      <TouchableOpacity
+                        style={[
+                          styles.tabButton,
+                          styles.tabButtonSecondary,
+                          activeTab === 'my-team' && styles.tabButtonActive,
+                        ]}
+                        onPress={() => {
+                          Keyboard.dismiss();
+                          setActiveTab('my-team');
+                        }}
+                        activeOpacity={0.85}
+                      >
+                        <Text
+                          style={[
+                            styles.tabText,
+                            activeTab === 'my-team' && styles.tabTextActive,
+                          ]}
+                          numberOfLines={1}
+                        >
+                          My Team
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
               </View>
             </View>
           )}
@@ -828,12 +951,21 @@ export default function MessagesScreen() {
                 <Text style={styles.emptyText}>
                   {debouncedSearchQuery.trim()
                     ? 'No chats found'
-                    : activeTab === 'shipments'
-                      ? 'No active loads'
-                      : 'No chats yet'}
+                    : (activeTab === 'my-loads' && isFetchingMyLoads) ||
+                        (activeTab === 'my-team' && isFetchingMyTeam)
+                      ? 'Loading loads…'
+                      : activeTab === 'shipments'
+                        ? 'No active loads'
+                        : activeTab === 'my-loads' || activeTab === 'my-team'
+                          ? 'No load chats'
+                          : 'No chats yet'}
                 </Text>
                 {debouncedSearchQuery.trim() ? (
                   <Text style={styles.emptySubtext}>Try a different search term</Text>
+                ) : activeTab === 'my-loads' || activeTab === 'my-team' ? (
+                  !isFetchingMyLoads && !isFetchingMyTeam ? (
+                    <Text style={styles.emptySubtext}>No matching loads for this tab</Text>
+                  ) : null
                 ) : null}
               </View>
             ) : (
@@ -1155,6 +1287,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     width: '100%',
   },
+  tabsRowSecondary: {
+    flexDirection: 'row',
+    width: '100%',
+  },
   tabButton: {
     flex: 1,
     minWidth: 0,
@@ -1176,6 +1312,9 @@ const styles = StyleSheet.create({
         elevation: 5,
       },
     }),
+  },
+  tabButtonSecondary: {
+    borderTopColor: 'rgba(255, 255, 255, 0.12)',
   },
   tabButtonActive: {
     backgroundColor: '#0d1a2d',

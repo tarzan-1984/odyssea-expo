@@ -43,4 +43,10 @@ export const AppEvents = {
   TmsLoadUpdated: 'TMS_LOAD_UPDATED',
   /** Session must end (e.g. device removed from account on another phone). */
   ForceLogout: 'FORCE_LOGOUT',
+  /** Outbox item successfully uploaded/sent after background resume flush. */
+  ChatOutboxItemFlushed: 'CHAT_OUTBOX_ITEM_FLUSHED',
+  /** Outbox item failed during background resume flush. */
+  ChatOutboxItemFailed: 'CHAT_OUTBOX_ITEM_FAILED',
+  /** Global outbox flush finished (may have processed 0 items). */
+  ChatOutboxFlushCompleted: 'CHAT_OUTBOX_FLUSH_COMPLETED',
 } as const;

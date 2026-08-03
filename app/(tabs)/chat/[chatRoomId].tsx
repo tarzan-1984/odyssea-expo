@@ -146,7 +146,7 @@ export default function ChatRoomScreen() {
     };
   }, [authState.user]);
 
-  const { sendTextMessage, sendMediaMessage, retryOptimisticMessage } = useChatOutboxSend({
+  const { sendTextMessage, sendMediaMessage, retryOptimisticMessage, discardFailedOptimisticMessage } = useChatOutboxSend({
     chatRoomId,
     sender: outgoingSender,
     isConnected,
@@ -1059,6 +1059,11 @@ export default function ChatRoomScreen() {
                     onRetryPress={(msg) => {
                       retryOptimisticMessage(msg).catch((error) => {
                         console.error('Failed to retry message:', error);
+                      });
+                    }}
+                    onDiscardFailedPress={(msg) => {
+                      discardFailedOptimisticMessage(msg).catch((error) => {
+                        console.error('Failed to discard message:', error);
                       });
                     }}
                   />

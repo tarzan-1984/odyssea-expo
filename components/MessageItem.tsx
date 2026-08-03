@@ -27,6 +27,8 @@ type Props = {
 	onDeletePress?: (message: Message) => void;
 	onEditPress?: (message: Message) => void;
 	onRetryPress?: (message: Message) => void;
+	/** Discard a failed optimistic/outbox message (not sent to server). */
+	onDiscardFailedPress?: (message: Message) => void;
 };
 
 export default function MessageItem({
@@ -38,6 +40,7 @@ export default function MessageItem({
 	onReplyPress,
 	onDeletePress,
 	onEditPress,
+	onDiscardFailedPress,
 	onRetryPress,
 }: Props) {
 	const { width: windowWidth } = useWindowDimensions();
@@ -263,6 +266,23 @@ export default function MessageItem({
 											]}
 										>
 											Retry
+										</Text>
+									</TouchableOpacity>
+									<TouchableOpacity
+										style={[
+											styles.retryButton,
+											isSender ? styles.retryButtonSender : styles.retryButtonOther,
+										]}
+										onPress={() => onDiscardFailedPress?.(message)}
+										activeOpacity={0.8}
+									>
+										<Text
+											style={[
+												styles.retryButtonText,
+												isSender ? styles.retryButtonTextSender : styles.retryButtonTextOther,
+											]}
+										>
+											Delete
 										</Text>
 									</TouchableOpacity>
 								</View>

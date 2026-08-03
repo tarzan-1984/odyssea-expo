@@ -1,6 +1,7 @@
 import * as FileSystem from 'expo-file-system/legacy';
 import { prepareHeicAttachmentsForUpload } from '@/utils/heicUpload';
 import { prefetchChatImageThumbnail, isChatImageThumbnailCandidate } from '@/utils/chatImageThumbnail';
+import { withChatUploadKeepAlive } from '@/services/chatUploadBackgroundKeeper';
 
 type PresignResponse = {
 	uploadUrl: string;
@@ -96,17 +97,32 @@ async function getPresignedUploadBatch(params: {
 	return items;
 }
 
+/**
+ * Native S3 PUT via Expo FileSystem background URLSession (iOS) /
+ * background-capable transfer (Android). Continues while the app is backgrounded
+ * when paired with Android FGS keep-alive.
+ */
 async function uploadLocalFileToPresignedUrl(params: {
 	fileUri: string;
 	uploadUrl: string;
 	mimeType: string;
 }): Promise<void> {
+	console.log('[chat_photo_upload] uploadAsync START', {
+		mimeType: params.mimeType,
+		sessionType: 'BACKGROUND',
+	});
+	const startedAt = Date.now();
 	const result = await FileSystem.uploadAsync(params.uploadUrl, params.fileUri, {
 		httpMethod: 'PUT',
 		uploadType: FileSystem.FileSystemUploadType.BINARY_CONTENT,
+		sessionType: FileSystem.FileSystemSessionType.BACKGROUND,
 		headers: {
 			'Content-Type': params.mimeType || 'application/octet-stream',
 		},
+	});
+	console.log('[chat_photo_upload] uploadAsync DONE', {
+		status: result.status,
+		ms: Date.now() - startedAt,
 	});
 
 	if (result.status < 200 || result.status >= 300) {
@@ -151,11 +167,7 @@ async function runWithConcurrency<T>(
 	return results;
 }
 
-/**
- * Upload multiple chat attachments: one presign-batch request, then parallel S3 PUTs.
- * Falls back to per-file presign if the batch endpoint is unavailable (older backend).
- */
-export async function uploadChatFilesBatch(params: {
+async function uploadChatFilesBatchInner(params: {
 	files: { fileUri: string; filename: string; mimeType?: string; originalName?: string }[];
 	accessToken: string;
 	concurrency?: number;
@@ -170,9 +182,15 @@ export async function uploadChatFilesBatch(params: {
 		accessToken,
 	});
 
+	console.log('[chat_photo_upload] presign-batch START', { fileCount: prepared.length });
+	const presignStartedAt = Date.now();
 	const presigned = await getPresignedUploadBatch({
 		files: prepared.map((f) => ({ filename: f.filename, mimeType: f.mimeType })),
 		accessToken,
+	});
+	console.log('[chat_photo_upload] presign-batch DONE', {
+		fileCount: presigned.length,
+		ms: Date.now() - presignStartedAt,
 	});
 
 	type UploadOutcome =
@@ -201,6 +219,10 @@ export async function uploadChatFilesBatch(params: {
 					},
 				};
 			} catch (error) {
+				console.warn('[chat_photo_upload] uploadAsync FAIL', {
+					index,
+					error: error instanceof Error ? error.message : String(error),
+				});
 				onFileComplete?.(index, false);
 				return { ok: false, index, error };
 			}
@@ -225,6 +247,21 @@ export async function uploadChatFilesBatch(params: {
 	}
 
 	return uploaded;
+}
+
+/**
+ * Upload multiple chat attachments: one presign-batch request, then parallel S3 PUTs.
+ * Runs under Android FGS / iOS background-task keep-alive so transfers can finish
+ * after the user backgrounds the app.
+ */
+export async function uploadChatFilesBatch(params: {
+	files: { fileUri: string; filename: string; mimeType?: string; originalName?: string }[];
+	accessToken: string;
+	concurrency?: number;
+	onFileComplete?: (index: number, success: boolean) => void;
+}): Promise<UploadedChatFile[]> {
+	if (params.files.length === 0) return [];
+	return withChatUploadKeepAlive(() => uploadChatFilesBatchInner(params));
 }
 
 /**

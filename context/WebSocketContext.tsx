@@ -21,6 +21,37 @@ import {
 } from '@/lib/socketIoClientOptions';
 import { useNetworkReconnect } from '@/hooks/useNetworkReconnect';
 import { fileLogger } from '@/utils/fileLogger';
+import {
+  TRACKING_TEAMS_QUERY_KEY,
+  fetchTrackingTeamsLoadIds,
+  type TrackingTeamsScope,
+} from '@/app-api/trackingTeams';
+import {
+  canAccessMyLoadsChatTab,
+  canAccessMyTeamChatTab,
+} from '@/constants/roleAccess';
+import type { QueryClient } from '@tanstack/react-query';
+
+function invalidateTrackingTeamsOnLoadChatEvent(
+  queryClient: QueryClient,
+  roomType?: string | null,
+  role?: string | null,
+) {
+  if (roomType && roomType !== 'LOAD') return;
+  const scopes: TrackingTeamsScope[] = [];
+  if (canAccessMyLoadsChatTab(role)) scopes.push('mine');
+  if (canAccessMyTeamChatTab(role)) scopes.push('team');
+  if (scopes.length === 0) return;
+
+  for (const scope of scopes) {
+    queryClient
+      .fetchQuery({
+        queryKey: [TRACKING_TEAMS_QUERY_KEY, scope],
+        queryFn: () => fetchTrackingTeamsLoadIds(scope, { refresh: true }),
+      })
+      .catch(() => {});
+  }
+}
 
 // WebSocket context interface
 interface WebSocketContextType {
@@ -658,6 +689,11 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
         const mergedRoom = useChatStore.getState().chatRooms.find((r) => r.id === chatRoomId);
         if (mergedRoom?.type === 'LOAD') {
+          invalidateTrackingTeamsOnLoadChatEvent(
+            queryClient,
+            'LOAD',
+            currentUser?.role,
+          );
           const { eventBus, AppEvents } = await import('@/services/EventBus');
           eventBus.emit(AppEvents.ArchivedLoadChatsNeedRefresh, {
             chatRoomId,
@@ -704,8 +740,14 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
     newSocket.on('chatRoomDeleted', async (data: { chatRoomId: string; deletedBy: string }) => {
       try {
         console.log('🗑️ [WebSocket] Chat room deleted:', data.chatRoomId);
-        const { removeChatRoom } = useChatStore.getState();
-        removeChatRoom(data.chatRoomId);
+        const state = useChatStore.getState();
+        const roomType = state.chatRooms.find((r) => r.id === data.chatRoomId)?.type;
+        state.removeChatRoom(data.chatRoomId);
+        invalidateTrackingTeamsOnLoadChatEvent(
+          queryClient,
+          roomType ?? 'LOAD',
+          currentUser?.role,
+        );
 
         // Remove chat room from chat rooms cache so it doesn't reappear on next sync
         try {
@@ -910,7 +952,13 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
         // Check if the removed user is the current user
         if (currentUser?.id === removedUserId) {
           // Remove the entire chat room from the list
+          const roomType = room.type;
           state.removeChatRoom(chatRoomId);
+          invalidateTrackingTeamsOnLoadChatEvent(
+            queryClient,
+            roomType ?? 'LOAD',
+            currentUser?.role,
+          );
           
           // Clear messages cache for this chat room
           await messagesCacheService.clearMessages(chatRoomId).catch((err) => {
@@ -934,8 +982,14 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
       try {
         const { chatRoomId } = data;
         console.log('🚪 [WebSocket] Removed from chat room:', chatRoomId);
-        const { removeChatRoom } = useChatStore.getState();
-        removeChatRoom(chatRoomId);
+        const state = useChatStore.getState();
+        const roomType = state.chatRooms.find((r) => r.id === chatRoomId)?.type;
+        state.removeChatRoom(chatRoomId);
+        invalidateTrackingTeamsOnLoadChatEvent(
+          queryClient,
+          roomType ?? 'LOAD',
+          currentUser?.role,
+        );
         
         // Clear messages cache for this chat room
         await messagesCacheService.clearMessages(chatRoomId).catch((err) => {
@@ -991,6 +1045,12 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
             newSocket.emit('joinChatRoom', { chatRoomId: normalized.id });
             joinedRoomsRef.current.add(normalized.id);
           }
+
+          invalidateTrackingTeamsOnLoadChatEvent(
+            queryClient,
+            normalized.type,
+            currentUser?.role,
+          );
         } else {
           console.error('❌ [WebSocket] Invalid chatRoomCreated payload:', data);
         }
@@ -1045,9 +1105,20 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
               newSocket.emit('joinChatRoom', { chatRoomId: normalized.id });
               joinedRoomsRef.current.add(normalized.id);
             }
+
+            invalidateTrackingTeamsOnLoadChatEvent(
+              queryClient,
+              normalized.type,
+              currentUser?.role,
+            );
           } catch (apiError) {
             console.error('❌ [WebSocket] Failed to load chat room from API:', apiError);
             // If API fails, we can't add the chat room, but log the error
+            invalidateTrackingTeamsOnLoadChatEvent(
+              queryClient,
+              'LOAD',
+              currentUser?.role,
+            );
           }
         } else {
           console.error('❌ [WebSocket] Invalid addedToChatRoom payload - missing chatRoomId:', data);

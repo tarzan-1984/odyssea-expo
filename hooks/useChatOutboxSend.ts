@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, type Dispatch, type SetStateAction } from 'react';
+import { AppState, type AppStateStatus } from 'react-native';
 import type { Socket } from 'socket.io-client';
 import type { Message, User } from '@/components/ChatListItem';
 import type { FileData } from '@/utils/chatAttachmentHelpers';
@@ -21,6 +22,20 @@ import {
 	type ChatOutboxItem,
 	type OutboxUploadedAttachment,
 } from '@/services/chatOutboxService';
+import {
+	claimOutboxItem,
+	releaseOutboxItem,
+} from '@/services/chatOutboxFlushService';
+import {
+	beginChatUploadKeepAlive,
+	endChatUploadKeepAlive,
+	withChatUploadKeepAlive,
+} from '@/services/chatUploadBackgroundKeeper';
+import {
+	beginOutboxMediaUpload,
+	endOutboxMediaUpload,
+	isOutboxMediaUploadActive,
+} from '@/services/outboxUploadLock';
 import {
 	createOptimisticPhotoMessage,
 	createOptimisticTextMessage,
@@ -91,10 +106,10 @@ export function useChatOutboxSend({
 	currentUserId,
 	onUploadStateChange,
 }: Params) {
-	const inFlightRef = useRef<Set<string>>(new Set());
 	const awaitingAckRef = useRef<Set<string>>(new Set());
 	const ackTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 	const optimisticMessagesRef = useRef(optimisticMessages);
+	const appStateRef = useRef<AppStateStatus>(AppState.currentState);
 
 	useEffect(() => {
 		optimisticMessagesRef.current = optimisticMessages;
@@ -126,7 +141,7 @@ export function useChatOutboxSend({
 	const removeConfirmedOptimistic = useCallback(
 		async (clientMessageId: string) => {
 			clearAckTimer(clientMessageId);
-			inFlightRef.current.delete(clientMessageId);
+			releaseOutboxItem(clientMessageId);
 			awaitingAckRef.current.delete(clientMessageId);
 			await chatOutboxService.remove(clientMessageId);
 			setOptimisticMessages((prev) => removeOptimisticByClientMessageId(prev, clientMessageId));
@@ -135,19 +150,49 @@ export function useChatOutboxSend({
 	);
 
 	const tryHttpFallback = useCallback(
-		async (clientMessageId: string): Promise<boolean> => {
+		async (
+			clientMessageId: string,
+			overrides?: {
+				uploadedAttachments?: OutboxUploadedAttachment[];
+				content?: string;
+			},
+		): Promise<boolean> => {
 			if (!chatRoomId) return false;
 			const item = (await chatOutboxService.getAll()).find(
 				(row) => row.clientMessageId === clientMessageId,
 			);
 			if (!item) return false;
 
+			const uploaded =
+				overrides?.uploadedAttachments ?? item.uploadedAttachments;
+			const content =
+				overrides?.content !== undefined ? overrides.content : item.content;
+
+			// Photo-only messages have empty content — never HTTP-send media without files.
+			if (item.kind === 'media' && !uploaded?.length) {
+				fileLogger.warn('ChatOutbox', 'HTTP_FALLBACK_SKIPPED_NO_UPLOAD', {
+					chatRoomId,
+					clientMessageId,
+				});
+				return false;
+			}
+			if (
+				!(content ?? '').trim() &&
+				!(uploaded && uploaded.length > 0)
+			) {
+				fileLogger.warn('ChatOutbox', 'HTTP_FALLBACK_SKIPPED_EMPTY', {
+					chatRoomId,
+					clientMessageId,
+					kind: item.kind,
+				});
+				return false;
+			}
+
 			try {
-				const uploaded = item.uploadedAttachments;
 				const multi = uploaded && uploaded.length >= 2 ? uploaded : null;
 				const newMessage = await chatApi.sendMessage({
 					chatRoomId,
-					content: item.content,
+					content: content ?? '',
 					clientMessageId: item.clientMessageId,
 					replyData: item.replyData,
 					...(multi
@@ -173,6 +218,8 @@ export function useChatOutboxSend({
 				fileLogger.error('ChatOutbox', 'HTTP_FALLBACK_FAILED', {
 					chatRoomId,
 					clientMessageId,
+					kind: item.kind,
+					hasUploaded: Boolean(uploaded?.length),
 					error: error instanceof Error ? error.message : String(error),
 				});
 				return false;
@@ -207,13 +254,23 @@ export function useChatOutboxSend({
 	const dispatchOutboxSend = useCallback(
 		async (item: ChatOutboxItem) => {
 			if (!chatRoomId || !sender) return;
-			if (inFlightRef.current.has(item.clientMessageId)) return;
-			inFlightRef.current.add(item.clientMessageId);
+
+			// Lock before any await so leave-active flush cannot race a second PUT.
+			let ownsUploadLock = false;
+			if (item.kind === 'media' && !item.uploadedAttachments?.length) {
+				ownsUploadLock = beginOutboxMediaUpload(item.clientMessageId);
+			}
 
 			try {
-				let uploaded: OutboxUploadedAttachment[] | undefined = item.uploadedAttachments;
+			await withChatUploadKeepAlive(async () => {
+			let uploaded: OutboxUploadedAttachment[] | undefined =
+				item.uploadedAttachments;
+			let sendClaimed = false;
+
+			try {
 				const flowId = createClientDiagFlowId('outbox');
 
+				// Upload WITHOUT exclusive claim so background flush can take over if JS suspends.
 				if (item.kind === 'media') {
 					if (!uploaded?.length) {
 						onUploadStateChange?.(true);
@@ -233,41 +290,75 @@ export function useChatOutboxSend({
 							throw new Error('Missing local files for media retry');
 						}
 
-						await reportClientDiag({
-							feature: 'chat_photo_upload',
-							stage: 'outbox_upload_start',
-							message: `Outbox media upload start (${files.length})`,
-							flowId,
-							details: {
-								chatRoomId,
-								clientMessageId: item.clientMessageId,
-								fileCount: files.length,
-								fileNames: files.map((f) => f.name).slice(0, 10),
-								mimeTypes: files.map((f) => f.mimeType).slice(0, 10),
-							},
-						});
-
 						const optimisticId = pendingIdForClientMessage(item.clientMessageId);
-						uploaded = await uploadAttachmentFiles(
-							files,
-							(index, status) => {
-								setOptimisticMessages((prev) =>
-									prev.map((msg) => {
-										if (msg.id !== optimisticId) return msg;
-										const uploadStatus =
-											status === 'uploading'
-												? 'uploading'
-												: status === 'done'
-													? 'done'
-													: 'error';
-										return patchOptimisticUploadStatus(msg, index, uploadStatus);
-									}),
+
+						if (!ownsUploadLock) {
+							const deadline = Date.now() + 60_000;
+							while (Date.now() < deadline) {
+								const rows = await chatOutboxService.getAll();
+								const row = rows.find(
+									(r) => r.clientMessageId === item.clientMessageId,
 								);
-							},
-							{ flowId },
-						);
+								if (row?.uploadedAttachments?.length) {
+									uploaded = row.uploadedAttachments;
+									break;
+								}
+								if (!isOutboxMediaUploadActive(item.clientMessageId)) {
+									uploaded = row?.uploadedAttachments;
+									break;
+								}
+								await new Promise((r) => setTimeout(r, 500));
+							}
+						} else {
+							await reportClientDiag({
+								feature: 'chat_photo_upload',
+								stage: 'outbox_upload_start',
+								message: `Outbox media upload start (${files.length})`,
+								flowId,
+								details: {
+									chatRoomId,
+									clientMessageId: item.clientMessageId,
+									fileCount: files.length,
+									fileNames: files.map((f) => f.name).slice(0, 10),
+									mimeTypes: files.map((f) => f.mimeType).slice(0, 10),
+								},
+							});
+
+							try {
+								uploaded = await uploadAttachmentFiles(
+									files,
+									(index, status) => {
+										setOptimisticMessages((prev) =>
+											prev.map((msg) => {
+												if (msg.id !== optimisticId) return msg;
+												const uploadStatus =
+													status === 'uploading'
+														? 'uploading'
+														: status === 'done'
+															? 'done'
+															: 'error';
+												return patchOptimisticUploadStatus(
+													msg,
+													index,
+													uploadStatus,
+												);
+											}),
+										);
+									},
+									{ flowId },
+								);
+							} finally {
+								endOutboxMediaUpload(item.clientMessageId);
+								ownsUploadLock = false;
+							}
+						}
+
+						if (!uploaded?.length) {
+							throw new Error('Media upload did not complete');
+						}
+
 						completeImageUploadFlow(uploaded.length);
-						void chatOutboxService.patch(item.clientMessageId, {
+						await chatOutboxService.patch(item.clientMessageId, {
 							uploadedAttachments: uploaded,
 							status: 'sending',
 						});
@@ -303,18 +394,59 @@ export function useChatOutboxSend({
 						throw new Error('Upload produced no files');
 					}
 
-					if (uploaded.length >= 2) {
+					await chatOutboxService.patch(item.clientMessageId, {
+						uploadedAttachments: uploaded,
+						status: 'sending',
+					});
+				}
+
+				// Flush may have already finished this item while we were uploading.
+				const latest = (await chatOutboxService.getAll()).find(
+					(row) => row.clientMessageId === item.clientMessageId,
+				);
+				if (!latest) {
+					setOptimisticMessages((prev) =>
+						removeOptimisticByClientMessageId(prev, item.clientMessageId),
+					);
+					return;
+				}
+				if (latest.uploadedAttachments?.length) {
+					uploaded = latest.uploadedAttachments;
+				}
+
+				if (!claimOutboxItem(item.clientMessageId)) {
+					// Background flush owns the send.
+					return;
+				}
+				sendClaimed = true;
+
+				const preferHttp = AppState.currentState !== 'active';
+
+				if (preferHttp) {
+					const recovered = await tryHttpFallback(item.clientMessageId, {
+						uploadedAttachments: uploaded,
+						content: item.content,
+					});
+					if (!recovered) {
+						throw new Error('HTTP send failed while app backgrounded');
+					}
+					return;
+				}
+
+				if (item.kind === 'media') {
+					const mediaUploaded = uploaded!;
+					if (mediaUploaded.length >= 2) {
 						await sendMessage(
 							item.content,
 							undefined,
 							item.replyData,
-							uploaded,
+							mediaUploaded,
 							item.clientMessageId,
 						);
 					} else {
 						await sendMessage(
 							item.content,
-							uploaded[0],
+							mediaUploaded[0],
 							item.replyData,
 							undefined,
 							item.clientMessageId,
@@ -323,26 +455,26 @@ export function useChatOutboxSend({
 					await reportClientDiag({
 						feature: 'chat_photo_upload',
 						stage: 'outbox_ws_sent',
-						message: `Outbox media WS send dispatched (${uploaded.length})`,
+						message: `Outbox media WS send dispatched (${mediaUploaded.length})`,
 						flowId,
 						details: {
 							chatRoomId,
 							clientMessageId: item.clientMessageId,
-							uploadedCount: uploaded.length,
+							uploadedCount: mediaUploaded.length,
 						},
 					});
-					markImageMessageWsSent(uploaded.map((row) => row.fileUrl));
+					markImageMessageWsSent(mediaUploaded.map((row) => row.fileUrl));
 				} else {
-				await sendMessage(
-					item.content,
-					undefined,
-					item.replyData,
-					undefined,
-					item.clientMessageId,
-				);
+					await sendMessage(
+						item.content,
+						undefined,
+						item.replyData,
+						undefined,
+						item.clientMessageId,
+					);
 				}
 
-				void chatOutboxService.patch(item.clientMessageId, { status: 'sending' });
+				await chatOutboxService.patch(item.clientMessageId, { status: 'sending' });
 				setOptimisticMessages((prev) =>
 					prev.map((msg) =>
 						msg.pendingOutgoing?.clientMessageId === item.clientMessageId
@@ -363,19 +495,54 @@ export function useChatOutboxSend({
 						details: {
 							chatRoomId,
 							clientMessageId: item.clientMessageId,
-							hasUploaded: Boolean(item.uploadedAttachments?.length),
+							hasUploaded: Boolean(
+								uploaded?.length || item.uploadedAttachments?.length,
+							),
 							localFileCount: item.localFiles?.length ?? 0,
+							appState: AppState.currentState,
 						},
 					});
 				}
-				const recovered = await tryHttpFallback(item.clientMessageId);
-				if (!recovered) {
-					markOptimisticFailed(item.clientMessageId);
-					throw error;
+
+				const stillQueued = (await chatOutboxService.getAll()).find(
+					(row) => row.clientMessageId === item.clientMessageId,
+				);
+				if (!stillQueued) return;
+
+				const recovered = await tryHttpFallback(item.clientMessageId, {
+					uploadedAttachments: uploaded ?? stillQueued.uploadedAttachments,
+					content: item.content,
+				});
+				if (recovered) return;
+
+				if (
+					item.kind === 'media' &&
+					!(uploaded?.length || stillQueued.uploadedAttachments?.length)
+				) {
+					await chatOutboxService.patch(item.clientMessageId, {
+						status: 'uploading',
+					});
+					fileLogger.warn('ChatOutbox', 'KEEP_QUEUED_UNTIL_UPLOAD', {
+						chatRoomId,
+						clientMessageId: item.clientMessageId,
+						appState: AppState.currentState,
+					});
+					return;
 				}
+
+				markOptimisticFailed(item.clientMessageId);
+				throw error;
 			} finally {
-				inFlightRef.current.delete(item.clientMessageId);
+				if (sendClaimed) {
+					releaseOutboxItem(item.clientMessageId);
+				}
 				onUploadStateChange?.(false);
+			}
+			});
+			} finally {
+				if (ownsUploadLock) {
+					endOutboxMediaUpload(item.clientMessageId);
+				}
 			}
 		},
 		[
@@ -393,6 +560,9 @@ export function useChatOutboxSend({
 	const sendTextMessage = useCallback(
 		async (content: string, replyData?: Message['replyData']) => {
 			if (!chatRoomId || !sender) return;
+
+			// Start FGS/bg-task ASAP so minimize mid-send still has keep-alive.
+			void beginChatUploadKeepAlive();
 
 			const clientMessageId = createClientMessageId();
 			const optimistic = createOptimisticTextMessage({
@@ -416,16 +586,20 @@ export function useChatOutboxSend({
 				retryCount: 0,
 			});
 
-			void dispatchOutboxSend({
-				clientMessageId,
-				chatRoomId,
-				kind: 'text',
-				content,
-				replyData,
-				status: 'sending',
-				createdAt: optimistic.createdAt,
-				retryCount: 0,
-			});
+			try {
+				await dispatchOutboxSend({
+					clientMessageId,
+					chatRoomId,
+					kind: 'text',
+					content,
+					replyData,
+					status: 'sending',
+					createdAt: optimistic.createdAt,
+					retryCount: 0,
+				});
+			} finally {
+				void endChatUploadKeepAlive();
+			}
 		},
 		[chatRoomId, sender, dispatchOutboxSend, setOptimisticMessages],
 	);
@@ -485,8 +659,13 @@ export function useChatOutboxSend({
 				retryCount: 0,
 			};
 
+			void beginChatUploadKeepAlive();
 			void chatOutboxService.upsert(outboxItem);
-			void dispatchOutboxSend(outboxItem);
+			try {
+				await dispatchOutboxSend(outboxItem);
+			} finally {
+				void endChatUploadKeepAlive();
+			}
 		},
 		[chatRoomId, sender, dispatchOutboxSend, setOptimisticMessages],
 	);
@@ -519,6 +698,16 @@ export function useChatOutboxSend({
 		[chatRoomId, dispatchOutboxSend, setOptimisticMessages],
 	);
 
+	const discardFailedOptimisticMessage = useCallback(
+		async (message: Message) => {
+			const clientMessageId = message.pendingOutgoing?.clientMessageId;
+			if (!clientMessageId) return;
+			endOutboxMediaUpload(clientMessageId);
+			await removeConfirmedOptimistic(clientMessageId);
+		},
+		[removeConfirmedOptimistic],
+	);
+
 	const hydrateRoomOutbox = useCallback(async () => {
 		if (!chatRoomId || !sender) return;
 		const items = await chatOutboxService.getForRoom(chatRoomId);
@@ -538,8 +727,18 @@ export function useChatOutboxSend({
 			if (item.serverMessageId || awaitingAckRef.current.has(item.clientMessageId)) {
 				continue;
 			}
-			if (item.status === 'uploading' || item.status === 'sending') {
-				void dispatchOutboxSend(item).catch(() => {});
+			if (
+				item.status === 'uploading' ||
+				item.status === 'sending' ||
+				(item.status === 'failed' && (item.retryCount ?? 0) < 3)
+			) {
+				void dispatchOutboxSend({
+					...item,
+					status:
+						item.kind === 'media' && !item.uploadedAttachments?.length
+							? 'uploading'
+							: 'sending',
+				}).catch(() => {});
 			}
 		}
 	}, [chatRoomId, sender, dispatchOutboxSend, setOptimisticMessages]);
@@ -547,6 +746,65 @@ export function useChatOutboxSend({
 	useEffect(() => {
 		void hydrateRoomOutbox();
 	}, [hydrateRoomOutbox]);
+
+	useEffect(() => {
+		const subscription = AppState.addEventListener('change', (next) => {
+			const prev = appStateRef.current;
+			if (prev === 'active' && next.match(/inactive|background/)) {
+				// Finish any waiting WS sends via HTTP while we still have a JS slice.
+				const pendingIds = Array.from(awaitingAckRef.current);
+				for (const clientMessageId of pendingIds) {
+					void tryHttpFallback(clientMessageId).then((ok) => {
+						if (ok) return;
+					});
+				}
+			}
+			if (prev.match(/inactive|background/) && next === 'active') {
+				void hydrateRoomOutbox();
+			}
+			appStateRef.current = next;
+		});
+		return () => subscription.remove();
+	}, [hydrateRoomOutbox, tryHttpFallback]);
+
+	useEffect(() => {
+		if (!chatRoomId) return;
+
+		const onFlushed = (payload: {
+			clientMessageId?: string;
+			chatRoomId?: string;
+		}) => {
+			if (payload.chatRoomId !== chatRoomId || !payload.clientMessageId) return;
+			clearAckTimer(payload.clientMessageId);
+			awaitingAckRef.current.delete(payload.clientMessageId);
+			setOptimisticMessages((prev) =>
+				removeOptimisticByClientMessageId(prev, payload.clientMessageId!),
+			);
+		};
+
+		const onFailed = (payload: {
+			clientMessageId?: string;
+			chatRoomId?: string;
+		}) => {
+			if (payload.chatRoomId !== chatRoomId || !payload.clientMessageId) return;
+			clearAckTimer(payload.clientMessageId);
+			awaitingAckRef.current.delete(payload.clientMessageId);
+			setOptimisticMessages((prev) =>
+				prev.map((msg) =>
+					msg.pendingOutgoing?.clientMessageId === payload.clientMessageId
+						? patchOptimisticMessage(msg, { status: 'failed' })
+						: msg,
+				),
+			);
+		};
+
+		const offFlushed = eventBus.on(AppEvents.ChatOutboxItemFlushed, onFlushed);
+		const offFailed = eventBus.on(AppEvents.ChatOutboxItemFailed, onFailed);
+		return () => {
+			offFlushed();
+			offFailed();
+		};
+	}, [chatRoomId, clearAckTimer, setOptimisticMessages]);
 
 	useEffect(() => {
 		if (!currentUserId || optimisticMessages.length === 0) return;
@@ -626,7 +884,8 @@ export function useChatOutboxSend({
 			}
 
 			const optimistic = optimisticMessagesRef.current.find(
-				(msg) => msg.pendingOutgoing?.serverMessageId === messageData.message.id,
+				(msg) =>
+					msg.pendingOutgoing?.serverMessageId === messageData.message?.id,
 			);
 			if (optimistic?.pendingOutgoing?.clientMessageId) {
 				clearAckTimer(optimistic.pendingOutgoing.clientMessageId);
@@ -662,5 +921,6 @@ export function useChatOutboxSend({
 		sendTextMessage,
 		sendMediaMessage,
 		retryOptimisticMessage,
+		discardFailedOptimisticMessage,
 	};
 }
