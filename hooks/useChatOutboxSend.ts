@@ -98,6 +98,7 @@ function outboxLocalToFileData(
 export function useChatOutboxSend({
 	chatRoomId,
 	sender,
+	isConnected,
 	socket,
 	sendMessage,
 	optimisticMessages,
@@ -156,73 +157,100 @@ export function useChatOutboxSend({
 				uploadedAttachments?: OutboxUploadedAttachment[];
 				content?: string;
 			},
+			options?: { alreadyClaimed?: boolean },
 		): Promise<boolean> => {
 			if (!chatRoomId) return false;
-			const item = (await chatOutboxService.getAll()).find(
-				(row) => row.clientMessageId === clientMessageId,
-			);
-			if (!item) return false;
 
-			const uploaded =
-				overrides?.uploadedAttachments ?? item.uploadedAttachments;
-			const content =
-				overrides?.content !== undefined ? overrides.content : item.content;
-
-			// Photo-only messages have empty content — never HTTP-send media without files.
-			if (item.kind === 'media' && !uploaded?.length) {
-				fileLogger.warn('ChatOutbox', 'HTTP_FALLBACK_SKIPPED_NO_UPLOAD', {
-					chatRoomId,
-					clientMessageId,
-				});
-				return false;
-			}
-			if (
-				!(content ?? '').trim() &&
-				!(uploaded && uploaded.length > 0)
-			) {
-				fileLogger.warn('ChatOutbox', 'HTTP_FALLBACK_SKIPPED_EMPTY', {
-					chatRoomId,
-					clientMessageId,
-					kind: item.kind,
-				});
-				return false;
+			// Exclusive ownership — do not race global flush / another fallback.
+			let ownsClaim = Boolean(options?.alreadyClaimed);
+			if (!ownsClaim) {
+				if (!claimOutboxItem(clientMessageId)) {
+					fileLogger.info('ChatOutbox', 'HTTP_FALLBACK_SKIPPED_IN_FLIGHT', {
+						chatRoomId,
+						clientMessageId,
+					});
+					return false;
+				}
+				ownsClaim = true;
 			}
 
 			try {
-				const multi = uploaded && uploaded.length >= 2 ? uploaded : null;
-				const newMessage = await chatApi.sendMessage({
-					chatRoomId,
-					content: content ?? '',
-					clientMessageId: item.clientMessageId,
-					replyData: item.replyData,
-					...(multi
-						? {
-								attachments: multi,
-								fileUrl: multi[0].fileUrl,
-								fileName: multi[0].fileName,
-								fileSize: multi[0].fileSize,
-							}
-						: uploaded?.[0]
+				const item = (await chatOutboxService.getAll()).find(
+					(row) => row.clientMessageId === clientMessageId,
+				);
+				if (!item) return false;
+				if (item.serverMessageId) {
+					await removeConfirmedOptimistic(clientMessageId);
+					ownsClaim = false; // released inside removeConfirmedOptimistic
+					return true;
+				}
+
+				const uploaded =
+					overrides?.uploadedAttachments ?? item.uploadedAttachments;
+				const content =
+					overrides?.content !== undefined ? overrides.content : item.content;
+
+				// Photo-only messages have empty content — never HTTP-send media without files.
+				if (item.kind === 'media' && !uploaded?.length) {
+					fileLogger.warn('ChatOutbox', 'HTTP_FALLBACK_SKIPPED_NO_UPLOAD', {
+						chatRoomId,
+						clientMessageId,
+					});
+					return false;
+				}
+				if (
+					!(content ?? '').trim() &&
+					!(uploaded && uploaded.length > 0)
+				) {
+					fileLogger.warn('ChatOutbox', 'HTTP_FALLBACK_SKIPPED_EMPTY', {
+						chatRoomId,
+						clientMessageId,
+						kind: item.kind,
+					});
+					return false;
+				}
+
+				try {
+					const multi = uploaded && uploaded.length >= 2 ? uploaded : null;
+					const newMessage = await chatApi.sendMessage({
+						chatRoomId,
+						content: content ?? '',
+						clientMessageId: item.clientMessageId,
+						replyData: item.replyData,
+						...(multi
 							? {
-									fileUrl: uploaded[0].fileUrl,
-									fileName: uploaded[0].fileName,
-									fileSize: uploaded[0].fileSize,
+									attachments: multi,
+									fileUrl: multi[0].fileUrl,
+									fileName: multi[0].fileName,
+									fileSize: multi[0].fileSize,
 								}
-							: {}),
-				});
-				useChatStore.getState().addMessage(chatRoomId, newMessage);
-				await removeConfirmedOptimistic(clientMessageId);
-				return true;
-			} catch (error) {
-				console.warn('[useChatOutboxSend] HTTP fallback failed:', error);
-				fileLogger.error('ChatOutbox', 'HTTP_FALLBACK_FAILED', {
-					chatRoomId,
-					clientMessageId,
-					kind: item.kind,
-					hasUploaded: Boolean(uploaded?.length),
-					error: error instanceof Error ? error.message : String(error),
-				});
-				return false;
+							: uploaded?.[0]
+								? {
+										fileUrl: uploaded[0].fileUrl,
+										fileName: uploaded[0].fileName,
+										fileSize: uploaded[0].fileSize,
+									}
+								: {}),
+					});
+					useChatStore.getState().addMessage(chatRoomId, newMessage);
+					await removeConfirmedOptimistic(clientMessageId);
+					ownsClaim = false;
+					return true;
+				} catch (error) {
+					console.warn('[useChatOutboxSend] HTTP fallback failed:', error);
+					fileLogger.error('ChatOutbox', 'HTTP_FALLBACK_FAILED', {
+						chatRoomId,
+						clientMessageId,
+						kind: item.kind,
+						hasUploaded: Boolean(uploaded?.length),
+						error: error instanceof Error ? error.message : String(error),
+					});
+					return false;
+				}
+			} finally {
+				if (ownsClaim) {
+					releaseOutboxItem(clientMessageId);
+				}
 			}
 		},
 		[chatRoomId, removeConfirmedOptimistic],
@@ -230,6 +258,7 @@ export function useChatOutboxSend({
 
 	const recoverViaHttpOrFail = useCallback(
 		(clientMessageId: string) => {
+			awaitingAckRef.current.delete(clientMessageId);
 			void tryHttpFallback(clientMessageId).then((recovered) => {
 				if (!recovered) {
 					markOptimisticFailed(clientMessageId);
@@ -415,20 +444,65 @@ export function useChatOutboxSend({
 				}
 
 				if (!claimOutboxItem(item.clientMessageId)) {
-					// Background flush owns the send.
-					return;
+					// Another path owns this item — wait for it to finish, then retry once.
+					const peerDeadline = Date.now() + 8_000;
+					let peerDone = false;
+					while (Date.now() < peerDeadline) {
+						const rows = await chatOutboxService.getAll();
+						const row = rows.find(
+							(r) => r.clientMessageId === item.clientMessageId,
+						);
+						if (!row || row.serverMessageId) {
+							peerDone = true;
+							break;
+						}
+						if (claimOutboxItem(item.clientMessageId)) {
+							sendClaimed = true;
+							break;
+						}
+						await new Promise((r) => setTimeout(r, 250));
+					}
+					if (peerDone) {
+						setOptimisticMessages((prev) =>
+							removeOptimisticByClientMessageId(prev, item.clientMessageId),
+						);
+						return;
+					}
+					if (!sendClaimed) {
+						// Last resort: force-take ownership so foreground send is not stuck.
+						releaseOutboxItem(item.clientMessageId);
+						if (!claimOutboxItem(item.clientMessageId)) {
+							fileLogger.warn('ChatOutbox', 'CLAIM_GIVE_UP', {
+								chatRoomId,
+								clientMessageId: item.clientMessageId,
+							});
+							return;
+						}
+						sendClaimed = true;
+					}
+				} else {
+					sendClaimed = true;
 				}
-				sendClaimed = true;
 
-				const preferHttp = AppState.currentState !== 'active';
+				const preferHttp =
+					AppState.currentState !== 'active' || !isConnected;
 
 				if (preferHttp) {
-					const recovered = await tryHttpFallback(item.clientMessageId, {
-						uploadedAttachments: uploaded,
-						content: item.content,
-					});
+					const recovered = await tryHttpFallback(
+						item.clientMessageId,
+						{
+							uploadedAttachments: uploaded,
+							content: item.content,
+						},
+						{ alreadyClaimed: true },
+					);
+					sendClaimed = false; // claim released inside tryHttpFallback
 					if (!recovered) {
-						throw new Error('HTTP send failed while app backgrounded');
+						throw new Error(
+							AppState.currentState !== 'active'
+								? 'HTTP send failed while app backgrounded'
+								: 'HTTP send failed (WebSocket disconnected)',
+						);
 					}
 					return;
 				}
@@ -484,6 +558,8 @@ export function useChatOutboxSend({
 				);
 				awaitingAckRef.current.add(item.clientMessageId);
 				scheduleAckTimeout(item.clientMessageId);
+				// Release claim so leave-active global flush can HTTP-send if ack is lost.
+				// Room hook must NOT also HTTP on leave-active (that caused duplicates).
 			} catch (error) {
 				console.warn('[useChatOutboxSend] WebSocket dispatch failed:', error);
 				if (item.kind === 'media') {
@@ -509,11 +585,19 @@ export function useChatOutboxSend({
 				);
 				if (!stillQueued) return;
 
-				const recovered = await tryHttpFallback(item.clientMessageId, {
-					uploadedAttachments: uploaded ?? stillQueued.uploadedAttachments,
-					content: item.content,
-				});
-				if (recovered) return;
+				const recovered = await tryHttpFallback(
+					item.clientMessageId,
+					{
+						uploadedAttachments: uploaded ?? stillQueued.uploadedAttachments,
+						content: item.content,
+					},
+					{ alreadyClaimed: sendClaimed },
+				);
+				if (recovered) {
+					sendClaimed = false;
+					return;
+				}
+				sendClaimed = false; // released inside tryHttpFallback when alreadyClaimed
 
 				if (
 					item.kind === 'media' &&
@@ -548,6 +632,7 @@ export function useChatOutboxSend({
 		[
 			chatRoomId,
 			sender,
+			isConnected,
 			sendMessage,
 			markOptimisticFailed,
 			tryHttpFallback,
@@ -575,7 +660,7 @@ export function useChatOutboxSend({
 
 			setOptimisticMessages((prev) => [...prev, optimistic]);
 
-			void chatOutboxService.upsert({
+			await chatOutboxService.upsert({
 				clientMessageId,
 				chatRoomId,
 				kind: 'text',
@@ -660,7 +745,7 @@ export function useChatOutboxSend({
 			};
 
 			void beginChatUploadKeepAlive();
-			void chatOutboxService.upsert(outboxItem);
+			await chatOutboxService.upsert(outboxItem);
 			try {
 				await dispatchOutboxSend(outboxItem);
 			} finally {
@@ -751,12 +836,13 @@ export function useChatOutboxSend({
 		const subscription = AppState.addEventListener('change', (next) => {
 			const prev = appStateRef.current;
 			if (prev === 'active' && next.match(/inactive|background/)) {
-				// Finish any waiting WS sends via HTTP while we still have a JS slice.
+				// Hand off to global flush: stop waiting for WS ack, keep outbox items
+				// flushable. Do NOT HTTP-send here (raced flush and duplicated messages).
 				const pendingIds = Array.from(awaitingAckRef.current);
 				for (const clientMessageId of pendingIds) {
-					void tryHttpFallback(clientMessageId).then((ok) => {
-						if (ok) return;
-					});
+					clearAckTimer(clientMessageId);
+					awaitingAckRef.current.delete(clientMessageId);
+					releaseOutboxItem(clientMessageId);
 				}
 			}
 			if (prev.match(/inactive|background/) && next === 'active') {
@@ -765,7 +851,7 @@ export function useChatOutboxSend({
 			appStateRef.current = next;
 		});
 		return () => subscription.remove();
-	}, [hydrateRoomOutbox, tryHttpFallback]);
+	}, [hydrateRoomOutbox, clearAckTimer]);
 
 	useEffect(() => {
 		if (!chatRoomId) return;
@@ -849,6 +935,7 @@ export function useChatOutboxSend({
 			if (!clientMessageId) return;
 
 			clearAckTimer(clientMessageId);
+			awaitingAckRef.current.delete(clientMessageId);
 			void chatOutboxService.markAcknowledged(clientMessageId, data.messageId);
 			setOptimisticMessages((prev) =>
 				prev.map((msg) =>

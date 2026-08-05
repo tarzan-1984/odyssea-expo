@@ -30,9 +30,12 @@ export type FlushOutboxOptions = {
 	sendOnly?: boolean;
 };
 
-const inFlight = new Set<string>();
+const inFlight = new Map<string, number>();
 let flushPromise: Promise<{ processed: number; sent: number; failed: number }> | null =
 	null;
+
+/** Claims older than this are considered stuck (JS suspended mid-send). */
+const STALE_CLAIM_TTL_MS = 35_000;
 
 export function isOutboxItemInFlight(clientMessageId: string): boolean {
 	return inFlight.has(clientMessageId);
@@ -41,7 +44,7 @@ export function isOutboxItemInFlight(clientMessageId: string): boolean {
 /** Claim exclusive processing for an outbox item. Returns false if already claimed. */
 export function claimOutboxItem(clientMessageId: string): boolean {
 	if (inFlight.has(clientMessageId)) return false;
-	inFlight.add(clientMessageId);
+	inFlight.set(clientMessageId, Date.now());
 	return true;
 }
 
@@ -49,7 +52,25 @@ export function releaseOutboxItem(clientMessageId: string): void {
 	inFlight.delete(clientMessageId);
 }
 
-/** Clear all claims — used when app backgrounds so flush can take over stuck uploads. */
+/** Release only stale claims so a full flush can take over stuck work without stealing live sends. */
+export function releaseStaleOutboxClaims(ttlMs: number = STALE_CLAIM_TTL_MS): void {
+	const now = Date.now();
+	let released = 0;
+	for (const [id, startedAt] of inFlight) {
+		if (now - startedAt >= ttlMs) {
+			inFlight.delete(id);
+			released += 1;
+		}
+	}
+	if (released > 0) {
+		fileLogger.info('ChatOutboxFlush', 'RELEASE_STALE_CLAIMS', {
+			count: released,
+			ttlMs,
+		});
+	}
+}
+
+/** @deprecated Prefer releaseStaleOutboxClaims — clearing all claims races in-flight HTTP. */
 export function releaseAllOutboxClaims(): void {
 	if (inFlight.size > 0) {
 		fileLogger.info('ChatOutboxFlush', 'RELEASE_ALL_CLAIMS', {
@@ -142,15 +163,25 @@ async function processOutboxItemInner(
 	let ownsUpload = false;
 
 	try {
-		if (item.serverMessageId) {
-			await chatOutboxService.remove(item.clientMessageId);
+		// Re-read after claim — another path may have finished while we waited.
+		const latest =
+			(await chatOutboxService.getAll()).find(
+				(row) => row.clientMessageId === item.clientMessageId,
+			) ?? null;
+		if (!latest) {
+			return 'skipped';
+		}
+		if (latest.serverMessageId) {
+			await chatOutboxService.remove(latest.clientMessageId);
 			eventBus.emit(AppEvents.ChatOutboxItemFlushed, {
-				clientMessageId: item.clientMessageId,
-				chatRoomId: item.chatRoomId,
-				messageId: item.serverMessageId,
+				clientMessageId: latest.clientMessageId,
+				chatRoomId: latest.chatRoomId,
+				messageId: latest.serverMessageId,
 			});
 			return 'skipped';
 		}
+
+		item = latest;
 
 		let uploaded: OutboxUploadedAttachment[] | undefined = item.uploadedAttachments;
 
@@ -318,8 +349,9 @@ export async function flushPendingOutbox(options?: FlushOutboxOptions): Promise<
 	const sendOnly = Boolean(options?.sendOnly);
 
 	flushPromise = (async () => {
-		// Full flush may take over after JS suspended mid-send; send-only must not
-		// steal claims from an in-flight dispatch HTTP send.
+		// Full flush may take over after JS suspended mid-send.
+		// Safe now: room leave-active no longer HTTP-sends in parallel, and
+		// backend idempotency keys on clientMessageId.
 		if (!sendOnly) {
 			releaseAllOutboxClaims();
 		}
