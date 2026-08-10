@@ -12,6 +12,7 @@ import { messagesCacheService } from '@/services/MessagesCacheService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { syncAppLocationSettingsWithDeviceContext } from '@/utils/appLocationSettings';
 import { normalizeChatParticipants } from '@/utils/normalizeChatParticipants';
+import { stripPerUserChatRoomFields } from '@/utils/stripPerUserChatRoomFields';
 import { proactiveRefreshFromSecureStorage } from '@/utils/accessTokenRefresh';
 import {
   SOCKET_IO_CLIENT_OPTIONS,
@@ -675,8 +676,12 @@ export const WebSocketProvider: React.FC<WebSocketProviderProps> = ({ children }
 
         const normalized: ChatRoom = {
           ...existing,
-          ...updatedChatRoom,
+          ...stripPerUserChatRoomFields(updatedChatRoom),
           participants,
+          // Preserve this client's unread / mute / pin
+          unreadCount: existing?.unreadCount,
+          isMuted: existing?.isMuted,
+          isPinned: existing?.isPinned,
         };
 
         state.updateChatRoom(chatRoomId, normalized);
